@@ -1,4 +1,8 @@
 flask
-playwright
+# >=1.60.0: below this, Chrome for Testing crashes when stopping a
+# getDisplayMedia stream's tracks (stream.getTracks().forEach(t => t.stop()))
+# — see https://github.com/microsoft/playwright/issues/39158, fixed in
+# Chromium 147+ / Playwright 1.60.0. Exactly what MeetBotBase.record() does.
+playwright>=1.60.0
 playwright-stealth
 python-dotenv

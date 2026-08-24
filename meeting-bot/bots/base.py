@@ -8,12 +8,18 @@ from pathlib import Path
 # relay) adapted from screenappai/meeting-bot (MIT license), src/tasks/RecordingTask.ts.
 _RECORD_JS = """
 async ({ secretId, mimeType }) => {
+  // Must match --auto-select-tab-capture-source-by-title exactly (Zoom bot
+  // sets that flag to secretId) so Chromium picks this tab by title instead
+  // of whichever window happens to have OS focus.
+  document.title = secretId;
   const stream = await navigator.mediaDevices.getDisplayMedia({
     video: true,
     audio: { autoGainControl: false, echoCancellation: false, noiseSuppression: false },
     preferCurrentTab: true,
   });
+  console.log('[notulis] got stream, tracks:', stream.getTracks().map((t) => `${t.kind}:${t.readyState}:${t.enabled}`).join(','));
   const recorder = new MediaRecorder(stream, { mimeType });
+  recorder.addEventListener('error', (e) => console.error('[notulis] MediaRecorder error:', e.error));
   // Reference project (RecordingTask.ts) serializes chunk uploads through a
   // promise chain instead of firing sendChunk from each ondataavailable
   // independently. Without that, a slow send for one chunk can still be
@@ -27,7 +33,19 @@ async ({ secretId, mimeType }) => {
     chunkChain = chunkChain.then(async () => {
       try {
         const buf = await blob.arrayBuffer();
-        const binary = new TextDecoder('latin1').decode(buf);
+        // TextDecoder('latin1') is a WHATWG alias for windows-1252, not true
+        // byte-for-byte ISO-8859-1 — bytes 0x80-0x9F decode to codepoints
+        // above 255 (curly quotes etc.), which btoa() then rejects. Binary
+        // video/audio data hits that range constantly. String.fromCharCode
+        // maps bytes 0-255 to codepoints 0-255 exactly, so it's correct;
+        // batching avoids the call/allocation overhead of doing it one byte
+        // at a time.
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const CHUNK = 0x8000;
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+        }
         await window.sendChunk(secretId, btoa(binary));
       } catch (err) {
         console.error('[notulis] sendChunk failed:', err);
@@ -80,31 +98,24 @@ class MeetBotBase:
             if secret_id != self.secret_id:
                 return
             self._chunks.append(base64.b64decode(b64data))
-            print(f"[record] chunk received, total so far: {len(self._chunks)}")
 
         try:
             self.page.expose_function("sendChunk", on_chunk)
-            # No bring_to_front(): it scopes getDisplayMedia's auto-accept
-            # down to just this tab instead of the whole desktop, but every
-            # test with it enabled had the browser die outright mid-recording
-            # for reasons that resisted diagnosis. Without it, recording
-            # captures the whole desktop (over-broad, but it reliably
-            # finishes) — trading correctness for something that actually
-            # works while that's investigated further.
-            print("[record] calling evaluate(_RECORD_JS)...")
+            # Belt and suspenders: the title-select flag should make Chromium
+            # pick this exact tab regardless of focus, but it still captured
+            # the whole desktop once even with that in place — so also try to
+            # give this window real focus the way --auto-accept-this-tab-capture
+            # wants it, in case the two mechanisms interact.
+            self.page.bring_to_front()
+            self.page.mouse.click(5, 5)
+            self.page.wait_for_timeout(300)
             self.page.evaluate(_RECORD_JS, {"secretId": self.secret_id, "mimeType": self.MIME_TYPE})
-            print("[record] _RECORD_JS returned OK, recording started")
 
             time.sleep(self.max_duration_min * 60)
-            print("[record] sleep done, calling evaluate(_STOP_JS)...")
 
             self.page.evaluate(_STOP_JS)
-            print("[record] _STOP_JS returned OK")
-            # ponytail: final chunk relay isn't awaited past the stop event (no
-            # chunkUploadChain like upstream). Small buffer covers it for POC durations;
-            # if recordings get cut short, serialize on the JS side like upstream does.
-            time.sleep(1)
         finally:
+            print(f"[record] {len(self._chunks)} chunks received")
             # Save whatever chunks made it through even if the page/browser
             # crashes mid-recording, instead of losing the whole clip.
             with open(out_path, "wb") as f:

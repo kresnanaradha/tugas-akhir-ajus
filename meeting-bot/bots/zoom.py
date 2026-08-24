@@ -26,17 +26,21 @@ def _web_client_url(url: str) -> str:
 class ZoomBot(MeetBotBase):
     def join(self) -> str:
         with sync_playwright() as p:
-            # Last known config that completed recording without the browser
-            # dying mid-session (it just over-captured the whole desktop
-            # instead of the tab — see base.py's record()). Every extra flag
-            # tried since (GPU, audio-service, signal handlers, fake device)
-            # was rolled back to isolate that stability, not because each one
-            # was individually proven harmful.
             browser = p.chromium.launch(
                 headless=False,
                 args=[
                     "--use-fake-ui-for-media-stream",
                     "--auto-accept-this-tab-capture",
+                    # --auto-accept-this-tab-capture alone picks whichever tab
+                    # has OS-level window focus at getDisplayMedia() time —
+                    # bring_to_front() only switches Playwright's active tab,
+                    # it doesn't reliably steal real OS focus from whatever
+                    # else is focused (e.g. the terminal that fired the join
+                    # request), so it kept capturing the whole desktop. This
+                    # picks the tab by exact title match instead, regardless
+                    # of focus — record() sets document.title to the same
+                    # secretId right before capturing.
+                    f"--auto-select-tab-capture-source-by-title={self.secret_id}",
                     "--autoplay-policy=no-user-gesture-required",
                 ],
             )
@@ -78,11 +82,40 @@ class ZoomBot(MeetBotBase):
                 self.page.wait_for_selector('input[type="text"]', timeout=30000)
                 self.page.fill('input[type="text"]', self.name)
 
-                for label in ("Mute", "Stop Video"):
+                # meetingbot/meetingbot (MIT) found the mute/video toggles
+                # aren't reliably clickable right after the input field shows
+                # up — a shorter wait made the click miss randomly and the
+                # bot would join with sound/video still on. They wait 6s
+                # before clicking; matching that, plus their ID selectors
+                # (sturdier than text, which Zoom has changed before) with a
+                # text-based fallback.
+                self.page.wait_for_timeout(6000)
+
+                def click_toggle(selector: str, label: str) -> None:
                     try:
-                        self.page.locator("button", has_text=label).first.click(timeout=3000)
+                        self.page.locator(selector).click(timeout=3000)
                     except Exception:
-                        pass
+                        try:
+                            self.page.locator("button", has_text=label).first.click(timeout=3000)
+                        except Exception:
+                            pass
+
+                click_toggle("#preview-audio-control-button", "Mute")
+
+                # The camera's getUserMedia device takes longer to come up
+                # than the mic, so this button can still look clickable but
+                # not yet be wired to the toggle — the click lands but nothing
+                # happens. Verify via aria-label (it flips to "Start Video"
+                # once off) and retry once after a bit more time.
+                video_selector = "#preview-video-control-button"
+                click_toggle(video_selector, "Stop Video")
+                try:
+                    label = self.page.locator(video_selector).get_attribute("aria-label", timeout=2000) or ""
+                    if "start video" not in label.lower():
+                        self.page.wait_for_timeout(2000)
+                        click_toggle(video_selector, "Stop Video")
+                except Exception:
+                    pass
 
                 self.page.locator("button", has_text="Join").first.click()
             except Exception:

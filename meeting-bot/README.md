@@ -31,10 +31,19 @@ Meet join — the same approach the reference project's `chrome-cdp` sidecar
 uses.
 
 1. Create a separate Google account for the bot (do not use your personal one).
-2. Launch a dedicated Chrome with remote debugging enabled and leave it running:
+2. Launch a dedicated Chrome with remote debugging enabled and leave it running.
+   Use an **absolute** path for `--user-data-dir` (a relative one gets
+   resolved against Chrome's own install directory, which fails to write
+   without admin rights) — replace the path below with your own
+   `meeting-bot/chrome-profile` directory:
    ```bash
-   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="chrome-profile"
+   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\path\to\meeting-bot\chrome-profile" --auto-accept-this-tab-capture
    ```
+   `--auto-accept-this-tab-capture` matters here specifically: it's normally
+   passed to Playwright's own `chromium.launch()`, but this sidecar is a
+   regular Chrome the human launches by hand, so it doesn't get that flag
+   for free. Without it, every recording pauses on a manual "Allow this tab
+   to be seen?" dialog that has to be clicked by hand.
 3. In that Chrome window, log in to the bot's Google account manually (normal
    login — this window isn't automated yet, so Google doesn't block it).
 4. Set `GOOGLE_CHROME_CDP_URL=http://localhost:9222` in `.env` (already the
@@ -42,6 +51,10 @@ uses.
 5. Leave that Chrome window open. Every `/google/join` call attaches to it,
    opens a new tab for the meeting, and closes only that tab when done — the
    signed-in session stays alive for the next join.
+6. If Chrome was already running when you launched step 2, the new flags get
+   silently ignored (it just opens another window in the already-running
+   process). Close every Chrome window first, confirm no `chrome.exe`
+   process is left, then launch the sidecar.
 
 Zoom's guest join doesn't require any of this; it works anonymously.
 
@@ -82,15 +95,24 @@ you may need to manually click "Admit" in your own meeting window.
   suspect Google's detection has adapted further — this is an ongoing
   cat-and-mouse, not a one-time fix.
 - **Playwright selectors vs UI changes.** Both bots rely on text/attribute
-  selectors scraped from the current Meet/Zoom web UI (button text, aria-labels,
-  the Zoom `iframe#webclient`). Google and Zoom change this UI without notice;
-  when a join stops working, this is the first place to check.
-- **Zoom's join path is simplified.** The reference project has a longer
-  fallback chain ("Launch Meeting" → "Download Now" → "Join from your
-  browser", plus iframe-vs-app-container detection) for meetings that don't
-  land straight on a browser-joinable page. This POC only handles the direct
-  case. Zoom hasn't been confirmed working end-to-end yet (Google Meet ate the
-  whole debugging session) — test this next.
+  selectors scraped from the current Meet/Zoom web UI (button text,
+  aria-labels, element IDs). Google and Zoom change this UI without notice;
+  when a join stops working, this is the first place to check. Zoom in
+  particular has already changed "Join from your browser" wording once
+  during this project's own testing.
+- **Zoom's bot-detection is inconsistent.** `playwright-stealth` gets past
+  the "Automated bots aren't allowed to join this meeting" check most of the
+  time, but not always — repeated automated joins against the same
+  meeting/IP in a short window seem to raise Zoom's suspicion regardless of
+  stealth quality. If joins that used to work start failing with that
+  message, try spacing out test runs or a different network before assuming
+  the code regressed.
+- **Zoom's join path is simplified.** It navigates straight to the embedded
+  web-client URL (`/wc/join/<id>`) and assumes that lands on a joinable page
+  directly. The reference project has a longer fallback chain ("Launch
+  Meeting" → "Download Now" → "Join from your browser", plus
+  iframe-vs-app-container detection) for meetings that don't land there
+  directly; not ported. Confirmed working end-to-end for the direct case.
 
 ## Not handled yet (POC scope only)
 
@@ -105,3 +127,7 @@ you may need to manually click "Admit" in your own meeting window.
 - No inactivity/lone-participant detection — recording always runs the full
   `MAX_RECORDING_DURATION_MINUTES` regardless of whether anyone's still in
   the call.
+- Recording captures the whole screen rather than just the meeting tab in
+  local dev (see `CLAUDE.md` "Known accepted limitation" for why this was
+  left as-is — it's not expected to matter once deployed to an isolated
+  display).

@@ -8,17 +8,11 @@ as a `.webm` file. Flask + Playwright. Join-flow adapted from
 Full setup/run/test instructions: `meeting-bot/README.md`. This file is
 project status — what's done, what's next, what to watch out for.
 
-## Repo state (important)
+## Repo state
 
-- **No commits yet.** Everything currently shown by `git status` is staged
-  but not committed.
 - `reference/` (a local clone of screenappai/meeting-bot, kept for reading
-  their implementation) is staged as a **gitlink** (mode 160000) because it
-  has its own `.git`, but there's no `.gitmodules`. Committing as-is leaves a
-  dangling submodule reference nobody can fetch. Fix before first commit:
-  either add a real `.gitmodules` entry, or more likely just `git rm --cached
-  reference` and add it to `.gitignore` — it's a reference clone, not part of
-  the shipped bot.
+  their implementation) is gitignored, not committed — it's a reference
+  clone, not part of the shipped bot.
 
 ## What's built
 
@@ -51,11 +45,10 @@ project status — what's done, what's next, what to watch out for.
 
 ## Next steps
 
-1. Fix the `reference/` gitlink issue and make the first commit.
-2. Test Zoom end-to-end (join, get admitted, record, file plays back).
-3. If Zoom's direct-join assumption fails on a real meeting, port more of the
+1. Test Zoom end-to-end (join, get admitted, record, file plays back).
+2. If Zoom's direct-join assumption fails on a real meeting, port more of the
    reference project's fallback chain.
-4. Known POC gaps, not started (see README "Not handled yet" for the full
+3. Known POC gaps, not started (see README "Not handled yet" for the full
    list): one meeting at a time (Playwright runs sync in the request thread),
    no retry beyond a single 60s admission wait, no auth on the endpoints, no
    inactivity detection (recording always runs the full

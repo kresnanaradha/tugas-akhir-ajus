@@ -90,8 +90,8 @@ class MeetBotBase:
         raise NotImplementedError
 
     def record(self) -> str:
-        out_dir = Path(os.getenv("RECORDINGS_DIR", "recordings"))
-        out_dir.mkdir(exist_ok=True)
+        out_dir = Path(os.getenv("RECORDINGS_DIR", "recordings")) / "videos"
+        out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{self.__class__.__name__}_{int(time.time())}.webm"
 
         def on_chunk(secret_id: str, b64data: str):

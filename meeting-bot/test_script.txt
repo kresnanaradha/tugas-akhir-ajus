@@ -1,0 +1,19 @@
+Halo semuanya, selamat datang di rapat evaluasi progres Notulis minggu ini.
+
+Sejauh ini kita sudah menyelesaikan tiga hal penting. Pertama, bot sudah bisa
+bergabung ke Google Meet dan Zoom secara otomatis tanpa terdeteksi sebagai
+bot. Kedua, hasil rekaman langsung ditranskripsi otomatis menggunakan model
+Whisper yang berjalan lokal, jadi tidak perlu biaya tambahan ke pihak ketiga.
+Ketiga, transkrip mentah tersebut dibersihkan dulu oleh model bahasa sebelum
+diringkas, supaya kesalahan salah dengar tidak ikut masuk ke ringkasan akhir.
+
+Selain itu, struktur folder penyimpanan juga sudah dirapikan. Sekarang video,
+transkrip mentah, transkrip yang sudah diperbaiki, dan ringkasan masing-masing
+punya folder terpisah, jadi lebih mudah ditelusuri.
+
+Untuk tahap berikutnya, kita akan mulai memikirkan bagaimana sistem ini
+terhubung dengan backend utama Notulis, termasuk soal antrian pekerjaan dan
+penyimpanan berkas di cloud.
+
+Ada pertanyaan sebelum kita tutup sesi hari ini? Kalau tidak ada, terima kasih
+banyak atas waktunya, sampai jumpa di rapat berikutnya.

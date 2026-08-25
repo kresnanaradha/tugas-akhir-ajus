@@ -6,3 +6,5 @@ flask
 playwright>=1.60.0
 playwright-stealth
 python-dotenv
+openai-whisper
+openai

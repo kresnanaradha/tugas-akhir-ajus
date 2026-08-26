@@ -6,5 +6,8 @@ flask
 playwright>=1.60.0
 playwright-stealth
 python-dotenv
-openai-whisper
+# Bundles its own faster-whisper backend, plus word-alignment and
+# pyannote-based diarization for "speaker label" (Table 2, Automatic
+# Transcription) — replaces plain openai-whisper.
+whisperx
 openai

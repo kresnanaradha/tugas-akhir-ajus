@@ -1,8 +1,10 @@
 # Meeting Bot (POC)
 
 Minimal Flask + Playwright bot that joins a Google Meet or Zoom call as a
-guest, records the tab (video+audio) via `MediaRecorder`, and saves the
-result to `recordings/` as a local `.webm` file.
+guest, records the tab (video+audio) via `MediaRecorder`, transcribes it
+locally with speaker labels (`whisperx`), then has GPT-4o mini clean up the
+transcript and summarize it. Everything lands under `recordings/`, split
+into `videos/`, `transcripts/`, `fixed_transcripts/`, and `summaries/`.
 
 Join-flow selectors adapted from [screenappai/meeting-bot](https://github.com/screenappai/meeting-bot) (MIT license).
 
@@ -15,6 +17,18 @@ pip install -r requirements.txt
 playwright install chromium
 cp .env.example .env
 ```
+
+Fill in `.env`:
+- `OPENAI_API_KEY` — for AI summarization and transcript cleanup (GPT-4o
+  mini). Get one at https://platform.openai.com/api-keys.
+- `HF_TOKEN` — for speaker diarization. A Read-Only token from
+  https://huggingface.co/settings/tokens is enough, but a token alone
+  **isn't sufficient**: while logged in, also visit
+  https://huggingface.co/pyannote/speaker-diarization-community-1 and accept
+  its terms once, or diarization fails with `GatedRepoError` on first use.
+
+Transcription runs locally (no API cost, audio never leaves the machine) via
+`whisperx`, which needs `ffmpeg` on `PATH`.
 
 ### Google Meet: run a signed-in Chrome sidecar
 
@@ -77,7 +91,29 @@ curl -X POST http://localhost:5000/zoom/join \
 ```
 
 The request blocks until the bot leaves the meeting (after
-`MAX_RECORDING_DURATION_MINUTES`, default 5) and returns the recording path.
+`MAX_RECORDING_DURATION_MINUTES`, default 5), transcribes, cleans up the
+transcript, and summarizes — that whole chain, not just the recording, so
+expect it to take a while longer than the meeting itself. The response has
+everything from whichever steps succeeded:
+
+```json
+{
+  "status": "done",
+  "recording": "recordings/videos/ZoomBot_1712345678.webm",
+  "transcript": "[SPEAKER_00] ...",
+  "fixed_transcript": "[SPEAKER_00] ...",
+  "summary": {
+    "executive_summary": "...",
+    "key_decisions": ["..."],
+    "topics_discussed": ["..."]
+  }
+}
+```
+
+If transcription, transcript-fixing, or summarization fails, its key is
+replaced with `..._error` (e.g. `transcript_error`) instead — a failure at
+any step doesn't erase the successful ones before it, so a recording is
+never lost just because, say, the OpenAI API had a bad moment.
 
 To test with your own Google Meet: start a meeting from your own Google
 account in one browser/tab, then hit `/google/join` with that meeting's URL
@@ -131,3 +167,9 @@ you may need to manually click "Admit" in your own meeting window.
   local dev (see `CLAUDE.md` "Known accepted limitation" for why this was
   left as-is — it's not expected to matter once deployed to an isolated
   display).
+- Diarization guesses the speaker count instead of using the meeting's real
+  participant count — `transcribe()` accepts a `num_speakers` hint, but
+  nothing currently passes one through from the join endpoints.
+- No upload-audio endpoint yet — `transcribe()`/`summarize()` already work
+  on any audio/video file path, not just bot output, so this is mostly just
+  a new route away.

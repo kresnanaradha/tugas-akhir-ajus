@@ -30,16 +30,16 @@ project status — what's done, what's next, what to watch out for.
   sidecar Chrome).
 - `bots/zoom.py` — Zoom join flow (anonymous guest, direct web-client URL +
   stealth patch).
-- `transcribe.py` — transcription via `whisperx` (local, no API cost): a
-  faster-whisper backend, word-alignment, and pyannote diarization, producing
-  a `[SPEAKER_NN] ...`-labeled transcript per line. Saves to
+- `pipeline/transcribe.py` — transcription via `whisperx` (local, no API
+  cost): a faster-whisper backend, word-alignment, and pyannote diarization,
+  producing a `[SPEAKER_NN] ...`-labeled transcript per line. Saves to
   `recordings/transcripts/`.
-- `summarize.py` — two GPT-4o mini passes: `fix_transcript()` corrects likely
-  ASR mistakes and collapses hallucinated repeated closing lines (saves to
-  `recordings/fixed_transcripts/`), then `summarize()` produces
-  `{executive_summary, key_decisions, topics_discussed}` JSON (saves to
-  `recordings/summaries/`) per Table 2 of the proposal.
-- `paths.py` — `sibling_path()`: given a video path like
+- `pipeline/summarize.py` — two GPT-4o mini passes: `fix_transcript()`
+  corrects likely ASR mistakes and collapses hallucinated repeated closing
+  lines (saves to `recordings/fixed_transcripts/`), then `summarize()`
+  produces `{executive_summary, key_decisions, topics_discussed}` JSON
+  (saves to `recordings/summaries/`) per Table 2 of the proposal.
+- `pipeline/paths.py` — `sibling_path()`: given a video path like
   `recordings/videos/Foo_123.webm`, resolves the matching file in a sibling
   type folder (`recordings/transcripts/Foo_123.txt` etc.), creating it if
   needed. All three output stages use this so everything for one meeting

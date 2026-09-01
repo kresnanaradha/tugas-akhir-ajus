@@ -3,7 +3,7 @@ import os
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 
-from paths import sibling_path
+from .paths import sibling_path
 
 _DEVICE = "cpu"
 

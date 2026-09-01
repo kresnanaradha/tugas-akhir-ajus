@@ -5,8 +5,8 @@ from flask import Flask, jsonify, request
 
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from summarize import fix_transcript, summarize
-from transcribe import transcribe
+from pipeline.summarize import fix_transcript, summarize
+from pipeline.transcribe import transcribe
 
 load_dotenv()
 

@@ -2,7 +2,7 @@ import json
 
 from openai import OpenAI
 
-from paths import sibling_path
+from .paths import sibling_path
 
 _FIX_SYSTEM_PROMPT = (
     "Fix obvious speech-to-text errors in this meeting transcript (misheard "

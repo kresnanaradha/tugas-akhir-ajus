@@ -11,3 +11,4 @@ python-dotenv
 # Transcription) — replaces plain openai-whisper.
 whisperx
 openai
+psycopg2-binary

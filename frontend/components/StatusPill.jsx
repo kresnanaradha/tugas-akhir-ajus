@@ -4,12 +4,15 @@ import { colors, radius, type } from "@/constants/theme";
 
 const CONFIG = {
   completed: { label: "Completed", fg: colors.success, bg: colors.successSoft },
-  processing: { label: "Processing", fg: colors.info, bg: colors.infoSoft },
   failed: { label: "Failed", fg: colors.danger, bg: colors.dangerSoft },
+  joining: { label: "Bergabung...", fg: colors.info, bg: colors.infoSoft },
+  recording: { label: "Sedang Merekam", fg: colors.danger, bg: colors.dangerSoft },
+  stopping: { label: "Menghentikan...", fg: colors.info, bg: colors.infoSoft },
+  processing: { label: "Memproses...", fg: colors.info, bg: colors.infoSoft },
 };
 
 export function StatusPill({ status }) {
-  const cfg = CONFIG[status];
+  const cfg = CONFIG[status] || { label: status, fg: colors.inkFaint, bg: colors.surfaceSunken };
   return (
     <View style={[styles.pill, { backgroundColor: cfg.bg }]}>
       <View style={[styles.dot, { backgroundColor: cfg.fg }]} />

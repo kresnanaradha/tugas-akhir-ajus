@@ -1,5 +1,6 @@
 import base64
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -76,15 +77,40 @@ _STOP_JS = """
 class MeetBotBase:
     """Base bot. join-flow patterns adapted from screenappai/meeting-bot (MIT)."""
 
+    # mp4 (H.264) was tried and reverted — Playwright's Chromium (Chrome for
+    # Testing) ships without the proprietary H.264 encoder (licensing), so
+    # MediaRecorder throws NotSupportedError there even though a regular
+    # Chrome install can record it fine. Getting mp4 out would need an
+    # ffmpeg re-encode pass after recording — not worth it for a POC.
     MIME_TYPE = "video/webm;codecs=vp8,opus"
 
-    def __init__(self, url: str, name: str, max_duration_min: float):
+    def __init__(self, url: str, name: str, max_duration_min: float, on_status_change=None):
         self.url = url
         self.name = name
         self.max_duration_min = max_duration_min
         self.secret_id = uuid.uuid4().hex
         self.page = None
         self._chunks = []
+        # Exposed so app.py's job endpoints can report live progress and let
+        # the frontend stop a recording early — see record() below.
+        self.status = "joining"  # joining -> recording -> stopping
+        self.record_started_at: float | None = None
+        self.stop_event = threading.Event()
+        # Optional callback(status: str) — app.py wires this to persist each
+        # transition to the meetings table (see pipeline/meetings_store.py's
+        # update_meeting()), so the Rapat list reflects "sedang merekam" live
+        # instead of only ever showing the finished result.
+        self._on_status_change = on_status_change
+
+    def _set_status(self, status: str) -> None:
+        self.status = status
+        if self._on_status_change:
+            try:
+                self._on_status_change(status)
+            except Exception as e:
+                # A DB hiccup here should never take down an in-progress
+                # recording — worst case the list's status lags reality.
+                print(f"[status] on_status_change callback failed: {e}")
 
     def join(self) -> str:
         raise NotImplementedError
@@ -111,8 +137,17 @@ class MeetBotBase:
             self.page.wait_for_timeout(300)
             self.page.evaluate(_RECORD_JS, {"secretId": self.secret_id, "mimeType": self.MIME_TYPE})
 
-            time.sleep(self.max_duration_min * 60)
+            self._set_status("recording")
+            self.record_started_at = time.time()
+            deadline = self.record_started_at + self.max_duration_min * 60
+            # Sleep in small steps instead of one blind sleep() so a stop
+            # request (app.py's POST /jobs/<id>/stop, setting stop_event from
+            # a different thread) actually cuts the recording short instead
+            # of only taking effect after the full max duration anyway.
+            while time.time() < deadline and not self.stop_event.is_set():
+                time.sleep(1)
 
+            self._set_status("stopping")
             self.page.evaluate(_STOP_JS)
         finally:
             print(f"[record] {len(self._chunks)} chunks received")

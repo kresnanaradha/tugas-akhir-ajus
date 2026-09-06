@@ -26,6 +26,10 @@ Fill in `.env`:
   **isn't sufficient**: while logged in, also visit
   https://huggingface.co/pyannote/speaker-diarization-community-1 and accept
   its terms once, or diarization fails with `GatedRepoError` on first use.
+- `DATABASE_URL` — Postgres connection string for the meetings index
+  (`pipeline/meetings_store.py`). Using Supabase: Project Settings ->
+  Database -> Connection string. The `meetings` table is created
+  automatically on first connect.
 
 Transcription runs locally (no API cost, audio never leaves the machine) via
 `whisperx`, which needs `ffmpeg` on `PATH`.
@@ -155,8 +159,10 @@ you may need to manually click "Admit" in your own meeting window.
 - One process handles one meeting at a time — Playwright runs synchronously
   inside the Flask request thread, so concurrent join requests will block
   each other.
-- No error handling/retry for host-denied or lobby-timeout cases beyond a
-  single 60s wait — the request just fails.
+- Zoom has no retry for host-denied or lobby-timeout cases beyond a single
+  60s wait — the request just fails. (Google Meet already retries up to 3
+  times — `google_meet.py`'s `_MAX_JOIN_ATTEMPTS` — Zoom doesn't have an
+  equivalent.)
 - No auth on the endpoints, no webhook notification, no S3 upload, no Redis
   queue, no Docker, no multi-language selector text (Meet's German-language
   UI text etc. from the reference isn't included).
@@ -167,9 +173,8 @@ you may need to manually click "Admit" in your own meeting window.
   local dev (see `CLAUDE.md` "Known accepted limitation" for why this was
   left as-is — it's not expected to matter once deployed to an isolated
   display).
-- Diarization guesses the speaker count instead of using the meeting's real
-  participant count — `transcribe()` accepts a `num_speakers` hint, but
-  nothing currently passes one through from the join endpoints.
-- No upload-audio endpoint yet — `transcribe()`/`summarize()` already work
-  on any audio/video file path, not just bot output, so this is mostly just
-  a new route away.
+- Diarization's speaker-count hint (`num_speakers`) is a user-entered
+  estimate ("Perkiraan Jumlah Peserta" in the frontend), not the meeting's
+  real participant count — there's no reliable way to scrape that from
+  Google Meet/Zoom's web client (see `CLAUDE.md` "Transcription/
+  summarization notes").

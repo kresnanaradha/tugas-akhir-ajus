@@ -91,31 +91,39 @@ class ZoomBot(MeetBotBase):
                 # text-based fallback.
                 self.page.wait_for_timeout(6000)
 
-                def click_toggle(selector: str, label: str) -> None:
+                def click_toggle(selector: str, label: str) -> bool:
                     try:
                         self.page.locator(selector).click(timeout=3000)
+                        return True
                     except Exception:
                         try:
                             self.page.locator("button", has_text=label).first.click(timeout=3000)
+                            return True
                         except Exception:
-                            pass
+                            return False
 
-                click_toggle("#preview-audio-control-button", "Mute")
+                # The mic/camera's getUserMedia device can take longer to come
+                # up than the button itself — the click lands but the toggle
+                # isn't wired to it yet, so nothing happens. Verify via
+                # aria-label (flips to "Unmute"/"Start Video" once off) and
+                # retry once after a bit more time. Printed instead of
+                # silently swallowed so a join that ends up on camera anyway
+                # shows up in the server log instead of just this docstring.
+                def toggle_off(selector: str, click_label: str, off_label: str, name: str) -> None:
+                    click_toggle(selector, click_label)
+                    try:
+                        label = self.page.locator(selector).get_attribute("aria-label", timeout=2000) or ""
+                        if off_label not in label.lower():
+                            self.page.wait_for_timeout(2000)
+                            click_toggle(selector, click_label)
+                            label = self.page.locator(selector).get_attribute("aria-label", timeout=2000) or ""
+                        if off_label not in label.lower():
+                            print(f"[ZoomBot] could not confirm {name} is off (aria-label: {label!r})")
+                    except Exception as e:
+                        print(f"[ZoomBot] {name} toggle check failed: {e}")
 
-                # The camera's getUserMedia device takes longer to come up
-                # than the mic, so this button can still look clickable but
-                # not yet be wired to the toggle — the click lands but nothing
-                # happens. Verify via aria-label (it flips to "Start Video"
-                # once off) and retry once after a bit more time.
-                video_selector = "#preview-video-control-button"
-                click_toggle(video_selector, "Stop Video")
-                try:
-                    label = self.page.locator(video_selector).get_attribute("aria-label", timeout=2000) or ""
-                    if "start video" not in label.lower():
-                        self.page.wait_for_timeout(2000)
-                        click_toggle(video_selector, "Stop Video")
-                except Exception:
-                    pass
+                toggle_off("#preview-audio-control-button", "Mute", "unmute", "mic")
+                toggle_off("#preview-video-control-button", "Stop Video", "start video", "camera")
 
                 self.page.locator("button", has_text="Join").first.click()
             except Exception:
@@ -141,5 +149,14 @@ class ZoomBot(MeetBotBase):
                 pass
 
             out_path = self.record()
+            # Click "Leave" instead of just closing the browser — an abrupt
+            # disconnect leaves the bot showing as still connected on Zoom's
+            # side until its own timeout notices, instead of leaving cleanly
+            # right away.
+            try:
+                self.page.locator("button", has_text="Leave").first.click(timeout=1500)
+                self.page.locator("button", has_text="Leave Meeting").first.click(timeout=1500)
+            except Exception:
+                pass
             browser.close()
             return out_path

@@ -17,7 +17,7 @@ export function PlaceholderPage({ icon, title, description, comingFeatures }) {
           </View>
           <Text style={styles.cardTitle}>Halaman ini sedang dibangun</Text>
           <Text style={styles.cardBody}>
-            Tampilan di sini masih rangka UI dengan data contoh — belum tersambung ke backend. Fitur yang direncanakan:
+            Tampilan di sini masih rangka UI dengan data contoh, belum tersambung ke backend. Fitur yang direncanakan:
           </Text>
           <View style={styles.featureList}>
             {comingFeatures.map((feature) => (

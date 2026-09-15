@@ -23,8 +23,14 @@ _FIX_SYSTEM_PROMPT = (
 _SUMMARY_SYSTEM_PROMPT = (
     "You summarize meeting transcripts. Respond with JSON containing exactly "
     "these keys: executive_summary (a short paragraph string), key_decisions "
-    "(an array of strings), and topics_discussed (an array of strings). "
-    "Write in the same language as the transcript."
+    "(an array of strings), topics_discussed (an array of strings), and "
+    "action_items (an array of objects, each with exactly: task — string, the "
+    "concrete action to do; assignee — string or null, the person's name only "
+    "if the transcript clearly assigns it to them, never guess; due — string "
+    "or null, a deadline/date only if one was explicitly mentioned). Only "
+    "include real action items actually committed to in the transcript — an "
+    "empty array is correct if there weren't any, don't invent some just to "
+    "fill the field. Write in the same language as the transcript."
 )
 
 

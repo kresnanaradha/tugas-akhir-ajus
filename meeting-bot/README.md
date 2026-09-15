@@ -85,11 +85,11 @@ python app.py
 ## Test manually
 
 ```bash
-curl -X POST http://localhost:5000/google/join \
+curl -X POST http://localhost:5050/google/join \
   -H "Content-Type: application/json" \
   -d '{"url": "https://meet.google.com/xxx-yyyy-zzz", "name": "Notulis Bot"}'
 
-curl -X POST http://localhost:5000/zoom/join \
+curl -X POST http://localhost:5050/zoom/join \
   -H "Content-Type: application/json" \
   -d '{"url": "https://zoom.us/j/xxxxxxxxxx", "name": "Notulis Bot"}'
 ```

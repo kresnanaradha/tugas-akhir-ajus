@@ -1,10 +1,9 @@
-import os
-import threading
 from datetime import datetime
 from pathlib import Path
 
-import psycopg2
 import psycopg2.extras
+
+from .db import register_schema, with_conn
 
 _TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS meetings (
@@ -20,7 +19,13 @@ CREATE TABLE IF NOT EXISTS meetings (
 -- already existed in Supabase before this column was added, so it needs its
 -- own idempotent statement too.
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS estimated_participants INTEGER;
+-- The meeting link itself — join()'s only way to notice "someone already
+-- has a bot on this exact link" and share that instead of starting a
+-- second one (see find_meeting_by_url()). NULL for /upload, which has no
+-- link at all.
+ALTER TABLE meetings ADD COLUMN IF NOT EXISTS url TEXT;
 """
+register_schema(_TABLE_SQL)
 # recording stays NOT NULL — ALTER TABLE ... DROP NOT NULL turned out to hang
 # and time out against Supabase's pooler (tested in isolation, consistently
 # ~120s then QueryCanceled; not worth chasing why). start_meeting() below
@@ -28,57 +33,6 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS estimated_participants INTEGER;
 # instead of NULL — every truthiness check on this column elsewhere
 # (`if recording_path:` etc.) already treats '' the same as None/null, in
 # both Python and JS, so nothing downstream needed to change for this.
-
-# Kept alive across calls instead of reconnecting every time — Supabase is a
-# remote database (ap-southeast-2), so opening a fresh connection cost ~1.7s
-# and re-running _TABLE_SQL on top of that added another ~0.6s, on *every*
-# single request. app.py runs Flask with threaded=True (so job-status polling
-# doesn't queue behind a running join), so a plain module-level connection
-# with no locking would be unsafe — psycopg2 connections aren't safe to use
-# from multiple threads at once. _lock serializes access instead of opening
-# one connection per thread; at POC request volume that's not a bottleneck,
-# and it's a much smaller change than a real connection pool.
-_conn = None
-_table_ready = False
-_lock = threading.Lock()
-
-
-def _ensure_table(conn):
-    global _table_ready
-    if _table_ready:
-        return
-    with conn.cursor() as cur:
-        cur.execute(_TABLE_SQL)
-    conn.commit()
-    _table_ready = True
-
-
-def _with_conn(fn):
-    """Runs fn(conn) against the shared connection (one thread at a time),
-    reconnecting once and retrying if it turned out to be dead (Supabase's
-    pooler can close connections that sit idle for a while)."""
-    global _conn, _table_ready
-    with _lock:
-        if _conn is None:
-            _conn = psycopg2.connect(os.environ["DATABASE_URL"])
-            # Without this, a SELECT-only call (list_meetings/get_meeting)
-            # still opens an implicit transaction and never closes it, since
-            # only the insert/update functions called conn.commit() — found
-            # by an idle-in-transaction session left open ~20 minutes from
-            # testing, which then blocked a later DDL statement entirely.
-            # Every statement committing on its own immediately rules that
-            # whole class of bug out; the explicit conn.commit() calls
-            # elsewhere in this file are harmless no-ops under autocommit.
-            _conn.autocommit = True
-            _ensure_table(_conn)
-        try:
-            return fn(_conn)
-        except psycopg2.OperationalError:
-            _conn = psycopg2.connect(os.environ["DATABASE_URL"])
-            _conn.autocommit = True
-            _table_ready = False
-            _ensure_table(_conn)
-            return fn(_conn)
 
 
 def add_meeting(
@@ -120,32 +74,76 @@ def add_meeting(
             )
         conn.commit()
 
-    _with_conn(_do)
+    with_conn(_do)
     record["created_at"] = record["created_at"].strftime("%Y-%m-%dT%H:%M:%S")
     return record
 
 
-def start_meeting(meeting_id: str, platform: str, title: str, estimated_participants: int | None = None) -> None:
+def start_meeting(
+    meeting_id: str, platform: str, title: str, estimated_participants: int | None = None, url: str | None = None
+) -> None:
     """Inserts a row the moment a live join starts, with no recording file
     yet — so the Rapat list can show it as in-progress (status "joining",
     then "recording", etc. via update_meeting()) instead of only appearing
     once the whole pipeline is done. `meeting_id` is the job_id from
     app.py's _join(), reused as the row's id so the same id works for both
-    GET /jobs/<id> (live polling) and GET /meetings/<id> (once finished)."""
+    GET /jobs/<id> (live polling) and GET /meetings/<id> (once finished).
+    `url` is the meeting link itself — see find_meeting_by_url()."""
 
     def _do(conn):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO meetings (id, platform, title, created_at, status, recording, estimated_participants)
-                VALUES (%s, %s, %s, %s, %s, '', %s)
+                INSERT INTO meetings (id, platform, title, created_at, status, recording, estimated_participants, url)
+                VALUES (%s, %s, %s, %s, %s, '', %s, %s)
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (meeting_id, platform, title, datetime.now(), "joining", estimated_participants),
+                (meeting_id, platform, title, datetime.now(), "joining", estimated_participants, url),
             )
         conn.commit()
 
-    _with_conn(_do)
+    with_conn(_do)
+
+
+# Many meeting links are recurring (a standing weekly call, someone's
+# personal Zoom room reused constantly) — without a time window, sharing by
+# link alone would hand someone a transcript from a completely different
+# occasion weeks ago instead of starting a bot for the one happening now.
+# A meeting rarely runs longer than this, so anything older genuinely is a
+# different occurrence of the same link, not the same meeting.
+_SHARE_WINDOW_HOURS = 6
+
+
+def find_meeting_by_url(url: str) -> dict | None:
+    """The most recent meeting already joining/recording/processing/done for
+    this exact link, started within the last _SHARE_WINDOW_HOURS — lets
+    app.py's _join() share that meeting (its live status if still in
+    progress, or straight to its transcript if already done) instead of
+    spawning a second bot into the same meeting. A prior 'failed' attempt on
+    the same link doesn't count, so retrying after a failure still starts a
+    fresh bot rather than reusing the broken one — and neither does a match
+    outside the time window, so a recurring link reused next week starts
+    its own fresh bot instead of resurfacing an old transcript."""
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT * FROM meetings
+                WHERE url = %s AND status != 'failed'
+                    AND created_at > NOW() - make_interval(hours => %s)
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (url, _SHARE_WINDOW_HOURS),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    row = with_conn(_do)
+    if row is None:
+        return None
+    row["created_at"] = row["created_at"].strftime("%Y-%m-%dT%H:%M:%S")
+    return row
 
 
 def update_meeting(meeting_id: str, **fields) -> None:
@@ -162,7 +160,7 @@ def update_meeting(meeting_id: str, **fields) -> None:
             cur.execute(f"UPDATE meetings SET {set_clause} WHERE id = %s", (*fields.values(), meeting_id))
         conn.commit()
 
-    _with_conn(_do)
+    with_conn(_do)
 
 
 def list_meetings() -> list[dict]:
@@ -171,7 +169,7 @@ def list_meetings() -> list[dict]:
             cur.execute("SELECT * FROM meetings ORDER BY created_at DESC")
             return [dict(row) for row in cur.fetchall()]
 
-    rows = _with_conn(_do)
+    rows = with_conn(_do)
     for row in rows:
         row["created_at"] = row["created_at"].strftime("%Y-%m-%dT%H:%M:%S")
     return rows
@@ -184,7 +182,7 @@ def get_meeting(meeting_id: str) -> dict | None:
             row = cur.fetchone()
         return dict(row) if row else None
 
-    row = _with_conn(_do)
+    row = with_conn(_do)
     if row is None:
         return None
     row["created_at"] = row["created_at"].strftime("%Y-%m-%dT%H:%M:%S")

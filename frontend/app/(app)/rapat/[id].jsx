@@ -12,19 +12,23 @@ import {
   View,
 } from "react-native";
 
-import { colors, radius, spacing, type } from "@/constants/theme";
-import { getJobStatus, getMeeting, getRecordingUrl, stopJob, updateTranscript } from "@/lib/api";
+import { colors, radius, shadow, spacing, type } from "@/constants/theme";
+import { getJobStatus, getMeeting, getRecordingUrl, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { StatusPill } from "@/components/StatusPill";
 
 // Cycles through existing theme colors rather than introducing new ones —
-// consistent color per speaker label (SPEAKER_00, SPEAKER_01, ...), not a
-// real identity (diarization only gives us numbered speakers, not names).
+// consistent color per speaker label, not a real identity (diarization only
+// gives us numbered speakers, not names). Hashes the whole label (not just
+// a trailing "_00" digit) so a renamed/merged speaker ("Kresna") still gets
+// a stable color, and two labels that get merged into the same name
+// automatically end up the same color too.
 const SPEAKER_PALETTE = [colors.info, colors.success, colors.goldDeep, colors.danger];
 function speakerColor(speaker) {
-  const match = /(\d+)$/.exec(speaker || "");
-  const idx = match ? parseInt(match[1], 10) : 0;
-  return SPEAKER_PALETTE[idx % SPEAKER_PALETTE.length];
+  if (!speaker) return SPEAKER_PALETTE[0];
+  let hash = 0;
+  for (let i = 0; i < speaker.length; i++) hash = (hash * 31 + speaker.charCodeAt(i)) >>> 0;
+  return SPEAKER_PALETTE[hash % SPEAKER_PALETTE.length];
 }
 
 // transcribe.py writes one "[SPEAKER_NN] text" line per utterance — parsed
@@ -59,23 +63,41 @@ function SpeakerBadge({ speaker }) {
   );
 }
 
-// Editable variant used only in the transcript editor — the color still
-// keys off the original speaker id (stable) even after the label is
-// renamed. The users/user icon toggles whether typing here renames this
-// speaker id everywhere (isGlobal) or just this one line (diarization
-// sometimes mis-attributes a single line to the wrong speaker cluster).
-function EditableSpeakerBadge({ speaker, value, isGlobal, onToggleGlobal, onChangeText }) {
-  const color = speakerColor(speaker);
+// Editable variant used only in the transcript editor — color keys off the
+// currently-displayed value (not the raw speaker id), so two speakers
+// merged into the same name immediately show the same color instead of
+// only matching after a save+reload. The users/user icon toggles whether
+// typing here renames this speaker id everywhere (isGlobal) or just this
+// one line (diarization sometimes mis-attributes a single line to the
+// wrong speaker cluster). The merge icon opens a pick-list of the other
+// speaker names already used in this transcript, so merging two
+// over-segmented clusters doesn't require retyping the name identically.
+function EditableSpeakerBadge({ speaker, value, isGlobal, onToggleGlobal, onChangeText, otherLabels, mergeOpen, onToggleMerge, onMerge }) {
+  const color = speakerColor(value);
   return (
-    <View style={[styles.speakerBadge, { backgroundColor: `${color}22` }]}>
-      <Pressable
-        onPress={onToggleGlobal}
-        style={styles.speakerScopeToggle}
-        hitSlop={6}
-      >
-        <Feather name={isGlobal ? "users" : "user"} size={11} color={color} />
-      </Pressable>
-      <TextInput style={[styles.speakerBadgeInput, { color }]} value={value} onChangeText={onChangeText} />
+    <View style={styles.speakerBadgeWrap}>
+      <View style={[styles.speakerBadge, { backgroundColor: `${color}22` }]}>
+        <Pressable onPress={onToggleGlobal} style={styles.speakerScopeToggle} hitSlop={6}>
+          <Feather name={isGlobal ? "users" : "user"} size={11} color={color} />
+        </Pressable>
+        <TextInput style={[styles.speakerBadgeInput, { color }]} value={value} onChangeText={onChangeText} />
+        {otherLabels.length > 0 && (
+          <Pressable onPress={onToggleMerge} style={styles.speakerScopeToggle} hitSlop={6}>
+            <Feather name="git-merge" size={11} color={color} />
+          </Pressable>
+        )}
+      </View>
+      {mergeOpen && (
+        <View style={styles.mergeMenu}>
+          <Text style={styles.mergeMenuLabel}>Gabung ke:</Text>
+          {otherLabels.map((label) => (
+            <Pressable key={label} style={styles.mergeMenuItem} onPress={() => onMerge(label)}>
+              <View style={[styles.mergeMenuDot, { backgroundColor: speakerColor(label) }]} />
+              <Text style={styles.mergeMenuItemLabel}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -153,6 +175,9 @@ export default function MeetingDetailScreen() {
   // (false). Per-line so different lines of the same speaker can be in
   // different modes at once.
   const [lineIsGlobal, setLineIsGlobal] = useState({});
+  // Which line's "gabung ke speaker lain" pick-list is open — only one at
+  // a time, since it's rendered inline right under that line's badge.
+  const [mergeOpenIndex, setMergeOpenIndex] = useState(null);
   const [savingTranscript, setSavingTranscript] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
@@ -232,7 +257,12 @@ export default function MeetingDetailScreen() {
       // the meeting's summary afterward reflects that corrected transcript,
       // not the model's first pass.
       const lineSpeakers = resolveLineSpeakers(editedLines, speakerNames, lineOverrides);
-      const result = await updateTranscript(id, joinTranscriptLines(editedLines, lineSpeakers), lineSpeakers);
+      const result = await updateTranscript(
+        id,
+        joinTranscriptLines(editedLines, lineSpeakers),
+        lineSpeakers,
+        editedLines.map((l) => l.text)
+      );
       setMeeting((m) => ({
         ...m,
         fixed_transcript: result.fixed_transcript,
@@ -246,6 +276,36 @@ export default function MeetingDetailScreen() {
     } finally {
       setSavingTranscript(false);
     }
+  }
+
+  function handleToggleActionItem(index) {
+    // Optimistic — flip it locally right away, reconcile with whatever the
+    // server actually persisted once the request comes back (same file on
+    // disk, so this should always agree, but never trust just the optimism).
+    setMeeting((m) => ({
+      ...m,
+      summary: {
+        ...m.summary,
+        action_items: m.summary.action_items.map((item, i) =>
+          i === index ? { ...item, done: !item.done } : item
+        ),
+      },
+    }));
+    toggleActionItem(id, index)
+      .then((summary) => setMeeting((m) => ({ ...m, summary })))
+      .catch(() => {
+        // Revert on failure — flip it back rather than leaving the UI
+        // showing a state the server never actually saved.
+        setMeeting((m) => ({
+          ...m,
+          summary: {
+            ...m.summary,
+            action_items: m.summary.action_items.map((item, i) =>
+              i === index ? { ...item, done: !item.done } : item
+            ),
+          },
+        }));
+      });
   }
 
   const isLive = liveStatus && liveStatus !== "failed";
@@ -417,6 +477,36 @@ export default function MeetingDetailScreen() {
                           ))}
                         </View>
                       </View>
+
+                      {meeting.summary.action_items?.length > 0 && (
+                        <View style={styles.actionItemsCard}>
+                          <Text style={styles.colTitle}>Action Items</Text>
+                          {meeting.summary.action_items.map((item, i) => (
+                            <Pressable
+                              key={i}
+                              style={styles.actionItemRow}
+                              onPress={() => handleToggleActionItem(i)}
+                            >
+                              <Feather
+                                name={item.done ? "check-square" : "square"}
+                                size={15}
+                                color={item.done ? colors.success : colors.inkFaint}
+                                style={{ marginTop: 2 }}
+                              />
+                              <View style={{ flex: 1 }}>
+                                <Text style={[styles.actionItemTask, item.done && styles.actionItemTaskDone]}>
+                                  {item.task}
+                                </Text>
+                                {(item.assignee || item.due) && (
+                                  <Text style={styles.actionItemMeta}>
+                                    {[item.assignee, item.due].filter(Boolean).join(" · ")}
+                                  </Text>
+                                )}
+                              </View>
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
                     </View>
                   ) : (
                     <View style={styles.section}>
@@ -502,37 +592,51 @@ export default function MeetingDetailScreen() {
                         <Text style={styles.editorColTitle}>Transkrip Mentah</Text>
                         {meeting.transcript ? (
                           <ScrollView style={styles.editorLinesBox}>
-                            {editedLines.map((line, i) => (
-                              <View key={i} style={styles.editorLineRow}>
-                                {line.speaker && (
-                                  <View style={styles.editorLineHeader}>
-                                    <EditableSpeakerBadge
-                                      speaker={line.speaker}
-                                      value={lineOverrides[i] ?? speakerNames[line.speaker] ?? line.speaker}
-                                      isGlobal={lineIsGlobal[i] ?? true}
-                                      onToggleGlobal={() =>
-                                        setLineIsGlobal((m) => ({ ...m, [i]: !(m[i] ?? true) }))
-                                      }
-                                      onChangeText={(name) => {
-                                        if (lineIsGlobal[i] ?? true) {
-                                          setSpeakerNames((m) => ({ ...m, [line.speaker]: name }));
-                                        } else {
-                                          setLineOverrides((m) => ({ ...m, [i]: name }));
+                            {(() => {
+                              const lineSpeakers = resolveLineSpeakers(editedLines, speakerNames, lineOverrides);
+                              const applyName = (i, name) => {
+                                if (lineIsGlobal[i] ?? true) {
+                                  setSpeakerNames((m) => ({ ...m, [editedLines[i].speaker]: name }));
+                                } else {
+                                  setLineOverrides((m) => ({ ...m, [i]: name }));
+                                }
+                              };
+                              return editedLines.map((line, i) => (
+                                <View
+                                  key={i}
+                                  style={[styles.editorLineRow, mergeOpenIndex === i && styles.editorLineRowElevated]}
+                                >
+                                  {line.speaker && (
+                                    <View style={styles.editorLineHeader}>
+                                      <EditableSpeakerBadge
+                                        speaker={line.speaker}
+                                        value={lineSpeakers[i]}
+                                        isGlobal={lineIsGlobal[i] ?? true}
+                                        onToggleGlobal={() =>
+                                          setLineIsGlobal((m) => ({ ...m, [i]: !(m[i] ?? true) }))
                                         }
-                                      }}
-                                    />
-                                  </View>
-                                )}
-                                <TextInput
-                                  style={styles.editorLineInput}
-                                  multiline
-                                  value={line.text}
-                                  onChangeText={(text) =>
-                                    setEditedLines((lines) => lines.map((l, j) => (j === i ? { ...l, text } : l)))
-                                  }
-                                />
-                              </View>
-                            ))}
+                                        onChangeText={(name) => applyName(i, name)}
+                                        otherLabels={[...new Set(lineSpeakers.filter((l, j) => l && j !== i && l !== lineSpeakers[i]))]}
+                                        mergeOpen={mergeOpenIndex === i}
+                                        onToggleMerge={() => setMergeOpenIndex((cur) => (cur === i ? null : i))}
+                                        onMerge={(name) => {
+                                          applyName(i, name);
+                                          setMergeOpenIndex(null);
+                                        }}
+                                      />
+                                    </View>
+                                  )}
+                                  <TextInput
+                                    style={styles.editorLineInput}
+                                    multiline
+                                    value={line.text}
+                                    onChangeText={(text) =>
+                                      setEditedLines((lines) => lines.map((l, j) => (j === i ? { ...l, text } : l)))
+                                    }
+                                  />
+                                </View>
+                              ));
+                            })()}
                           </ScrollView>
                         ) : (
                           <View style={styles.editorRawBox}>
@@ -737,6 +841,19 @@ const styles = StyleSheet.create({
   },
   topicText: { ...type.body, color: colors.inkSoft, flex: 1, lineHeight: 20 },
 
+  actionItemsCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  actionItemRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  actionItemTask: { ...type.body, color: colors.ink, lineHeight: 20 },
+  actionItemTaskDone: { color: colors.inkFaint, textDecorationLine: "line-through" },
+  actionItemMeta: { ...type.small, color: colors.inkFaint, marginTop: 2 },
+
   mediaGrid: { flexDirection: "row", gap: spacing.lg, alignItems: "flex-start" },
   videoCol: { flex: 1.1, gap: spacing.sm },
   fileInfoRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
@@ -773,6 +890,7 @@ const styles = StyleSheet.create({
   segmentHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   segmentTime: { ...type.small, color: colors.inkFaint, fontVariant: ["tabular-nums"] },
   segmentText: { ...type.body, color: colors.ink, lineHeight: 20 },
+  speakerBadgeWrap: { position: "relative", alignSelf: "flex-start" },
   speakerBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -784,6 +902,24 @@ const styles = StyleSheet.create({
   speakerBadgeLabel: { ...type.small, fontWeight: "700" },
   speakerScopeToggle: { paddingVertical: 1 },
   speakerBadgeInput: { ...type.small, fontWeight: "700", padding: 0, minWidth: 60, outlineStyle: "none" },
+  mergeMenu: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    marginTop: 4,
+    zIndex: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    padding: spacing.xs,
+    minWidth: 140,
+    ...shadow.card,
+  },
+  mergeMenuLabel: { ...type.small, color: colors.inkFaint, paddingHorizontal: spacing.xs, paddingBottom: 2 },
+  mergeMenuItem: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 5, paddingHorizontal: spacing.xs, borderRadius: radius.sm },
+  mergeMenuDot: { width: 8, height: 8, borderRadius: 4 },
+  mergeMenuItemLabel: { ...type.small, fontWeight: "600", color: colors.ink },
   syncNote: { ...type.small, color: colors.inkFaint, fontStyle: "italic" },
 
   // Transcript editor (Transkrip tab)
@@ -816,6 +952,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  // z-index only wins against siblings within the same stacking context —
+  // without this, the "gabung ke" dropdown (position: absolute, zIndex: 10
+  // inside speakerBadgeWrap) still rendered underneath the next row, since
+  // that row is a separate, later-painted sibling with no z-index of its
+  // own. Lifting the whole open row above its siblings fixes it.
+  editorLineRowElevated: { position: "relative", zIndex: 20 },
   editorLineHeader: { flexDirection: "row" },
   editorLineInput: {
     ...type.body,

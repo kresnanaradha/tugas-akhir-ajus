@@ -1,7 +1,7 @@
 // Thin wrapper around the meeting-bot Flask API (see meeting-bot/app.py).
 // EXPO_PUBLIC_API_URL lets this point at a deployed bot service later;
 // defaults to the local dev server.
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000";
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5050";
 
 async function handleResponse(res) {
   const data = await res.json();
@@ -66,17 +66,56 @@ export async function getMeeting(id) {
 
 // Saves the user-approved/edited transcript as this meeting's fixed
 // transcript and re-runs the summary against it — see POST
-// /meetings/<id>/transcript in app.py. lineSpeakers is optional: one label
-// (or null) per transcript line, same order as segments.json — when given
-// and its length matches, also renames those speakers in segments.json so
-// the synced Transkrip tab picks up the same names. Returns
+// /meetings/<id>/transcript in app.py. lineSpeakers/lineTexts are optional:
+// one entry per transcript line, same order as segments.json — when given
+// and their length matches, also patches those speakers/text in
+// segments.json so the synced Transkrip tab shows the same correction
+// instead of the original ASR output. Returns
 // {fixed_transcript, summary, segments?} or {fixed_transcript, summary_error}.
-export async function updateTranscript(id, transcript, lineSpeakers) {
+export async function updateTranscript(id, transcript, lineSpeakers, lineTexts) {
   const res = await fetch(`${API_BASE_URL}/meetings/${encodeURIComponent(id)}/transcript`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcript, line_speakers: lineSpeakers }),
+    body: JSON.stringify({ transcript, line_speakers: lineSpeakers, line_texts: lineTexts }),
   });
+  return handleResponse(res);
+}
+
+// Flips one action item's done flag — see POST
+// /meetings/<id>/action-items/<index>/toggle in app.py. Returns the updated
+// summary object.
+export async function toggleActionItem(id, index) {
+  const res = await fetch(`${API_BASE_URL}/meetings/${encodeURIComponent(id)}/action-items/${index}/toggle`, {
+    method: "POST",
+  });
+  return handleResponse(res);
+}
+
+// Current subscription — {id, plan: "free"|"pro"|"team", status, current_period_end}.
+// Always returns something (Free with no row yet is the default, not an
+// error) — see GET /billing/status in app.py.
+export async function getBillingStatus() {
+  const res = await fetch(`${API_BASE_URL}/billing/status`);
+  return handleResponse(res);
+}
+
+// Starts a Xendit subscription checkout for "pro" or "team" — returns
+// {checkout_url}; redirect the browser there. The plan only actually
+// changes once the user finishes linking a payment method on that page and
+// Xendit's webhook confirms it (see POST /billing/webhook in app.py) — this
+// call alone doesn't upgrade anything.
+export async function startCheckout(plan) {
+  const res = await fetch(`${API_BASE_URL}/billing/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan }),
+  });
+  return handleResponse(res);
+}
+
+// Cancels the current paid subscription (downgrades to Free immediately).
+export async function cancelSubscription() {
+  const res = await fetch(`${API_BASE_URL}/billing/cancel`, { method: "POST" });
   return handleResponse(res);
 }
 

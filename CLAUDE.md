@@ -154,7 +154,7 @@ wraps every page in its folder, that's where the sidebar/topbar shell lives).
   used by both `rapat/baru.jsx` and `rapat/upload.jsx` so that logic isn't
   duplicated across the two pages.
 - `lib/api.js` — the only place that talks to the backend (`fetch()` calls
-  to `EXPO_PUBLIC_API_URL`, default `http://localhost:5000`).
+  to `EXPO_PUBLIC_API_URL`, default `http://localhost:5050`).
 - `constants/theme.js` — design tokens (colors, spacing, type, radius) used
   everywhere instead of hardcoded values.
 - `constants/mock-data.js` — down to just `aiInsight` and `currentUser`
@@ -352,6 +352,6 @@ npm run web
 ```
 
 Opens on `http://localhost:8081`. It expects the backend at
-`http://localhost:5000` by default (override with `EXPO_PUBLIC_API_URL`) —
+`http://localhost:5050` by default (override with `EXPO_PUBLIC_API_URL`) —
 run `python app.py` in `meeting-bot/` first, or "Buat Sesi Rapat Baru" /
 "Upload Audio Rapat" will just show a connection error.

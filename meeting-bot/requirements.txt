@@ -12,3 +12,4 @@ python-dotenv
 whisperx
 openai
 psycopg2-binary
+requests

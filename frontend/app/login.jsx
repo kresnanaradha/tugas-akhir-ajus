@@ -68,9 +68,9 @@ export default function LoginScreen() {
             </Pressable>
           </View>
 
-          <Text style={styles.formTitle}>{tab === "masuk" ? "Selamat datang kembali" : "Buat akun organisasi"}</Text>
+          <Text style={styles.formTitle}>{tab === "masuk" ? "Selamat datang kembali" : "Buat akun tim"}</Text>
           <Text style={styles.formSubtitle}>
-            {tab === "masuk" ? "Masuk ke akun Notulis Anda" : "Mulai kelola rapat organisasi Anda"}
+            {tab === "masuk" ? "Masuk ke akun Notulis Anda" : "Mulai kelola rapat tim Anda"}
           </Text>
 
           <View style={styles.field}>

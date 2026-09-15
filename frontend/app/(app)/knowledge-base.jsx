@@ -5,7 +5,7 @@ export default function KnowledgeBaseScreen() {
     <PlaceholderPage
       icon="search"
       title="Knowledge Base"
-      description="Cari dan tanya jawab lintas seluruh hasil rapat organisasi secara semantik."
+      description="Cari dan tanya jawab lintas seluruh hasil rapat tim secara semantik."
       comingFeatures={[
         "Ringkasan rapat disimpan otomatis ke Knowledge Base",
         "Diproses dengan LangChain, Hugging Face untuk embeddings, dan Chroma sebagai vector database",

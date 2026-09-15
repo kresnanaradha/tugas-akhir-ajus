@@ -11,7 +11,7 @@ const NAV_ITEMS = [
   { href: "/knowledge-base", label: "Knowledge Base", icon: "search" },
   { href: "/perbandingan", label: "Perbandingan", icon: "shuffle" },
   { href: "/laporan", label: "Laporan", icon: "bar-chart-2" },
-  { href: "/organisasi", label: "Organisasi", icon: "layers" },
+  { href: "/team", label: "Team", icon: "users" },
 ];
 
 export function Sidebar() {
@@ -42,10 +42,16 @@ export function Sidebar() {
       </View>
 
       <View style={styles.footer}>
-        <Pressable style={styles.navItem}>
-          <Feather name="settings" size={17} color={colors.inkSoft} />
-          <Text style={styles.navLabel}>Pengaturan</Text>
-        </Pressable>
+        <Link href="/pengaturan" asChild>
+          <Pressable style={StyleSheet.flatten([styles.navItem, pathname === "/pengaturan" && styles.navItemActive])}>
+            <Feather name="settings" size={17} color={pathname === "/pengaturan" ? colors.ink : colors.inkSoft} />
+            <Text
+              style={StyleSheet.flatten([styles.navLabel, pathname === "/pengaturan" && styles.navLabelActive])}
+            >
+              Pengaturan
+            </Text>
+          </Pressable>
+        </Link>
         <View style={styles.userRow}>
           <View style={styles.avatar}>
             <Text style={styles.avatarLabel}>{currentUser.initials}</Text>

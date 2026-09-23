@@ -44,9 +44,13 @@ is project status — what's done, what's next, what to watch out for.
     transcribe/fix/summarize pipeline as the join endpoints.
   - `GET /meetings` — reads the index below.
   - `GET /meetings/<id>` — one meeting's full detail, reading its
-    transcript/fixed_transcript/summary back from their sibling files on
-    disk via `pipeline/paths.py`'s `sibling_path()` — the `meetings` table
-    only stores the recording path, not that text.
+    transcript/fixed_transcript/segments/summary back from Cloudflare R2 via
+    `pipeline/artifacts.py` — the `meetings` table only stores the R2
+    recording key, not that text.
+  - `GET /meetings/<id>/recording` — 302 redirects to a time-limited
+    presigned R2 URL (`pipeline/storage.py`'s `presigned_url()`) rather than
+    serving the file through Flask — the browser streams straight from R2
+    (Range requests still work, so `<video>` scrubbing is unaffected).
 
   Each pipeline step's failure is reported independently
   (`transcript_error`, `fix_transcript_error`, `summary_error`) rather than
@@ -84,26 +88,47 @@ is project status — what's done, what's next, what to watch out for.
   multiple threads at once with no coordination at all.
 - `bots/base.py` — shared recording logic: injects a `getDisplayMedia` +
   `MediaRecorder` script into the joined page, relays chunks back to Python
-  via an exposed function, writes them to `recordings/videos/`.
+  via an exposed function, writes them to a local scratch file
+  (`recordings/videos/`) while the recording is still live — whisperx needs
+  a real local file to decode. Once transcription is done, `app.py` uploads
+  that file to Cloudflare R2 (`pipeline/storage.py`'s `upload_recording()`)
+  and deletes the local copy; the `meetings` table's `recording` column then
+  holds the R2 key, not a local path.
 - `bots/google_meet.py` — Google Meet join flow (CDP-attached signed-in
   sidecar Chrome).
 - `bots/zoom.py` — Zoom join flow (anonymous guest, direct web-client URL +
   stealth patch).
 - `pipeline/transcribe.py` — transcription via `whisperx` (local, no API
   cost): a faster-whisper backend, word-alignment, and pyannote diarization,
-  producing a `[SPEAKER_NN] ...`-labeled transcript per line. Saves to
-  `recordings/transcripts/`.
+  producing a `[SPEAKER_NN] ...`-labeled transcript per line, plus a
+  per-segment `{speaker, start, end, text}` list (for syncing transcript
+  lines to playback). Both saved to R2 via `pipeline/artifacts.py`.
 - `pipeline/summarize.py` — two GPT-4o mini passes: `fix_transcript()`
   corrects likely ASR mistakes and collapses hallucinated repeated closing
-  lines (saves to `recordings/fixed_transcripts/`), then `summarize()`
-  produces `{executive_summary, key_decisions, topics_discussed}` JSON
-  (saves to `recordings/summaries/`) per Table 2 of the proposal.
-- `pipeline/paths.py` — `sibling_path()`: given a video path like
-  `recordings/videos/Foo_123.webm`, resolves the matching file in a sibling
-  type folder (`recordings/transcripts/Foo_123.txt` etc.), creating it if
-  needed. All three output stages use this so everything for one meeting
-  shares a filename stem across `videos/`, `transcripts/`,
-  `fixed_transcripts/`, and `summaries/`.
+  lines, then `summarize()` produces `{executive_summary, key_decisions,
+  topics_discussed, action_items}` JSON per Table 2 of the proposal. Both
+  save their output to R2 via `pipeline/artifacts.py`.
+- `pipeline/storage.py` / `pipeline/artifacts.py` — Cloudflare R2 (S3-
+  compatible) storage layer, added when the app moved off local disk.
+  `storage.py` wraps a `boto3` S3 client pointed at R2's endpoint
+  (`put_text`/`get_text`/`head`/`presigned_url`/`upload_recording`);
+  `artifacts.py` is the meeting-id-keyed convenience layer on top
+  (`save_transcript`/`load_transcript`/etc.) that everything else calls.
+  Every artifact for one meeting lives under a shared `<meeting_id>/...` key
+  prefix (`recording.<ext>`, `transcript.txt`, `fixed_transcript.txt`,
+  `segments.json`, `summary.json`) — R2's dashboard renders that as a
+  folder per meeting automatically, no extra code needed. Needs
+  `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+  `R2_BUCKET_NAME` in `.env` (see "To resume on another machine").
+  **Read env vars lazily, not at module import time** — an earlier version
+  read the bucket name at module level and silently broke because `app.py`
+  imported this module before calling `load_dotenv()`; keep `load_dotenv()`
+  as the first thing `app.py` does, before any local imports, if this ever
+  gets touched again.
+  `meeting-bot/migrate_to_r2.py` was a one-off script (safe to delete, or
+  keep for reference) that moved all pre-R2 local recordings/transcripts/
+  summaries into this scheme; nothing on disk under `recordings/` should be
+  relied on any more — treat R2 as the only source of truth.
 
 ### Frontend (`frontend/`)
 
@@ -310,9 +335,10 @@ pin) before spending hours re-debugging it like this session did.
    retries a failed admission (`_MAX_JOIN_ATTEMPTS = 3`) — only Zoom's join
    is genuinely a single 60s attempt with no retry.
 5. Eventually: move off the in-memory `_jobs` dict/background-thread setup
-   toward the proposal's actual architecture (Redis job queue, S3 upload
-   instead of local disk, auth between the main Notulis backend and this
-   service). The join endpoints are non-blocking now (previous point), but
+   toward the proposal's actual architecture (Redis job queue, auth between
+   the main Notulis backend and this service — object storage is already
+   done, see `pipeline/storage.py`/`pipeline/artifacts.py` above). The join
+   endpoints are non-blocking now (previous point), but
    that's a lighter-weight stopgap for one process, not the real thing — no
    isolation between jobs, nothing survives a restart, still just one job at
    a time by an explicit guard rather than true concurrency. Deliberately not
@@ -333,10 +359,13 @@ cp .env.example .env
 Fill in `.env`: `OPENAI_API_KEY` (AI summarization/transcript-fix, GPT-4o
 mini), `HF_TOKEN` (diarization — remember this also needs accepting the
 pyannote model's terms on HuggingFace once, a token alone isn't enough; see
-"Transcription/summarization notes" above), and `DATABASE_URL` (Postgres
+"Transcription/summarization notes" above), `DATABASE_URL` (Postgres
 connection string for the meetings index — using Supabase: Project Settings
--> Database -> Connection string). The `meetings` table is created
-automatically on first connect, nothing to migrate by hand.
+-> Database -> Connection string), and `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/
+`R2_SECRET_ACCESS_KEY`/`R2_BUCKET_NAME` (Cloudflare R2 — Account API Token
+with Object Read & Write scoped to the bucket, not a User token; see
+`pipeline/storage.py` above). The `meetings` table is created automatically
+on first connect, nothing to migrate by hand.
 
 For Google Meet, also start the signed-in Chrome sidecar (README has the
 exact command, including `--auto-accept-this-tab-capture` — and a warning to

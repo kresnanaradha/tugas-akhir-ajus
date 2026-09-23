@@ -1,9 +1,11 @@
 import { Feather } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { router } from "expo-router";
 import { useState } from "react";
-import { Image, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
+import { login, register } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 const PITCH_POINTS = [
   "Rekam rapat Google Meet & Zoom secara otomatis",
@@ -16,6 +18,35 @@ export default function LoginScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
   const [tab, setTab] = useState("masuk");
+  const { signIn } = useAuth();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit() {
+    setError("");
+    if (!email.trim() || !password) {
+      setError("Email dan password wajib diisi.");
+      return;
+    }
+    if (tab === "daftar" && !name.trim()) {
+      setError("Nama wajib diisi.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const user = tab === "masuk" ? await login(email.trim(), password) : await register(email.trim(), password, name.trim());
+      signIn(user);
+      router.replace("/dashboard");
+    } catch (e) {
+      setError(e.message || "Terjadi kesalahan");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <View style={[styles.screen, isWide && styles.screenWide]}>
@@ -73,6 +104,19 @@ export default function LoginScreen() {
             {tab === "masuk" ? "Masuk ke akun Notulis Anda" : "Mulai kelola rapat tim Anda"}
           </Text>
 
+          {tab === "daftar" && (
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>NAMA</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Nama lengkap"
+                placeholderTextColor={colors.inkFaint}
+                value={name}
+                onChangeText={setName}
+              />
+            </View>
+          )}
+
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>EMAIL</Text>
             <TextInput
@@ -80,6 +124,8 @@ export default function LoginScreen() {
               placeholder="admin@ptmajubersama.co.id"
               placeholderTextColor={colors.inkFaint}
               autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
             />
           </View>
 
@@ -92,16 +138,25 @@ export default function LoginScreen() {
                 </Pressable>
               )}
             </View>
-            <TextInput style={styles.input} placeholder="••••••••" placeholderTextColor={colors.inkFaint} secureTextEntry />
+            <TextInput
+              style={styles.input}
+              placeholder="••••••••"
+              placeholderTextColor={colors.inkFaint}
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
           </View>
 
-          <Link href="/dashboard" asChild>
-            <Pressable style={styles.submit}>
-              <Text style={styles.submitLabel}>{tab === "masuk" ? "Masuk" : "Daftar"}</Text>
-            </Pressable>
-          </Link>
+          {!!error && <Text style={styles.errorText}>{error}</Text>}
 
-          <Text style={styles.demoNote}>Demo: tekan tombol untuk lihat dashboard</Text>
+          <Pressable style={[styles.submit, submitting && styles.submitDisabled]} onPress={handleSubmit} disabled={submitting}>
+            {submitting ? (
+              <ActivityIndicator color={colors.ink} size="small" />
+            ) : (
+              <Text style={styles.submitLabel}>{tab === "masuk" ? "Masuk" : "Daftar"}</Text>
+            )}
+          </Pressable>
         </View>
       </View>
     </View>
@@ -222,5 +277,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   submitLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
-  demoNote: { ...type.small, color: colors.inkFaint, textAlign: "center", marginTop: spacing.md },
+  errorText: { ...type.small, color: colors.danger, marginBottom: spacing.md },
+  submitDisabled: { opacity: 0.6 },
 });

@@ -27,6 +27,33 @@ register_schema(_TABLE_SQL)
 # exists; every function below already takes/returns an id for that.
 DEFAULT_ACCOUNT_ID = "default"
 
+# In IDR — matches the pricing shown on the frontend's Pengaturan page. Free
+# has no checkout at all (nothing to charge). Lives here (not app.py) so
+# admin_stats.py's MRR calculation can share it instead of duplicating it.
+PLAN_PRICES = {"pro": 99_000, "team": 299_000}
+
+
+def count_active_by_plan() -> dict:
+    """{"pro": N, "team": N, ...} — active subscription counts per plan,
+    for the super admin dashboard's MRR figure. Mirrors get_subscription()'s
+    lazy cancel-at-period-end check (a row whose period has already lapsed
+    doesn't count as active even if its `status` column hasn't been updated
+    yet — nothing flips that column on its own, see get_subscription())."""
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT plan, COUNT(*) AS n FROM subscriptions
+                WHERE status = 'active' AND (NOT cancel_at_period_end OR current_period_end > NOW())
+                GROUP BY plan
+                """
+            )
+            return cur.fetchall()
+
+    rows = with_conn(_do)
+    return {row["plan"]: row["n"] for row in rows}
+
 
 def get_subscription(account_id: str = DEFAULT_ACCOUNT_ID) -> dict:
     def _do(conn):

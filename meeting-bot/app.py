@@ -1,28 +1,42 @@
-import json
 import os
 import re
 import threading
 import time
 import uuid
+from functools import wraps
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, request, send_file
+
+# Must run before any local module import below — several of them (e.g.
+# pipeline/storage.py's R2 bucket name) read an env var at *import* time,
+# not lazily inside a function, so .env has to already be loaded into
+# os.environ by the time those imports happen. Learned the hard way: this
+# used to sit after the imports and every request failed with a confusing
+# "expected string or bytes-like object" from deep inside boto3 (the bucket
+# name silently coming through as None).
+load_dotenv()
+
+import psycopg2.errors
+import requests
+from flask import Flask, Response, jsonify, redirect, request, session
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from pipeline import billing_store
+from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, report_pdf, storage
 from pipeline.meetings_store import find_meeting_by_url, get_meeting, list_meetings, start_meeting, update_meeting
-from pipeline.paths import sibling_path
 from pipeline.summarize import fix_transcript, summarize
 from pipeline.transcribe import transcribe
 from pipeline.xendit_client import create_subscription_session, deactivate_recurring_plan
 
-load_dotenv()
-
 app = Flask(__name__)
+# Signs the session cookie (Flask's built-in itsdangerous-based session) —
+# auth/login below relies on this being stable across restarts, or every
+# user gets logged out each time the backend restarts. Required in .env,
+# not defaulted, so a real deployment can't accidentally run with a
+# well-known/empty key.
+app.secret_key = os.environ["SECRET_KEY"]
 MAX_DURATION_MIN = float(os.getenv("MAX_RECORDING_DURATION_MINUTES", "5"))
 # Safety cap on /upload request bodies, not a meaningful product limit — just
 # guards against an accidental huge upload hanging the (single-threaded dev)
@@ -38,14 +52,99 @@ def _file_too_large(_e):
 
 @app.after_request
 def _add_cors_headers(response):
-    # Local-dev-only wide-open CORS so the Expo web dev server (a different
-    # port = different origin) can call this API directly. Fine for now
-    # since there's no auth on these endpoints yet either (documented POC
-    # gap) — tighten both together before this is ever exposed publicly.
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    # Local-dev CORS so the Expo web dev server (a different port = a
+    # different origin) can call this API directly. Reflects the request's
+    # own Origin (rather than "*") and sets Allow-Credentials — required for
+    # the session cookie auth/login sets below to actually be sent/read
+    # cross-origin at all; "*" and credentialed requests are mutually
+    # exclusive per the fetch/CORS spec. Still permissive about *which*
+    # origins (any origin gets reflected back) — fine for local dev only,
+    # tighten to an explicit allowlist before this is ever exposed publicly.
+    origin = request.headers.get("Origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return jsonify({"error": "Belum login"}), 401
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def super_admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return jsonify({"error": "Belum login"}), 401
+        if session.get("role") != "super_admin":
+            return jsonify({"error": "Butuh akses super admin"}), 403
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+@app.post("/auth/register")
+def auth_register():
+    data = request.get_json(force=True) or {}
+    email, password, name = data.get("email"), data.get("password"), data.get("name")
+    if not email or not password or not name:
+        return jsonify({"error": "email, password, dan name wajib diisi"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password minimal 8 karakter"}), 400
+
+    try:
+        user = auth_store.create_user(email, password, name)
+    except psycopg2.errors.UniqueViolation:
+        return jsonify({"error": "Email sudah terdaftar"}), 409
+
+    session["user_id"] = user["id"]
+    session["role"] = user["role"]
+    return jsonify(user)
+
+
+@app.post("/auth/login")
+def auth_login():
+    data = request.get_json(force=True) or {}
+    email, password = data.get("email"), data.get("password")
+    if not email or not password:
+        return jsonify({"error": "email dan password wajib diisi"}), 400
+
+    user = auth_store.verify_login(email, password)
+    if user is None:
+        return jsonify({"error": "Email atau password salah"}), 401
+
+    session["user_id"] = user["id"]
+    session["role"] = user["role"]
+    return jsonify(user)
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/auth/me")
+def auth_me():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"error": "Belum login"}), 401
+    user = auth_store.get_user(user_id)
+    if user is None:
+        # The session cookie outlived the user row (e.g. manually deleted
+        # from the DB) — clear it rather than keep 401-ing forever with a
+        # cookie the client has no way to know is now invalid.
+        session.clear()
+        return jsonify({"error": "Belum login"}), 401
+    return jsonify(user)
 
 # Whatever ffmpeg (whisperx's loader) can decode — covers both bot output
 # (.webm) and typical uploads.
@@ -63,12 +162,15 @@ MEETING_URL_PATTERNS = {
 MEETING_PLATFORM_LABEL = {"google_meet": "Google Meet", "zoom": "Zoom"}
 
 
-def _process_recording(recording_path: str, num_speakers: int | None = None) -> dict:
-    """Runs transcribe -> fix -> summarize on a recording already on disk.
-    Each step's failure is reported separately instead of failing the whole
-    request — a bad transcription/summarization shouldn't erase a recording
-    that's already sitting on disk. Shared by the join endpoints and /upload
-    so all three drive the exact same pipeline.
+def _process_recording(local_recording_path: str, meeting_id: str, num_speakers: int | None = None) -> dict:
+    """Runs transcribe -> fix -> summarize on a recording still sitting on
+    local disk (whisperx needs a real local file to decode audio from) —
+    the resulting transcript/fixed_transcript/summary/segments all get
+    saved to R2 under meeting_id (see pipeline/artifacts.py), not next to
+    the video file. Each step's failure is reported separately instead of
+    failing the whole request — a bad transcription/summarization shouldn't
+    erase a recording that's already been captured. Shared by the join
+    endpoints and /upload so all three drive the exact same pipeline.
 
     num_speakers is just the user's best guess entered before starting the
     meeting/upload (there's no reliable way to scrape the real participant
@@ -77,7 +179,7 @@ def _process_recording(recording_path: str, num_speakers: int | None = None) -> 
     notes" in CLAUDE.md."""
     result = {}
     try:
-        transcript = transcribe(recording_path, num_speakers=num_speakers)
+        transcript = transcribe(local_recording_path, meeting_id, num_speakers=num_speakers)
         result["transcript"] = transcript
     except Exception as e:
         result["transcript_error"] = str(e)
@@ -89,13 +191,13 @@ def _process_recording(recording_path: str, num_speakers: int | None = None) -> 
     # whole request if only the fix step breaks.
     to_summarize = transcript
     try:
-        to_summarize = fix_transcript(transcript, recording_path)
+        to_summarize = fix_transcript(transcript, meeting_id)
         result["fixed_transcript"] = to_summarize
     except Exception as e:
         result["fix_transcript_error"] = str(e)
 
     try:
-        result["summary"] = summarize(to_summarize, recording_path)
+        result["summary"] = summarize(to_summarize, meeting_id)
     except Exception as e:
         result["summary_error"] = str(e)
 
@@ -114,7 +216,7 @@ _jobs_lock = threading.Lock()
 def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int | None):
     started_at = time.time()
     try:
-        recording_path = bot.join()
+        local_recording_path = bot.join()
     except Exception as e:
         with _jobs_lock:
             _jobs[job_id].update(phase="failed", error=str(e))
@@ -124,12 +226,18 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
 
     with _jobs_lock:
         _jobs[job_id]["phase"] = "processing"
-    update_meeting(job_id, status="processing", recording=recording_path, duration_minutes=duration_minutes)
+    # `recording` here is still the local scratch path, just so
+    # GET /meetings/<id> and friends see a truthy value while transcribe/fix/
+    # summarize run against it below — overwritten with the real R2 key once
+    # upload_recording() hands it off further down.
+    update_meeting(job_id, status="processing", recording=local_recording_path, duration_minutes=duration_minutes)
 
-    result = {"status": "done", "recording": recording_path}
-    result.update(_process_recording(recording_path, num_speakers))
+    result = _process_recording(local_recording_path, job_id, num_speakers)
+    recording_key = storage.upload_recording(local_recording_path, job_id)
+    result["status"] = "done"
+    result["recording"] = recording_key
     final_status = "failed" if result.get("transcript_error") else "completed"
-    update_meeting(job_id, status=final_status)
+    update_meeting(job_id, status=final_status, recording=recording_key)
 
     with _jobs_lock:
         _jobs[job_id].update(phase="done", result=result)
@@ -243,42 +351,71 @@ def meetings():
     return jsonify(list_meetings())
 
 
+@app.get("/knowledge-base/search")
+def knowledge_base_search():
+    """RAG search: matches summary chunks (executive summary / key decision /
+    topic / action item) by embedding similarity, each joined with its
+    meeting's title/date/platform, then has GPT-4o mini write one short
+    answer grounded only in those matches. Still not a chatbot — one query
+    in, one answer + its sources out, no conversation state kept anywhere
+    (see pipeline/knowledge_base.py's module docstring). `results` is always
+    populated even if the answer synthesis fails, so the UI can fall back to
+    showing just the raw matches."""
+    query = (request.args.get("q") or "").strip()
+    if not query:
+        return jsonify({"error": "q is required"}), 400
+
+    matches = knowledge_base.search(query)
+    results = []
+    for m in matches:
+        meeting = get_meeting(m["meeting_id"])
+        if meeting is None:
+            continue  # stale chunk from a deleted meeting — skip rather than error
+        results.append(
+            {
+                "meeting_id": m["meeting_id"],
+                "meeting_title": meeting["title"],
+                "meeting_created_at": meeting["created_at"],
+                "meeting_platform": meeting["platform"],
+                "kind": m["kind"],
+                "text": m["text"],
+                "similarity": m["similarity"],
+            }
+        )
+    return jsonify({"answer": knowledge_base.answer(query, results), "results": results})
+
+
 @app.get("/meetings/<meeting_id>")
 def meeting_detail(meeting_id):
     """Reads back a past meeting's transcript/fixed transcript/summary/
-    per-segment timing from their sibling files on disk (see
-    pipeline/paths.py) — the meetings table only stores the recording path,
-    not the (potentially large) content itself, so this is where that
-    content actually gets read."""
+    per-segment timing from R2 (see pipeline/artifacts.py) — the meetings
+    table only stores the recording's R2 key, not that (potentially large)
+    content itself, so this is where that content actually gets read."""
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
 
-    recording_path = record["recording"]
-    # No recording yet for a still-in-progress meeting (started_meeting()
+    recording_key = record["recording"]
+    # No recording yet for a still-in-progress meeting (start_meeting()
     # inserts the row before any file exists) — nothing to read back yet in
     # that case, the frontend uses GET /jobs/<id> for live status instead.
-    if recording_path:
-        for key, subfolder, suffix, is_json in (
-            ("transcript", "transcripts", ".txt", False),
-            ("fixed_transcript", "fixed_transcripts", ".txt", False),
-            ("summary", "summaries", ".summary.json", True),
-            # Per-segment {speaker, start, end, text} — only present for
-            # recordings transcribed after this was added; older ones
-            # (including the hand-backfilled Google Meet recordings) just
-            # won't have it, so the frontend falls back to plain transcript
-            # display for those.
-            ("segments", "transcripts", ".segments.json", True),
-        ):
-            path = sibling_path(recording_path, subfolder, suffix)
-            if path.exists():
-                text = path.read_text(encoding="utf-8")
-                record[key] = json.loads(text) if is_json else text
+    # A recording that's mid-pipeline (still the local scratch path, not
+    # yet uploaded — see _run_join_job) also has nothing in R2 yet; the
+    # loads below just come back empty for that window, same as before.
+    if recording_key:
+        record["transcript"] = artifacts.load_transcript(meeting_id)
+        record["fixed_transcript"] = artifacts.load_fixed_transcript(meeting_id)
+        record["summary"] = artifacts.load_summary(meeting_id)
+        # Per-segment {speaker, start, end, text} — only present for
+        # recordings transcribed after this was added; older ones just
+        # won't have it, so the frontend falls back to plain transcript
+        # display for those.
+        record["segments"] = artifacts.load_segments(meeting_id)
 
-        full_path = Path(recording_path)
-        if full_path.exists():
-            record["file_size_bytes"] = full_path.stat().st_size
-            record["file_extension"] = full_path.suffix.lstrip(".")
+        info = storage.head(recording_key)
+        if info:
+            record["file_size_bytes"] = info["size"]
+            record["file_extension"] = os.path.splitext(recording_key)[1].lstrip(".")
 
     return jsonify(record)
 
@@ -307,15 +444,13 @@ def update_transcript(meeting_id):
     if not transcript or not transcript.strip():
         return jsonify({"error": "transcript is required"}), 400
 
-    recording_path = record["recording"]
-    sibling_path(recording_path, "fixed_transcripts", ".txt").write_text(transcript, encoding="utf-8")
+    artifacts.save_fixed_transcript(meeting_id, transcript)
 
     result = {"fixed_transcript": transcript}
 
     if line_speakers or line_texts:
-        segments_file = sibling_path(recording_path, "transcripts", ".segments.json")
-        if segments_file.exists():
-            segments = json.loads(segments_file.read_text(encoding="utf-8"))
+        segments = artifacts.load_segments(meeting_id)
+        if segments:
             changed = False
             if line_speakers and len(segments) == len(line_speakers):
                 for seg, label in zip(segments, line_speakers):
@@ -327,11 +462,11 @@ def update_transcript(meeting_id):
                     seg["text"] = text
                 changed = True
             if changed:
-                segments_file.write_text(json.dumps(segments, ensure_ascii=False), encoding="utf-8")
+                artifacts.save_segments(meeting_id, segments)
                 result["segments"] = segments
 
     try:
-        result["summary"] = summarize(transcript, recording_path)
+        result["summary"] = summarize(transcript, meeting_id)
     except Exception as e:
         result["summary_error"] = str(e)
     return jsonify(result)
@@ -340,43 +475,43 @@ def update_transcript(meeting_id):
 @app.post("/meetings/<meeting_id>/action-items/<int:index>/toggle")
 def toggle_action_item(meeting_id, index):
     """Flips one action item's done flag — the only mutable field on a
-    summary, so this patches summaries/*.summary.json directly rather than
-    going through summarize() again (that would cost an OpenAI call and
-    could reword everything else for no reason)."""
+    summary, so this patches the saved summary directly rather than going
+    through summarize() again (that would cost an OpenAI call and could
+    reword everything else for no reason)."""
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
     if not record["recording"]:
         return jsonify({"error": "Recording not available yet"}), 404
 
-    summary_file = sibling_path(record["recording"], "summaries", ".summary.json")
-    if not summary_file.exists():
+    summary = artifacts.load_summary(meeting_id)
+    if summary is None:
         return jsonify({"error": "No summary for this meeting yet"}), 404
 
-    summary = json.loads(summary_file.read_text(encoding="utf-8"))
     items = summary.get("action_items") or []
     if index < 0 or index >= len(items):
         return jsonify({"error": "Invalid action item index"}), 400
 
     items[index]["done"] = not items[index].get("done", False)
-    summary_file.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifacts.save_summary(meeting_id, summary)
     return jsonify(summary)
 
 
 @app.get("/meetings/<meeting_id>/recording")
 def meeting_recording(meeting_id):
-    """Serves the actual video/audio file for playback — looked up through
-    the meeting record rather than taking a raw path, so this can't be used
-    to read arbitrary files off disk."""
+    """Redirects to a time-limited R2 URL for the actual video/audio file —
+    looked up through the meeting record rather than taking a raw key, so
+    this can't be used to read arbitrary objects out of the bucket. The
+    browser talks to R2 directly from here (still supports Range requests
+    for <video> scrubbing), not proxied through Flask."""
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
     if not record["recording"]:
         return jsonify({"error": "Recording not available yet"}), 404
-    recording_path = Path(record["recording"])
-    if not recording_path.exists():
-        return jsonify({"error": "Recording file missing on disk"}), 404
-    return send_file(recording_path)
+    if storage.head(record["recording"]) is None:
+        return jsonify({"error": "Recording file not found"}), 404
+    return redirect(storage.presigned_url(record["recording"]))
 
 
 @app.post("/upload")
@@ -393,11 +528,14 @@ def upload():
     if ext not in UPLOAD_EXTENSIONS:
         return jsonify({"error": f"unsupported file type '{ext}', expected one of {sorted(UPLOAD_EXTENSIONS)}"}), 400
 
+    # Local scratch space, same as a bot recording — transcribe() needs a
+    # real local file to decode, uploaded to R2 (and deleted locally) once
+    # the pipeline's done with it.
     out_dir = Path(os.getenv("RECORDINGS_DIR", "recordings")) / "videos"
     out_dir.mkdir(parents=True, exist_ok=True)
     meeting_id = f"Upload_{int(time.time())}"
-    recording_path = str(out_dir / f"{meeting_id}{ext}")
-    file.save(recording_path)
+    local_recording_path = str(out_dir / f"{meeting_id}{ext}")
+    file.save(local_recording_path)
 
     num_speakers = request.form.get("num_speakers", type=int)  # optional, user-entered
 
@@ -409,18 +547,44 @@ def upload():
     # No cheap way to get audio/video duration here without decoding the file
     # again (ffprobe isn't guaranteed to be on PATH) — duration_minutes stays
     # null rather than adding that dependency just for a display number.
-    update_meeting(meeting_id, status="processing", recording=recording_path)
+    update_meeting(meeting_id, status="processing", recording=local_recording_path)
 
-    result = {"status": "done", "recording": recording_path}
-    result.update(_process_recording(recording_path, num_speakers))
+    result = _process_recording(local_recording_path, meeting_id, num_speakers)
+    recording_key = storage.upload_recording(local_recording_path, meeting_id)
+    result["status"] = "done"
+    result["recording"] = recording_key
     final_status = "failed" if result.get("transcript_error") else "completed"
-    update_meeting(meeting_id, status=final_status)
+    update_meeting(meeting_id, status=final_status, recording=recording_key)
     return jsonify(result)
 
 
-# In IDR — matches the pricing shown on the frontend's Pengaturan page.
-# Free has no checkout at all (nothing to charge).
-PLAN_PRICES = {"pro": 99_000, "team": 299_000}
+@app.get("/admin/stats")
+@super_admin_required
+def admin_stats_route():
+    """Meeting volume (today/this week/this month), active subscriptions +
+    MRR, OpenAI cost (real token usage tracked since pipeline/usage_store.py
+    was added — not retroactively estimated for older meetings), R2 storage
+    used, total registered users. See pipeline/admin_stats.py."""
+    return jsonify(admin_stats.get_stats())
+
+
+@app.get("/admin/export")
+@super_admin_required
+def admin_export():
+    """Formal PDF report — letterhead, executive summary, meeting-volume
+    breakdown, and a full meeting detail table (see
+    pipeline/report_pdf.py) — the "laporan resmi kantor" ask. Reuses
+    admin_stats.get_stats() (same numbers the dashboard itself shows) so the
+    PDF can never drift from what's on screen."""
+    admin = auth_store.get_user(session["user_id"])
+    pdf_bytes = report_pdf.generate_report(admin_stats.get_stats(), list_meetings(), generated_by=admin["name"])
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=notulis-laporan-sistem.pdf"},
+    )
+
+
 # Where the actual frontend dev server runs — always plain localhost, since
 # the browser doing the redirect is the same machine either way.
 LOCAL_FRONTEND_URL = os.getenv("LOCAL_FRONTEND_URL", "http://localhost:8081")
@@ -453,8 +617,8 @@ def billing_checkout():
     payment_session.completed (the user still has to finish linking a
     payment method on Xendit's page first)."""
     plan = (request.get_json(force=True) or {}).get("plan")
-    if plan not in PLAN_PRICES:
-        return jsonify({"error": f"unknown plan '{plan}', expected one of {list(PLAN_PRICES)}"}), 400
+    if plan not in billing_store.PLAN_PRICES:
+        return jsonify({"error": f"unknown plan '{plan}', expected one of {list(billing_store.PLAN_PRICES)}"}), 400
 
     reference_id = f"{billing_store.DEFAULT_ACCOUNT_ID}-{plan}-{uuid.uuid4().hex[:8]}"
     # Falls back to a placeholder if PUBLIC_URL isn't set — checkout still
@@ -462,9 +626,13 @@ def billing_checkout():
     # of bouncing back into the app (see /billing/return above).
     return_base = PUBLIC_URL or "https://example.com"
     try:
-        session = create_subscription_session(
+        # Named checkout_session, not session — shadowing Flask's `session`
+        # (imported for /auth/*) here would be harmless today since this
+        # function doesn't touch it, but it's exactly the kind of name that
+        # bites later when this function gets scoped to the logged-in user.
+        checkout_session = create_subscription_session(
             reference_id=reference_id,
-            plan_amount=PLAN_PRICES[plan],
+            plan_amount=billing_store.PLAN_PRICES[plan],
             email=os.getenv("BILLING_EMAIL", "demo@notulis.app"),
             success_url=f"{return_base}/billing/return?status=success",
             cancel_url=f"{return_base}/billing/return?status=cancel",
@@ -472,8 +640,8 @@ def billing_checkout():
     except requests.HTTPError as e:
         return jsonify({"error": f"Xendit error: {e.response.text}"}), 502
 
-    billing_store.start_checkout(plan, session["payment_session_id"])
-    return jsonify({"checkout_url": session["payment_link_url"]})
+    billing_store.start_checkout(plan, checkout_session["payment_session_id"])
+    return jsonify({"checkout_url": checkout_session["payment_link_url"]})
 
 
 @app.post("/billing/cancel")
@@ -534,4 +702,12 @@ if __name__ == "__main__":
     # 5050, not 5000 — something else on this machine keeps squatting 5000
     # (a stray WSL/other service, going by netstat showing a uvicorn server
     # there that isn't ours), causing requests to land on the wrong process.
-    app.run(port=5050, threaded=True)
+    # host="0.0.0.0" -- Flask's default (127.0.0.1) only accepts connections
+    # from inside the same network namespace, which inside a Docker
+    # container means requests coming in through the container's mapped
+    # port never reach it (confirmed: curl from the host got an empty
+    # reply even though Flask logged itself as running). Harmless on plain
+    # host dev too, it just also listens on the LAN interface, not just
+    # loopback -- no different in practice from the CORS policy already
+    # being wide open for this POC.
+    app.run(host="0.0.0.0", port=5050, threaded=True)

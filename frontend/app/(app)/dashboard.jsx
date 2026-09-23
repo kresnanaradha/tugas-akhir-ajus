@@ -7,9 +7,18 @@ import { colors, radius, spacing, type } from "@/constants/theme";
 import { aiInsight } from "@/constants/mock-data";
 import { listMeetings } from "@/lib/api";
 import { formatMeetingDate } from "@/lib/format";
+import { useAuth } from "@/lib/auth-context";
 import { InsightBanner } from "@/components/InsightBanner";
 import { MeetingRow } from "@/components/MeetingRow";
 import { StatCard } from "@/components/StatCard";
+
+function greetingWord() {
+  const hour = new Date().getHours();
+  if (hour < 11) return "pagi";
+  if (hour < 15) return "siang";
+  if (hour < 19) return "sore";
+  return "malam";
+}
 
 // href: null = not wired to a page yet.
 const QUICK_ACTIONS = [
@@ -27,6 +36,7 @@ const todayLabel = new Intl.DateTimeFormat("id-ID", {
 }).format(new Date());
 
 export default function DashboardScreen() {
+  const { user } = useAuth();
   const [meetingsStatus, setMeetingsStatus] = useState("loading"); // loading | error | done
   const [meetings, setMeetings] = useState([]);
 
@@ -51,7 +61,7 @@ export default function DashboardScreen() {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.dateLabel}>{todayLabel.toUpperCase()}</Text>
-            <Text style={styles.greeting}>Selamat pagi, Kresna.</Text>
+            <Text style={styles.greeting}>Selamat {greetingWord()}, {(user?.name || "").split(" ")[0]}.</Text>
           </View>
           <View style={styles.headerActions}>
             <Link href="/rapat/upload" asChild>

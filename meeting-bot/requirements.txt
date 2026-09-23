@@ -13,3 +13,10 @@ whisperx
 openai
 psycopg2-binary
 requests
+boto3
+# RAG Knowledge Base (search-only, not a chatbot — see pipeline/knowledge_base.py):
+# sentence-transformers for local embeddings, chromadb as the vector store.
+chromadb
+sentence-transformers
+# Formal PDF report for the super admin dashboard (pipeline/report_pdf.py).
+reportlab

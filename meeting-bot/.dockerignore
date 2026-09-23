@@ -1,0 +1,9 @@
+.env
+auth/
+chroma_data/
+chrome-profile/
+recordings/
+fixed_transcripts/
+__pycache__/
+*.pyc
+.git/

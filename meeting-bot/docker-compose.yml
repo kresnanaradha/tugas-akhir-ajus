@@ -1,0 +1,73 @@
+# 10 independent worker bots, one Google account each. Each worker is a
+# full copy of this backend (same image, same Flask app on port 5050
+# inside its own container) rather than a separate "join-only" service --
+# no code changes needed that way: the existing one-job-at-a-time guard in
+# app.py's _join() (see CLAUDE.md's "Known accepted limitation") already
+# does exactly the right thing per *account* once each account is its own
+# process/container, instead of limiting the whole system to one meeting
+# ever. All 10 share the same Postgres (meetings/billing/users) and R2
+# bucket via the same .env -- only GOOGLE_AUTH_STATE_PATH and the host port
+# differ per worker.
+#
+# Before starting: run bots/google_login.py on the HOST (needs a real
+# display + a human for the login step) once per account, saving each
+# session to a different auth/worker-N.json:
+#   GOOGLE_AUTH_STATE_PATH=auth/worker-1.json python -m bots.google_login
+#   GOOGLE_AUTH_STATE_PATH=auth/worker-2.json python -m bots.google_login
+#   ...(repeat for however many of the 10 you're actually testing with)
+#
+# Known gap: the frontend has no concept of "10 backend ports" yet -- it
+# still points at one EXPO_PUBLIC_API_URL. Picking which worker handles a
+# given join (a queue, round-robin, "first idle") isn't built; for now this
+# just proves 10 isolated bot processes can run side by side without
+# fighting over one virtual display or one Google session. Wiring the
+# frontend/a router to actually pick a free worker is follow-up work.
+
+x-worker-base: &worker-base
+  build: .
+  env_file: .env
+  environment:
+    GOOGLE_AUTH_STATE_PATH: /app/auth/google.json
+  restart: unless-stopped
+
+services:
+  worker-1:
+    <<: *worker-base
+    ports: ["5050:5050"]
+    volumes: ["./auth/worker-1.json:/app/auth/google.json:ro"]
+  worker-2:
+    <<: *worker-base
+    ports: ["5051:5050"]
+    volumes: ["./auth/worker-2.json:/app/auth/google.json:ro"]
+  worker-3:
+    <<: *worker-base
+    ports: ["5052:5050"]
+    volumes: ["./auth/worker-3.json:/app/auth/google.json:ro"]
+  worker-4:
+    <<: *worker-base
+    ports: ["5053:5050"]
+    volumes: ["./auth/worker-4.json:/app/auth/google.json:ro"]
+  worker-5:
+    <<: *worker-base
+    ports: ["5054:5050"]
+    volumes: ["./auth/worker-5.json:/app/auth/google.json:ro"]
+  worker-6:
+    <<: *worker-base
+    ports: ["5055:5050"]
+    volumes: ["./auth/worker-6.json:/app/auth/google.json:ro"]
+  worker-7:
+    <<: *worker-base
+    ports: ["5056:5050"]
+    volumes: ["./auth/worker-7.json:/app/auth/google.json:ro"]
+  worker-8:
+    <<: *worker-base
+    ports: ["5057:5050"]
+    volumes: ["./auth/worker-8.json:/app/auth/google.json:ro"]
+  worker-9:
+    <<: *worker-base
+    ports: ["5058:5050"]
+    volumes: ["./auth/worker-9.json:/app/auth/google.json:ro"]
+  worker-10:
+    <<: *worker-base
+    ports: ["5059:5050"]
+    volumes: ["./auth/worker-10.json:/app/auth/google.json:ro"]

@@ -1,9 +1,19 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, usePathname } from "expo-router";
+import { Link, router, usePathname } from "expo-router";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
-import { currentUser } from "@/constants/mock-data";
+import { logout as apiLogout } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+
+function initialsOf(name) {
+  return (name || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+}
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: "home" },
@@ -16,6 +26,21 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user, signOut } = useAuth();
+  // Only super_admin sees this — the backend independently enforces it too
+  // (403 on /admin/stats for anyone else), this just keeps the link itself
+  // from showing to someone who'd hit a wall clicking it.
+  const navItems = user?.role === "super_admin" ? [...NAV_ITEMS, { href: "/admin", label: "Admin", icon: "shield" }] : NAV_ITEMS;
+
+  function handleLogout() {
+    // Fire-and-forget on the server call — clear local auth state either
+    // way so the UI can't get stuck showing a logged-in shell if the
+    // request itself fails (e.g. backend already restarted, cookie's dead
+    // anyway).
+    apiLogout().catch(() => {});
+    signOut();
+    router.replace("/login");
+  }
 
   return (
     <View style={styles.sidebar}>
@@ -27,7 +52,7 @@ export function Sidebar() {
 
         <Text style={styles.sectionLabel}>Menu</Text>
         <View style={styles.navList}>
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const active = pathname === item.href;
             return (
               <Link key={item.href} href={item.href} asChild>
@@ -54,12 +79,15 @@ export function Sidebar() {
         </Link>
         <View style={styles.userRow}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarLabel}>{currentUser.initials}</Text>
+            <Text style={styles.avatarLabel}>{initialsOf(user?.name)}</Text>
           </View>
-          <View>
-            <Text style={styles.userName}>{currentUser.name}</Text>
-            <Text style={styles.userRole}>{currentUser.role}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.userName}>{user?.name}</Text>
+            <Text style={styles.userRole}>{user?.role === "super_admin" ? "Super Admin" : "Admin"}</Text>
           </View>
+          <Pressable onPress={handleLogout} hitSlop={8}>
+            <Feather name="log-out" size={16} color={colors.inkFaint} />
+          </Pressable>
         </View>
       </View>
     </View>

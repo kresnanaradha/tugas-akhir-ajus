@@ -34,45 +34,45 @@ Fill in `.env`:
 Transcription runs locally (no API cost, audio never leaves the machine) via
 `whisperx`, which needs `ffmpeg` on `PATH`.
 
-### Google Meet: run a signed-in Chrome sidecar
+### Google Meet: log in once, save the session
 
 Confirmed during testing: Google Meet denies anonymous automated joins
 ("You can't join this video call") even with `playwright-stealth` fully
 applied, and separately, Google's login page itself refuses to sign in a
-Playwright-launched/CDP-attached browser ("This browser or app may not be
-secure") — that block applies to the *login step*, regardless of stealth.
+Playwright-launched browser ("This browser or app may not be secure") —
+that block applies to the *login step*, regardless of stealth.
 
-So the bot never performs the Google login itself. Instead: a human logs in
-once, in a real Chrome window, and the bot only attaches to that
-already-authenticated browser over the DevTools protocol (CDP) to drive the
-Meet join — the same approach the reference project's `chrome-cdp` sidecar
-uses.
+So the bot never performs the Google login itself. Instead, a human logs in
+once and the session (cookies/localStorage) gets saved to a file; every
+`/google/join` call loads that file into a fresh Playwright browser instead
+of logging in itself. (Previously this ran through a long-lived,
+manually-launched Chrome sidecar attached to over CDP — replaced because it
+couldn't run inside Docker, where there's no human around to keep a Chrome
+window open.)
 
 1. Create a separate Google account for the bot (do not use your personal one).
-2. Launch a dedicated Chrome with remote debugging enabled and leave it running.
-   Use an **absolute** path for `--user-data-dir` (a relative one gets
-   resolved against Chrome's own install directory, which fails to write
-   without admin rights) — replace the path below with your own
-   `meeting-bot/chrome-profile` directory:
+2. Run the login helper — launches a real Chrome window (a plain subprocess,
+   not Playwright-controlled, since Google blocks sign-in on an
+   automation-attached browser) pointed at the Google sign-in page:
    ```bash
-   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\path\to\meeting-bot\chrome-profile" --auto-accept-this-tab-capture
+   python -m bots.google_login
    ```
-   `--auto-accept-this-tab-capture` matters here specifically: it's normally
-   passed to Playwright's own `chromium.launch()`, but this sidecar is a
-   regular Chrome the human launches by hand, so it doesn't get that flag
-   for free. Without it, every recording pauses on a manual "Allow this tab
-   to be seen?" dialog that has to be clicked by hand.
-3. In that Chrome window, log in to the bot's Google account manually (normal
-   login — this window isn't automated yet, so Google doesn't block it).
-4. Set `GOOGLE_CHROME_CDP_URL=http://localhost:9222` in `.env` (already the
-   default in `.env.example`).
-5. Leave that Chrome window open. Every `/google/join` call attaches to it,
-   opens a new tab for the meeting, and closes only that tab when done — the
-   signed-in session stays alive for the next join.
-6. If Chrome was already running when you launched step 2, the new flags get
-   silently ignored (it just opens another window in the already-running
-   process). Close every Chrome window first, confirm no `chrome.exe`
-   process is left, then launch the sidecar.
+   If it can't find your Chrome install, set `CHROME_EXECUTABLE_PATH` in
+   `.env` to its full path.
+3. Log in to the bot's Google account manually in that window, then press
+   Enter in the terminal — this attaches Playwright over CDP just long
+   enough to save the now-logged-in session to `GOOGLE_AUTH_STATE_PATH`
+   (`.env`, default `auth/google.json`).
+4. Every `/google/join` call from here on loads that file into a fresh,
+   Playwright-launched browser — no Chrome window needs to stay running
+   between joins.
+
+Re-run step 2 if joins start failing with a login/redirect error — the saved
+session has likely expired.
+
+For running multiple Google accounts concurrently (see `CLAUDE.md`'s "1
+container = 1 account" plan), give each account its own
+`GOOGLE_AUTH_STATE_PATH` and run the login helper once per account.
 
 Zoom's guest join doesn't require any of this; it works anonymously.
 

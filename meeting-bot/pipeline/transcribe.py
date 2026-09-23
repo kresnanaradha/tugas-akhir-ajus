@@ -1,10 +1,9 @@
-import json
 import os
 
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 
-from .paths import sibling_path
+from . import artifacts
 
 _DEVICE = "cpu"
 
@@ -48,8 +47,12 @@ def _get_diarize_model():
     return _diarize_model
 
 
-def transcribe(recording_path: str, num_speakers: int | None = None) -> str:
-    audio = whisperx.load_audio(recording_path)
+def transcribe(local_recording_path: str, meeting_id: str, num_speakers: int | None = None) -> str:
+    """local_recording_path is where the video/audio currently sits on disk
+    (whisperx needs a real local file to decode) — meeting_id is what the
+    resulting transcript/segments get saved under in R2 (see
+    pipeline/artifacts.py), independent of that local path."""
+    audio = whisperx.load_audio(local_recording_path)
 
     result = _get_model().transcribe(audio)
 
@@ -77,14 +80,14 @@ def transcribe(recording_path: str, num_speakers: int | None = None) -> str:
 
     text = "\n".join(f"[{seg.get('speaker', 'UNKNOWN')}] {seg['text'].strip()}" for seg in result["segments"])
 
-    sibling_path(recording_path, "transcripts", ".txt").write_text(text, encoding="utf-8")
+    artifacts.save_transcript(meeting_id, text)
 
     # Also save per-segment timing (start/end/speaker/text), discarded from
     # the plain-text file above — needed for anything that wants to sync
     # transcript lines to recording playback (e.g. highlighting the current
-    # line as the video plays). Kept as a separate sibling file rather than
-    # changing what transcribe() returns, so every existing caller
-    # (fix_transcript, summarize, the API response) keeps working unchanged.
+    # line as the video plays). Kept separate rather than changing what
+    # transcribe() returns, so every existing caller (fix_transcript,
+    # summarize, the API response) keeps working unchanged.
     segments = [
         {
             "speaker": seg.get("speaker", "UNKNOWN"),
@@ -94,8 +97,6 @@ def transcribe(recording_path: str, num_speakers: int | None = None) -> str:
         }
         for seg in result["segments"]
     ]
-    sibling_path(recording_path, "transcripts", ".segments.json").write_text(
-        json.dumps(segments, ensure_ascii=False), encoding="utf-8"
-    )
+    artifacts.save_segments(meeting_id, segments)
 
     return text

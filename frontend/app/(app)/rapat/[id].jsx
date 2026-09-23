@@ -178,6 +178,12 @@ export default function MeetingDetailScreen() {
   // Which line's "gabung ke speaker lain" pick-list is open — only one at
   // a time, since it's rendered inline right under that line's badge.
   const [mergeOpenIndex, setMergeOpenIndex] = useState(null);
+  // Which raw transcript line is currently focused for editing — the "Saran
+  // Perbaikan AI" column only shows that one line's AI-corrected version
+  // (by the same index into fixed_transcript's lines) instead of the whole
+  // thing, so the suggestion right next to what's being typed is obvious
+  // instead of buried in a long parallel scroll.
+  const [focusedLineIndex, setFocusedLineIndex] = useState(null);
   const [savingTranscript, setSavingTranscript] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
@@ -594,6 +600,12 @@ export default function MeetingDetailScreen() {
                           <ScrollView style={styles.editorLinesBox}>
                             {(() => {
                               const lineSpeakers = resolveLineSpeakers(editedLines, speakerNames, lineOverrides);
+                              // Raw diarization ids (SPEAKER_00, SPEAKER_01, ...), always kept
+                              // available as merge targets even after every line showing one has
+                              // been renamed/merged away — otherwise once e.g. SPEAKER_01 gets
+                              // merged into SPEAKER_00, no line displays "SPEAKER_01" anymore and
+                              // there's no way to pick it back to undo the merge.
+                              const rawLabels = [...new Set(editedLines.map((l) => l.speaker).filter(Boolean))];
                               const applyName = (i, name) => {
                                 if (lineIsGlobal[i] ?? true) {
                                   setSpeakerNames((m) => ({ ...m, [editedLines[i].speaker]: name }));
@@ -616,7 +628,9 @@ export default function MeetingDetailScreen() {
                                           setLineIsGlobal((m) => ({ ...m, [i]: !(m[i] ?? true) }))
                                         }
                                         onChangeText={(name) => applyName(i, name)}
-                                        otherLabels={[...new Set(lineSpeakers.filter((l, j) => l && j !== i && l !== lineSpeakers[i]))]}
+                                        otherLabels={[...new Set([...rawLabels, ...lineSpeakers.filter(Boolean)])].filter(
+                                          (l) => l !== lineSpeakers[i]
+                                        )}
                                         mergeOpen={mergeOpenIndex === i}
                                         onToggleMerge={() => setMergeOpenIndex((cur) => (cur === i ? null : i))}
                                         onMerge={(name) => {
@@ -630,6 +644,7 @@ export default function MeetingDetailScreen() {
                                     style={styles.editorLineInput}
                                     multiline
                                     value={line.text}
+                                    onFocus={() => setFocusedLineIndex(i)}
                                     onChangeText={(text) =>
                                       setEditedLines((lines) => lines.map((l, j) => (j === i ? { ...l, text } : l)))
                                     }
@@ -652,13 +667,44 @@ export default function MeetingDetailScreen() {
                           <Feather name="zap" size={13} color={colors.goldDeep} />
                           <Text style={styles.editorColTitle}>Saran Perbaikan AI</Text>
                         </View>
-                        <View style={styles.editorRawBox}>
-                          <ScrollView style={styles.editorScroll}>
-                            <Text style={styles.plainTranscript}>
-                              {meeting.fixed_transcript || "Belum ada saran perbaikan."}
-                            </Text>
-                          </ScrollView>
-                        </View>
+                        {(() => {
+                          if (!meeting.fixed_transcript) {
+                            return (
+                              <View style={styles.suggestLinesBox}>
+                                <Text style={styles.plainTranscript}>Belum ada saran perbaikan.</Text>
+                              </View>
+                            );
+                          }
+                          if (focusedLineIndex == null) {
+                            return (
+                              <View style={styles.suggestLinesBox}>
+                                <Text style={styles.plainTranscript}>
+                                  Klik salah satu baris di Transkrip Mentah untuk melihat saran perbaikan AI-nya di sini.
+                                </Text>
+                              </View>
+                            );
+                          }
+                          // Assumes fixed_transcript kept the same line order/count as the
+                          // raw transcript (fix_transcript() corrects wording, it doesn't
+                          // restructure lines) — same assumption the segments sync already
+                          // relies on (see updateTranscript's line_texts/line_speakers).
+                          const suggestedLine = parseTranscriptLines(meeting.fixed_transcript)[focusedLineIndex];
+                          if (!suggestedLine) {
+                            return (
+                              <View style={styles.suggestLinesBox}>
+                                <Text style={styles.plainTranscript}>Tidak ada saran untuk baris ini.</Text>
+                              </View>
+                            );
+                          }
+                          return (
+                            <View style={styles.suggestLinesBox}>
+                              <View style={styles.suggestLineRow}>
+                                {suggestedLine.speaker && <SpeakerBadge speaker={suggestedLine.speaker} />}
+                                <Text style={styles.suggestLineText}>{suggestedLine.text}</Text>
+                              </View>
+                            </View>
+                          );
+                        })()}
                         <View style={styles.editorActions}>
                           {savedNotice && <Text style={styles.savedNoticeText}>Tersimpan, ringkasan diperbarui.</Text>}
                           {!!saveError && <Text style={styles.errorText}>{saveError}</Text>}
@@ -959,6 +1005,20 @@ const styles = StyleSheet.create({
   // own. Lifting the whole open row above its siblings fixes it.
   editorLineRowElevated: { position: "relative", zIndex: 20 },
   editorLineHeader: { flexDirection: "row" },
+  // Right column's read-only counterpart to editorLinesBox/editorLineRow —
+  // same per-speaker-line layout so the two columns read as one continuous
+  // idea, but deliberately undecorated (muted bg instead of the left's gold
+  // "this is editable" border, no per-line divider, no input/merge affordances)
+  // so it doesn't look like a second editable form.
+  suggestLinesBox: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  suggestLineRow: { gap: spacing.sm },
+  suggestLineText: { ...type.body, fontSize: 17, color: colors.ink, lineHeight: 27 },
   editorLineInput: {
     ...type.body,
     color: colors.ink,

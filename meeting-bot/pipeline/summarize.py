@@ -2,7 +2,9 @@ import json
 
 from openai import OpenAI
 
-from .paths import sibling_path
+from . import artifacts, knowledge_base, usage_store
+
+_MODEL = "gpt-4o-mini"
 
 _FIX_SYSTEM_PROMPT = (
     "Fix obvious speech-to-text errors in this meeting transcript (misheard "
@@ -34,36 +36,55 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 
-def fix_transcript(transcript: str, recording_path: str) -> str:
+def _log_usage(meeting_id: str | None, call_type: str, response) -> None:
+    # Best-effort: the super admin dashboard's cost figure is a nice-to-have,
+    # not something that should ever take down a successful transcription/
+    # summarization if the usage table hiccups.
+    try:
+        usage_store.log_usage(meeting_id, call_type, _MODEL, response.usage)
+    except Exception as e:
+        print(f"[usage_store] failed to log usage for {meeting_id} ({call_type}): {e}")
+
+
+def fix_transcript(transcript: str, meeting_id: str) -> str:
     client = OpenAI()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=_MODEL,
         messages=[
             {"role": "system", "content": _FIX_SYSTEM_PROMPT},
             {"role": "user", "content": transcript},
         ],
     )
+    _log_usage(meeting_id, "fix_transcript", response)
     fixed = response.choices[0].message.content
 
-    sibling_path(recording_path, "fixed_transcripts", ".txt").write_text(fixed, encoding="utf-8")
+    artifacts.save_fixed_transcript(meeting_id, fixed)
 
     return fixed
 
 
-def summarize(transcript: str, recording_path: str) -> dict:
+def summarize(transcript: str, meeting_id: str) -> dict:
     client = OpenAI()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=_MODEL,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
             {"role": "user", "content": transcript},
         ],
     )
+    _log_usage(meeting_id, "summarize", response)
     summary = json.loads(response.choices[0].message.content)
 
-    sibling_path(recording_path, "summaries", ".summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    artifacts.save_summary(meeting_id, summary)
+
+    # Indexed for the RAG Knowledge Base search — best-effort: a Chroma
+    # hiccup here shouldn't fail an otherwise-successful summary the same
+    # way a bad summary shouldn't erase an otherwise-successful transcript
+    # (see _process_recording's per-step error handling in app.py).
+    try:
+        knowledge_base.index_meeting(meeting_id, summary)
+    except Exception as e:
+        print(f"[knowledge_base] failed to index meeting {meeting_id}: {e}")
 
     return summary

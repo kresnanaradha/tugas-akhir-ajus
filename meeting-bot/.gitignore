@@ -1,6 +1,8 @@
 .env
 recordings/
 chrome-profile/
+auth/
+chroma_data/
 __pycache__/
 *.pyc
 *.log

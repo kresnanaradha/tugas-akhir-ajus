@@ -1,19 +1,41 @@
-Halo semuanya, selamat datang di rapat evaluasi progres Notulis minggu ini.
+Speaker A (Host/PM):
+"Oke, selamat siang semua, makasih udah gabung rapat hari ini. Jadi agenda kita ada dua: progress fitur Notulis minggu ini, sama pembagian tugas buat minggu depan."
 
-Sejauh ini kita sudah menyelesaikan tiga hal penting. Pertama, bot sudah bisa
-bergabung ke Google Meet dan Zoom secara otomatis tanpa terdeteksi sebagai
-bot. Kedua, hasil rekaman langsung ditranskripsi otomatis menggunakan model
-Whisper yang berjalan lokal, jadi tidak perlu biaya tambahan ke pihak ketiga.
-Ketiga, transkrip mentah tersebut dibersihkan dulu oleh model bahasa sebelum
-diringkas, supaya kesalahan salah dengar tidak ikut masuk ke ringkasan akhir.
+Speaker B:
+"Siap. Dari sisi aku, transkripsi otomatis pakai whisperx udah jalan lumayan bagus, tapi kemarin ada masalah di deteksi speaker-nya pas ada lebih dari 2 orang."
 
-Selain itu, struktur folder penyimpanan juga sudah dirapikan. Sekarang video,
-transkrip mentah, transkrip yang sudah diperbaiki, dan ringkasan masing-masing
-punya folder terpisah, jadi lebih mudah ditelusuri.
+Speaker C:
+"Iya bener, aku juga sempat coba upload rekaman rapat kemarin, ringkasan AI-nya udah oke, tapi ada beberapa istilah yang salah denger, kayak 'transkripsi' kebaca jadi 'taun skripsi'."
 
-Untuk tahap berikutnya, kita akan mulai memikirkan bagaimana sistem ini
-terhubung dengan backend utama Notulis, termasuk soal antrian pekerjaan dan
-penyimpanan berkas di cloud.
+Speaker A:
+"Oke noted. Kita putuskan aja ya, untuk sementara kita naikkan prioritas perbaikan diarization dulu sebelum lanjut ke fitur RAG."
 
-Ada pertanyaan sebelum kita tutup sesi hari ini? Kalau tidak ada, terima kasih
-banyak atas waktunya, sampai jumpa di rapat berikutnya.
+Speaker B:
+"Setuju. Aku bisa bantu cek bagian itu."
+
+Speaker A:
+"Oke jadi keputusannya: prioritas minggu depan itu perbaikan speaker detection dulu, RAG ditunda. Untuk action item-nya — [Nama B], tolong kamu yang benerin bagian diarization ya, ditarget selesai hari Jumat."
+
+Speaker B:
+"Siap, aku pegang itu, selesai hari Jumat."
+
+Speaker A:
+"[Nama C], kamu tolong bantu testing menyeluruh untuk fitur upload audio, laporan hasilnya paling lambat hari Senin depan."
+
+Speaker C:
+"Oke aku catat, testing upload audio, deadline Senin depan."
+
+Speaker A:
+"Terus aku sendiri yang lanjut ke dokumentasi buat bimbingan dosen, gak ada deadline khusus tapi usahakan sebelum rapat berikutnya."
+
+Speaker B:
+"Noted."
+
+Speaker A:
+"Oke kalau gitu segitu aja rapat hari ini, makasih semua atas waktunya."
+
+Speaker C:
+"Sama-sama, makasih."
+
+Speaker B:
+"Oke, sampai ketemu lagi. Terima kasih. Terima kasih."

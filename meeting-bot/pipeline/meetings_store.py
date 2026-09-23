@@ -175,6 +175,63 @@ def list_meetings() -> list[dict]:
     return rows
 
 
+def counts_by_period() -> dict:
+    """{"today", "this_week", "this_month", "total", "completed", "failed"} —
+    for the super admin dashboard. date_trunc('week', ...) starts weeks on
+    Monday (Postgres default), matching Indonesian convention."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) AS today,
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('week', CURRENT_DATE)) AS this_week,
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('month', CURRENT_DATE)) AS this_month,
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                    COUNT(*) FILTER (WHERE status = 'failed') AS failed
+                FROM meetings
+                """
+            )
+            return cur.fetchone()
+
+    row = with_conn(_do)
+    return {
+        "today": row[0],
+        "this_week": row[1],
+        "this_month": row[2],
+        "total": row[3],
+        "completed": row[4],
+        "failed": row[5],
+    }
+
+
+def daily_counts(days: int = 14) -> list[dict]:
+    """[{"date": "YYYY-MM-DD", "count": N}, ...] for the last `days` days,
+    oldest first — for the super admin dashboard's meetings-per-day chart.
+    generate_series fills in zero-count days (a plain GROUP BY would silently
+    skip them, which would make the chart's x-axis skip days instead of
+    showing a real gap)."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT d::date, COALESCE(COUNT(m.id), 0)
+                FROM generate_series(CURRENT_DATE - (%s - 1) * INTERVAL '1 day', CURRENT_DATE, INTERVAL '1 day') d
+                LEFT JOIN meetings m ON date_trunc('day', m.created_at) = d
+                GROUP BY d
+                ORDER BY d
+                """,
+                (days,),
+            )
+            return cur.fetchall()
+
+    rows = with_conn(_do)
+    return [{"date": d.strftime("%Y-%m-%d"), "count": n} for d, n in rows]
+
+
 def get_meeting(meeting_id: str) -> dict | None:
     def _do(conn):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

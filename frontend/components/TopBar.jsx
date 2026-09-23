@@ -2,9 +2,20 @@ import { Feather } from "@expo/vector-icons";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
-import { currentUser } from "@/constants/mock-data";
+import { useAuth } from "@/lib/auth-context";
+
+function initialsOf(name) {
+  return (name || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+}
 
 export function TopBar() {
+  const { user } = useAuth();
+
   return (
     <View style={styles.bar}>
       <View style={styles.search}>
@@ -23,11 +34,11 @@ export function TopBar() {
         </View>
         <View style={styles.userChip}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarLabel}>{currentUser.initials}</Text>
+            <Text style={styles.avatarLabel}>{initialsOf(user?.name)}</Text>
           </View>
           <View>
-            <Text style={styles.userName}>{currentUser.name}</Text>
-            <Text style={styles.userRole}>{currentUser.role}</Text>
+            <Text style={styles.userName}>{user?.name}</Text>
+            <Text style={styles.userRole}>{user?.role === "super_admin" ? "Super Admin" : "Admin"}</Text>
           </View>
           <Feather name="chevron-down" size={14} color={colors.inkFaint} />
         </View>

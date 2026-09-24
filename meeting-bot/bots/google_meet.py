@@ -63,6 +63,12 @@ class GoogleMeetBot(MeetBotBase):
                     "--window-size=1280,800",
                     "--auto-accept-this-tab-capture",
                     "--autoplay-policy=no-user-gesture-required",
+                    # See bots/zoom.py's launch() for why -- same GPU-less
+                    # container, same tab-capture-breaking symptom root-caused
+                    # there via a live diagnostic.
+                    "--use-gl=angle",
+                    "--use-angle=swiftshader",
+                    "--enable-unsafe-swiftshader",
                 ],
                 ignore_default_args=["--mute-audio", "--enable-automation"],
             )
@@ -90,8 +96,14 @@ class GoogleMeetBot(MeetBotBase):
                 browser.close()
                 raise RuntimeError(last_error or "Could not join the meeting")
 
-            out_path = self.record()
-            browser.close()
+            # try/finally: record() can raise mid-recording (see the same
+            # fix in bots/zoom.py) — without this, a failure here skipped
+            # browser.close() and left the bot stuck showing as still in
+            # the call instead of just failing the job cleanly.
+            try:
+                out_path = self.record()
+            finally:
+                browser.close()
             return out_path
 
     def _attempt_join(self) -> bool:

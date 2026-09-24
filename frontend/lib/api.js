@@ -179,6 +179,20 @@ export function getAdminExportUrl() {
   return `${API_BASE_URL}/admin/export`;
 }
 
+// This user's own meeting stats — volume, platform breakdown, total
+// duration (see GET /reports/stats in app.py). Same shape of aggregation as
+// getAdminStats(), just scoped to "my meetings" instead of the whole system.
+export async function getReportStats() {
+  const res = await apiFetch("/reports/stats");
+  return handleResponse(res);
+}
+
+// URL for this user's own PDF report — for a plain link/anchor, not fetched
+// as JSON (the browser handles the download). See GET /reports/export.
+export function getReportExportUrl() {
+  return `${API_BASE_URL}/reports/export`;
+}
+
 // RAG Knowledge Base search — returns {answer, results}. `answer` is one
 // GPT-synthesized paragraph grounded only in the matched chunks (null if
 // synthesis failed or nothing matched); `results` is those matched chunks

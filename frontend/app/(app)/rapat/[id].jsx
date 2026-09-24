@@ -156,6 +156,7 @@ export default function MeetingDetailScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [liveError, setLiveError] = useState("");
   const pollTimer = useRef(null);
+  const pollFailures = useRef(0);
 
   // Transcript editor (Edit Transkrip tab) — left is the raw transcript,
   // editable per speaker line (parsed from the "[SPEAKER_NN] text" lines
@@ -211,9 +212,22 @@ export default function MeetingDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // A rejected fetch here means the request itself couldn't complete (a
+  // network blip, Docker being briefly slow to respond, CORS hiccup, etc)
+  // -- it says nothing about whether the job succeeded or failed. A real
+  // job failure comes back as a normal 200 with {status: "failed"} in the
+  // body, handled separately below. Treating a transient fetch error as
+  // "failed" used to kill the polling loop outright (no retry scheduled),
+  // permanently freezing the UI at whatever liveStatus it last had -- e.g.
+  // a Zoom join whose next poll would've shown "recording" instead sat
+  // stuck on "joining" for 30+ seconds until the user manually left and
+  // reopened the page. Retrying (with a cap so a genuinely dead backend
+  // doesn't poll forever) fixes both that and the "shows failed" glitch.
+  const MAX_CONSECUTIVE_POLL_FAILURES = 10;
   function poll(jobId) {
     getJobStatus(jobId)
       .then((data) => {
+        pollFailures.current = 0;
         setLiveStatus(data.status);
         if (data.elapsed_seconds != null) setElapsed(data.elapsed_seconds);
         if (data.status === "done") {
@@ -236,8 +250,13 @@ export default function MeetingDetailScreen() {
         }
       })
       .catch((e) => {
-        setLiveError(e.message || "Gagal memuat status rekaman");
-        setLiveStatus("failed");
+        pollFailures.current += 1;
+        if (pollFailures.current >= MAX_CONSECUTIVE_POLL_FAILURES) {
+          setLiveError(e.message || "Gagal memuat status rekaman");
+          setLiveStatus("failed");
+          return;
+        }
+        pollTimer.current = setTimeout(() => poll(jobId), 1000);
       });
   }
 

@@ -24,7 +24,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, report_pdf, storage
+from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, report_pdf, report_stats, storage
 from pipeline.meetings_store import find_meeting_by_url, get_meeting, list_meetings, start_meeting, update_meeting
 from pipeline.summarize import fix_transcript, summarize
 from pipeline.transcribe import transcribe
@@ -288,7 +288,7 @@ def _join(bot_cls, platform: str, title: str):
             return jsonify({"error": "Rapat lain sedang direkam. Tunggu sampai selesai sebelum memulai yang baru."}), 409
         _jobs[job_id] = {"phase": "starting", "bot": bot, "result": None, "error": None}
 
-    start_meeting(job_id, platform, title, estimated_participants=num_speakers, url=url)
+    start_meeting(job_id, platform, title, estimated_participants=num_speakers, url=url, user_id=session["user_id"])
 
     # bot.join() blocks for as long as the meeting runs (it calls record()
     # internally) — that used to block this whole HTTP request. Running it
@@ -337,18 +337,21 @@ def job_stop(job_id):
 
 
 @app.post("/google/join")
+@login_required
 def google_join():
     return _join(GoogleMeetBot, "google_meet", "Rapat Google Meet")
 
 
 @app.post("/zoom/join")
+@login_required
 def zoom_join():
     return _join(ZoomBot, "zoom", "Rapat Zoom")
 
 
 @app.get("/meetings")
+@login_required
 def meetings():
-    return jsonify(list_meetings())
+    return jsonify(list_meetings(session["user_id"]))
 
 
 @app.get("/knowledge-base/search")
@@ -386,6 +389,7 @@ def knowledge_base_search():
 
 
 @app.get("/meetings/<meeting_id>")
+@login_required
 def meeting_detail(meeting_id):
     """Reads back a past meeting's transcript/fixed transcript/summary/
     per-segment timing from R2 (see pipeline/artifacts.py) — the meetings
@@ -421,6 +425,7 @@ def meeting_detail(meeting_id):
 
 
 @app.post("/meetings/<meeting_id>/transcript")
+@login_required
 def update_transcript(meeting_id):
     """Saves a user-edited transcript (the editor's per-line, per-speaker
     editor) as this meeting's fixed_transcript, then re-runs summarize() on
@@ -473,6 +478,7 @@ def update_transcript(meeting_id):
 
 
 @app.post("/meetings/<meeting_id>/action-items/<int:index>/toggle")
+@login_required
 def toggle_action_item(meeting_id, index):
     """Flips one action item's done flag — the only mutable field on a
     summary, so this patches the saved summary directly rather than going
@@ -498,6 +504,7 @@ def toggle_action_item(meeting_id, index):
 
 
 @app.get("/meetings/<meeting_id>/recording")
+@login_required
 def meeting_recording(meeting_id):
     """Redirects to a time-limited R2 URL for the actual video/audio file —
     looked up through the meeting record rather than taking a raw key, so
@@ -515,6 +522,7 @@ def meeting_recording(meeting_id):
 
 
 @app.post("/upload")
+@login_required
 def upload():
     """Transcribe + summarize an already-recorded audio/video file, for
     meetings that weren't captured by the bot. Reuses the exact same
@@ -543,7 +551,9 @@ def upload():
     # — same reasoning as start_meeting() for the join endpoints: otherwise
     # the Rapat list shows nothing at all for however long transcribe/fix/
     # summarize take, instead of "Memproses...".
-    start_meeting(meeting_id, "upload", f"Upload: {file.filename}", estimated_participants=num_speakers)
+    start_meeting(
+        meeting_id, "upload", f"Upload: {file.filename}", estimated_participants=num_speakers, user_id=session["user_id"]
+    )
     # No cheap way to get audio/video duration here without decoding the file
     # again (ffprobe isn't guaranteed to be on PATH) — duration_minutes stays
     # null rather than adding that dependency just for a display number.
@@ -582,6 +592,31 @@ def admin_export():
         pdf_bytes,
         mimetype="application/pdf",
         headers={"Content-Disposition": "attachment; filename=notulis-laporan-sistem.pdf"},
+    )
+
+
+@app.get("/reports/stats")
+@login_required
+def reports_stats_route():
+    """Same shape of aggregation as /admin/stats, but just this one user's
+    own meetings — the regular (non-admin) Laporan page. See
+    pipeline/report_stats.py."""
+    return jsonify(report_stats.get_stats(session["user_id"]))
+
+
+@app.get("/reports/export")
+@login_required
+def reports_export():
+    """PDF version of the Laporan page — same numbers, via
+    pipeline/report_pdf.py's generate_user_report()."""
+    user = auth_store.get_user(session["user_id"])
+    pdf_bytes = report_pdf.generate_user_report(
+        report_stats.get_stats(session["user_id"]), list_meetings(session["user_id"]), generated_by=user["name"]
+    )
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=notulis-laporan-rapat.pdf"},
     )
 
 

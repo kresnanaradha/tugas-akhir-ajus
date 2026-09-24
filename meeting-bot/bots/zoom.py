@@ -29,7 +29,21 @@ class ZoomBot(MeetBotBase):
             browser = p.chromium.launch(
                 headless=False,
                 args=[
-                    "--use-fake-ui-for-media-stream",
+                    # --use-fake-ui-for-media-stream deliberately NOT here:
+                    # on Linux it conflicts with getDisplayMedia() and causes
+                    # exactly the "NotReadableError: Could not start video
+                    # source" this bot was hitting on every Zoom join
+                    # (confirmed against a matching CEF/Chromium forum report,
+                    # https://www.magpcss.org/ceforum/viewtopic.php?f=6&t=20150
+                    # — and explains why google_meet.py, which never had this
+                    # flag, worked while this file consistently failed). Not
+                    # needed anyway: permissions=["camera", "microphone"] on
+                    # the context below already auto-grants those prompts the
+                    # proper Playwright way, without touching Chrome's capture
+                    # pipeline. Zoom's own camera/mic still report
+                    # NotFoundError since the container has no real device --
+                    # unrelated to this flag, already handled by the
+                    # toggle_off() try/excepts below.
                     "--auto-accept-this-tab-capture",
                     # --auto-accept-this-tab-capture alone picks whichever tab
                     # has OS-level window focus at getDisplayMedia() time —
@@ -42,6 +56,22 @@ class ZoomBot(MeetBotBase):
                     # secretId right before capturing.
                     f"--auto-select-tab-capture-source-by-title={self.secret_id}",
                     "--autoplay-policy=no-user-gesture-required",
+                    # No GPU device in the container (confirmed: no /dev/dri)
+                    # -- Chrome's GPU process then has nothing to initialize
+                    # and doesn't cleanly fall back to software rendering on
+                    # its own, which broke the tab's whole compositor (not
+                    # just WebGL): confirmed live via a diagnostic that a
+                    # video-only getDisplayMedia() failed with the exact same
+                    # "NotReadableError: Could not start video source" as the
+                    # combined video+audio call, and the page's own WebGL
+                    # init failed too ("WebGL is not supported on this
+                    # device"). Mesa's software rasterizer is already
+                    # installed in the image (libgl1-mesa-dri, mesa-
+                    # libgallium) -- these flags are what make Chrome
+                    # actually use it instead of giving up.
+                    "--use-gl=angle",
+                    "--use-angle=swiftshader",
+                    "--enable-unsafe-swiftshader",
                 ],
             )
             context = browser.new_context(
@@ -148,15 +178,23 @@ class ZoomBot(MeetBotBase):
             except Exception:
                 pass
 
-            out_path = self.record()
-            # Click "Leave" instead of just closing the browser — an abrupt
-            # disconnect leaves the bot showing as still connected on Zoom's
-            # side until its own timeout notices, instead of leaving cleanly
-            # right away.
+            # try/finally: record() can raise (e.g. getDisplayMedia's
+            # "NotReadableError: Could not start video source", confirmed
+            # live) — without this, that exception skipped straight past
+            # the Leave click and browser.close() below, leaving the bot
+            # stuck showing as connected in the Zoom call indefinitely
+            # instead of just failing the job cleanly.
             try:
-                self.page.locator("button", has_text="Leave").first.click(timeout=1500)
-                self.page.locator("button", has_text="Leave Meeting").first.click(timeout=1500)
-            except Exception:
-                pass
-            browser.close()
+                out_path = self.record()
+            finally:
+                # Click "Leave" instead of just closing the browser — an
+                # abrupt disconnect leaves the bot showing as still
+                # connected on Zoom's side until its own timeout notices,
+                # instead of leaving cleanly right away.
+                try:
+                    self.page.locator("button", has_text="Leave").first.click(timeout=1500)
+                    self.page.locator("button", has_text="Leave Meeting").first.click(timeout=1500)
+                except Exception:
+                    pass
+                browser.close()
             return out_path

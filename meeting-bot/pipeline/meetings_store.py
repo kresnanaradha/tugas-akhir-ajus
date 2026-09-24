@@ -24,6 +24,13 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS estimated_participants INTEGER;
 -- second one (see find_meeting_by_url()). NULL for /upload, which has no
 -- link at all.
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS url TEXT;
+-- Who started this meeting -- added once real auth existed and /reports
+-- needed to scope stats to "my meetings" instead of the whole table. NULL
+-- for every meeting recorded before this column existed (there was no
+-- login yet to attribute them to) -- treated as visible-to-everyone
+-- everywhere this is filtered on, rather than orphaned/hidden. TEXT, not
+-- INTEGER: users.id (auth_store.py) is a hex uuid string, not a serial int.
+ALTER TABLE meetings ADD COLUMN IF NOT EXISTS user_id TEXT;
 """
 register_schema(_TABLE_SQL)
 # recording stays NOT NULL — ALTER TABLE ... DROP NOT NULL turned out to hang
@@ -80,7 +87,12 @@ def add_meeting(
 
 
 def start_meeting(
-    meeting_id: str, platform: str, title: str, estimated_participants: int | None = None, url: str | None = None
+    meeting_id: str,
+    platform: str,
+    title: str,
+    estimated_participants: int | None = None,
+    url: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Inserts a row the moment a live join starts, with no recording file
     yet — so the Rapat list can show it as in-progress (status "joining",
@@ -94,11 +106,11 @@ def start_meeting(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO meetings (id, platform, title, created_at, status, recording, estimated_participants, url)
-                VALUES (%s, %s, %s, %s, %s, '', %s, %s)
+                INSERT INTO meetings (id, platform, title, created_at, status, recording, estimated_participants, url, user_id)
+                VALUES (%s, %s, %s, %s, %s, '', %s, %s, %s)
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (meeting_id, platform, title, datetime.now(), "joining", estimated_participants, url),
+                (meeting_id, platform, title, datetime.now(), "joining", estimated_participants, url, user_id),
             )
         conn.commit()
 
@@ -163,10 +175,20 @@ def update_meeting(meeting_id: str, **fields) -> None:
     with_conn(_do)
 
 
-def list_meetings() -> list[dict]:
+def list_meetings(user_id: str | None = None) -> list[dict]:
+    """All meetings, or just one user's — `user_id IS NULL` rows (recorded
+    before the `user_id` column existed) always show up too, so pre-auth
+    history doesn't disappear from whoever's using the app now."""
+
     def _do(conn):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM meetings ORDER BY created_at DESC")
+            if user_id is None:
+                cur.execute("SELECT * FROM meetings ORDER BY created_at DESC")
+            else:
+                cur.execute(
+                    "SELECT * FROM meetings WHERE user_id = %s OR user_id IS NULL ORDER BY created_at DESC",
+                    (user_id,),
+                )
             return [dict(row) for row in cur.fetchall()]
 
     rows = with_conn(_do)
@@ -175,15 +197,17 @@ def list_meetings() -> list[dict]:
     return rows
 
 
-def counts_by_period() -> dict:
+def counts_by_period(user_id: str | None = None) -> dict:
     """{"today", "this_week", "this_month", "total", "completed", "failed"} —
-    for the super admin dashboard. date_trunc('week', ...) starts weeks on
-    Monday (Postgres default), matching Indonesian convention."""
+    for the super admin dashboard (unscoped) and /reports (scoped to one
+    user, see list_meetings() for why NULL user_id rows are always
+    included). date_trunc('week', ...) starts weeks on Monday (Postgres
+    default), matching Indonesian convention."""
 
     def _do(conn):
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) AS today,
                     COUNT(*) FILTER (WHERE created_at >= date_trunc('week', CURRENT_DATE)) AS this_week,
@@ -192,7 +216,9 @@ def counts_by_period() -> dict:
                     COUNT(*) FILTER (WHERE status = 'completed') AS completed,
                     COUNT(*) FILTER (WHERE status = 'failed') AS failed
                 FROM meetings
-                """
+                {"WHERE user_id = %s OR user_id IS NULL" if user_id is not None else ""}
+                """,
+                (user_id,) if user_id is not None else None,
             )
             return cur.fetchone()
 
@@ -207,29 +233,67 @@ def counts_by_period() -> dict:
     }
 
 
-def daily_counts(days: int = 14) -> list[dict]:
+def daily_counts(days: int = 14, user_id: str | None = None) -> list[dict]:
     """[{"date": "YYYY-MM-DD", "count": N}, ...] for the last `days` days,
-    oldest first — for the super admin dashboard's meetings-per-day chart.
-    generate_series fills in zero-count days (a plain GROUP BY would silently
-    skip them, which would make the chart's x-axis skip days instead of
-    showing a real gap)."""
+    oldest first — for the meetings-per-day chart (super admin dashboard,
+    unscoped; /reports, scoped to one user). generate_series fills in
+    zero-count days (a plain GROUP BY would silently skip them, which would
+    make the chart's x-axis skip days instead of showing a real gap)."""
 
     def _do(conn):
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT d::date, COALESCE(COUNT(m.id), 0)
                 FROM generate_series(CURRENT_DATE - (%s - 1) * INTERVAL '1 day', CURRENT_DATE, INTERVAL '1 day') d
                 LEFT JOIN meetings m ON date_trunc('day', m.created_at) = d
+                    {"AND (m.user_id = %s OR m.user_id IS NULL)" if user_id is not None else ""}
                 GROUP BY d
                 ORDER BY d
                 """,
-                (days,),
+                (days, user_id) if user_id is not None else (days,),
             )
             return cur.fetchall()
 
     rows = with_conn(_do)
     return [{"date": d.strftime("%Y-%m-%d"), "count": n} for d, n in rows]
+
+
+def platform_counts(user_id: str | None = None) -> dict:
+    """{"google_meet": N, "zoom": N, "upload": N} — for /reports's platform-
+    distribution chart."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT platform, COUNT(*) FROM meetings
+                {"WHERE user_id = %s OR user_id IS NULL" if user_id is not None else ""}
+                GROUP BY platform
+                """,
+                (user_id,) if user_id is not None else None,
+            )
+            return dict(cur.fetchall())
+
+    return with_conn(_do)
+
+
+def total_duration_minutes(user_id: str | None = None) -> float:
+    """Sum of duration_minutes across every counted meeting (NULLs, e.g. every
+    /upload, don't contribute) — for /reports's "Total Durasi" stat."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT COALESCE(SUM(duration_minutes), 0) FROM meetings
+                {"WHERE user_id = %s OR user_id IS NULL" if user_id is not None else ""}
+                """,
+                (user_id,) if user_id is not None else None,
+            )
+            return cur.fetchone()[0]
+
+    return float(with_conn(_do))
 
 
 def get_meeting(meeting_id: str) -> dict | None:

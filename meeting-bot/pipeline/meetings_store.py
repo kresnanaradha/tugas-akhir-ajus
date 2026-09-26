@@ -179,6 +179,15 @@ def update_meeting(meeting_id: str, **fields) -> None:
     with_conn(_do)
 
 
+def delete_meeting(meeting_id: str) -> None:
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM meetings WHERE id = %s", (meeting_id,))
+        conn.commit()
+
+    with_conn(_do)
+
+
 def list_meetings(user_id: str | None = None) -> list[dict]:
     """All meetings, or just one user's — `user_id IS NULL` rows (recorded
     before the `user_id` column existed) always show up too, so pre-auth

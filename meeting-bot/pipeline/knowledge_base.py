@@ -114,15 +114,19 @@ def index_meeting(meeting_id: str, summary: dict) -> None:
     collection.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
 
 
-def search(query: str, top_k: int = 5) -> list[dict]:
-    """Returns up to top_k {meeting_id, kind, text, distance} matches,
-    closest first. Caller (app.py) joins meeting_id against the meetings
+def search(query: str, meeting_ids: list[str], top_k: int = 5) -> list[dict]:
+    """Returns up to top_k {meeting_id, kind, text, distance} matches from the
+    given meetings only, closest first. Caller (app.py) joins meeting_id against the meetings
     table for title/date/platform — this module only knows about chunks."""
     collection = _get_collection()
-    if collection.count() == 0:
+    if not meeting_ids or collection.count() == 0:
         return []
     query_embedding = _get_model().encode([query]).tolist()
-    result = collection.query(query_embeddings=query_embedding, n_results=min(top_k, collection.count()))
+    result = collection.query(
+        query_embeddings=query_embedding,
+        n_results=min(top_k, collection.count()),
+        where={"meeting_id": {"$in": meeting_ids}},
+    )
 
     matches = []
     for i in range(len(result["ids"][0])):

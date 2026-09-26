@@ -78,6 +78,28 @@ _CONTENT_TYPES = {
 }
 
 
+def delete_prefix(prefix: str) -> int:
+    """Deletes every object under `prefix` (a meeting's whole folder:
+    recording, transcripts, segments, summary). One delete_object per key
+    (a handful per meeting) rather than delete_objects, which R2 is picky
+    about. Returns how many were deleted."""
+    client = _get_client()
+    keys = []
+    continuation = None
+    while True:
+        kwargs = {"Bucket": _bucket(), "Prefix": prefix}
+        if continuation:
+            kwargs["ContinuationToken"] = continuation
+        resp = client.list_objects_v2(**kwargs)
+        keys += [obj["Key"] for obj in resp.get("Contents", [])]
+        if not resp.get("IsTruncated"):
+            break
+        continuation = resp["NextContinuationToken"]
+    for key in keys:
+        client.delete_object(Bucket=_bucket(), Key=key)
+    return len(keys)
+
+
 def total_size_bytes() -> int:
     """Sums every object's size in the bucket — used for the super admin
     dashboard's storage metric. Paginates since list_objects_v2 caps at

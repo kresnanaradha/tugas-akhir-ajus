@@ -25,7 +25,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
 from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, report_pdf, report_stats, storage
-from pipeline.meetings_store import find_meeting_by_url, get_meeting, list_meetings, start_meeting, update_meeting
+from pipeline.meetings_store import delete_meeting, find_meeting_by_url, get_meeting, list_meetings, start_meeting, update_meeting
 from pipeline.summarize import fix_transcript, summarize
 from pipeline.transcribe import transcribe
 from pipeline.xendit_client import create_subscription_session, deactivate_recurring_plan
@@ -64,7 +64,7 @@ def _add_cors_headers(response):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
@@ -309,6 +309,7 @@ def _join(bot_cls, platform: str, title: str):
 
 
 @app.get("/jobs/<job_id>")
+@login_required
 def job_status(job_id):
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -331,6 +332,7 @@ def job_status(job_id):
 
 
 @app.post("/jobs/<job_id>/stop")
+@login_required
 def job_stop(job_id):
     """Ends the recording early (still runs the full transcribe/summarize
     pipeline afterward on whatever got recorded) — sets the same stop_event
@@ -362,6 +364,7 @@ def meetings():
 
 
 @app.get("/knowledge-base/search")
+@login_required
 def knowledge_base_search():
     """RAG search: matches summary chunks (executive summary / key decision /
     topic / action item) by embedding similarity, each joined with its
@@ -375,7 +378,11 @@ def knowledge_base_search():
     if not query:
         return jsonify({"error": "q is required"}), 400
 
-    matches = knowledge_base.search(query)
+    # Only meetings this user can see AND opted into the KB (in_kb): scoping
+    # it in the vector query itself, so other users' chunks can't crowd out
+    # the top results.
+    allowed = [m["id"] for m in list_meetings(session["user_id"]) if m.get("in_kb")]
+    matches = knowledge_base.search(query, allowed)
     results = []
     for m in matches:
         meeting = get_meeting(m["meeting_id"])
@@ -540,6 +547,70 @@ def toggle_action_item(meeting_id, index):
     return jsonify(summary)
 
 
+@app.put("/meetings/<meeting_id>/action-items")
+@login_required
+def replace_action_items(meeting_id):
+    """Replaces the whole action item list ({"items": [{task, assignee, due,
+    done}]}) — one endpoint covers edit, add and remove. Same lock as the
+    toggle so the two can't overwrite each other's write."""
+    record = get_meeting(meeting_id)
+    if record is None:
+        return jsonify({"error": "Meeting not found"}), 404
+    raw = (request.get_json(silent=True) or {}).get("items")
+    if not isinstance(raw, list):
+        return jsonify({"error": "items must be a list"}), 400
+
+    def text(value):
+        return (value.strip() or None) if isinstance(value, str) else None
+
+    items = []
+    for it in raw:
+        task = text(it.get("task")) if isinstance(it, dict) else None
+        if not task:
+            return jsonify({"error": "Setiap action item butuh isi tugas"}), 400
+        items.append(
+            {"task": task, "assignee": text(it.get("assignee")), "due": text(it.get("due")), "done": bool(it.get("done"))}
+        )
+
+    with _summary_lock:
+        summary = artifacts.load_summary(meeting_id)
+        if summary is None:
+            return jsonify({"error": "No summary for this meeting yet"}), 404
+        summary["action_items"] = items
+        artifacts.save_summary(meeting_id, summary)
+    return jsonify(summary)
+
+
+_LIVE_STATUSES = ("joining", "recording", "stopping", "processing")
+
+
+@app.delete("/meetings/<meeting_id>")
+@login_required
+def delete_meeting_route(meeting_id):
+    """Permanently deletes a meeting: its R2 folder (recording, transcripts,
+    segments, summary), its Knowledge Base chunks and its database row. Only
+    the owner or a super admin (rows from before user_id existed have no
+    owner, so only a super admin can remove those). Refused while the meeting
+    is still being recorded/processed. Usage/cost rows are kept on purpose so
+    the admin cost totals don't shrink."""
+    record = get_meeting(meeting_id)
+    if record is None:
+        return jsonify({"error": "Meeting not found"}), 404
+    if session.get("role") != "super_admin" and record.get("user_id") != session["user_id"]:
+        return jsonify({"error": "Hanya pemilik rapat yang bisa menghapusnya"}), 403
+    if record["status"] in _LIVE_STATUSES:
+        return jsonify({"error": "Rapat masih berjalan, tunggu sampai selesai"}), 409
+
+    # R2 first: if it fails nothing else is touched and the delete can be retried.
+    storage.delete_prefix(f"{meeting_id}/")
+    try:
+        knowledge_base.remove_meeting(meeting_id)
+    except Exception as e:
+        print(f"[knowledge_base] failed to remove meeting {meeting_id}: {e}")
+    delete_meeting(meeting_id)
+    return jsonify({"deleted": meeting_id})
+
+
 @app.get("/meetings/<meeting_id>/recording")
 @login_required
 def meeting_recording(meeting_id):
@@ -677,11 +748,13 @@ def billing_return():
 
 
 @app.get("/billing/status")
+@login_required
 def billing_status():
     return jsonify(billing_store.get_subscription())
 
 
 @app.post("/billing/checkout")
+@login_required
 def billing_checkout():
     """Starts a Xendit subscription checkout for the given plan — returns a
     hosted checkout URL the frontend redirects the user to. The actual
@@ -717,6 +790,7 @@ def billing_checkout():
 
 
 @app.post("/billing/cancel")
+@login_required
 def billing_cancel():
     """"Turunkan ke Free" — keeps the user on their paid plan until
     current_period_end (billing_store.cancel_subscription() only sets

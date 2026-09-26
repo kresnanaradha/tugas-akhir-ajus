@@ -28,6 +28,11 @@ x-worker-base: &worker-base
   env_file: .env
   environment:
     GOOGLE_AUTH_STATE_PATH: /app/auth/google.json
+    # The backend stores naive local timestamps (datetime.now()) and the
+    # frontend shows them as-is, so the container has to run on the user's
+    # timezone. It defaulted to UTC, which made every meeting made since
+    # the move to Docker display 8 hours early (07.25 for a 15.25 meeting).
+    TZ: Asia/Makassar
   restart: unless-stopped
   # Docker's default /dev/shm is 64MB, too small for Chrome's video
   # compositing/tab-capture buffers -- getDisplayMedia() then fails with
@@ -40,40 +45,47 @@ services:
   worker-1:
     <<: *worker-base
     ports: ["5050:5050"]
-    volumes: ["./auth/worker-1.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-1.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-2:
     <<: *worker-base
     ports: ["5051:5050"]
-    volumes: ["./auth/worker-2.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-2.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-3:
     <<: *worker-base
     ports: ["5052:5050"]
-    volumes: ["./auth/worker-3.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-3.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-4:
     <<: *worker-base
     ports: ["5053:5050"]
-    volumes: ["./auth/worker-4.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-4.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-5:
     <<: *worker-base
     ports: ["5054:5050"]
-    volumes: ["./auth/worker-5.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-5.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-6:
     <<: *worker-base
     ports: ["5055:5050"]
-    volumes: ["./auth/worker-6.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-6.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-7:
     <<: *worker-base
     ports: ["5056:5050"]
-    volumes: ["./auth/worker-7.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-7.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-8:
     <<: *worker-base
     ports: ["5057:5050"]
-    volumes: ["./auth/worker-8.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-8.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-9:
     <<: *worker-base
     ports: ["5058:5050"]
-    volumes: ["./auth/worker-9.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-9.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-10:
     <<: *worker-base
     ports: ["5059:5050"]
-    volumes: ["./auth/worker-10.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data"]
+    volumes: ["./auth/worker-10.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+
+# Model downloads (whisper, alignment, pyannote) live here so they survive
+# recreating a container. A named volume, not a host bind mount: it sits on
+# the WSL2 ext4 disk, which is much faster to read big model files from than
+# a Windows bind mount. All workers share it.
+volumes:
+  hf-cache:

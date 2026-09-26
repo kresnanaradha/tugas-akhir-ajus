@@ -222,7 +222,14 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
             _jobs[job_id].update(phase="failed", error=str(e))
         update_meeting(job_id, status="failed")
         return
-    duration_minutes = round((time.time() - started_at) / 60, 1)
+    # Recording length only, not wall-clock around bot.join() -- that also
+    # counts browser launch, joining, waiting to be admitted and leaving
+    # (a 1.25 min recording showed as 2.4 min). Falls back to the old
+    # wall-clock figure if the bot never got as far as recording.
+    if bot.record_started_at and bot.record_ended_at:
+        duration_minutes = round((bot.record_ended_at - bot.record_started_at) / 60, 1)
+    else:
+        duration_minutes = round((time.time() - started_at) / 60, 1)
 
     with _jobs_lock:
         _jobs[job_id]["phase"] = "processing"

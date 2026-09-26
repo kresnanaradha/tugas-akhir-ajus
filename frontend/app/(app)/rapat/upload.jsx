@@ -122,7 +122,8 @@ export default function UploadRapatScreen() {
                   keyboardType="number-pad"
                 />
                 <Text style={styles.fieldHint}>
-                  Bukan angka pasti, cuma perkiraan buat bantu sistem membedakan label pembicara lebih akurat.
+                  Bukan angka pasti, cuma perkiraan buat bantu sistem membedakan label pembicara lebih akurat. Isi 1
+                  kalau hanya ada satu pembicara: pemrosesan jauh lebih cepat, tapi semua ucapan diberi satu label.
                 </Text>
 
                 <Pressable style={styles.submit} onPress={run}>

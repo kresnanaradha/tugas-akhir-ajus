@@ -95,6 +95,7 @@ class MeetBotBase:
         # the frontend stop a recording early — see record() below.
         self.status = "joining"  # joining -> recording -> stopping
         self.record_started_at: float | None = None
+        self.record_ended_at: float | None = None
         self.stop_event = threading.Event()
         # Optional callback(status: str) — app.py wires this to persist each
         # transition to the meetings table (see pipeline/meetings_store.py's
@@ -147,6 +148,7 @@ class MeetBotBase:
             while time.time() < deadline and not self.stop_event.is_set():
                 time.sleep(1)
 
+            self.record_ended_at = time.time()
             self._set_status("stopping")
             self.page.evaluate(_STOP_JS)
         finally:

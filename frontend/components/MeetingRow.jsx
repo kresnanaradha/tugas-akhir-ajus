@@ -16,12 +16,13 @@ const PLATFORM_ACCENT = {
 };
 const DEFAULT_ACCENT = { icon: "video", bg: colors.surfaceSunken, fg: colors.inkFaint };
 
-export function MeetingRow({ meeting }) {
+export function MeetingRow({ meeting, selected, onSelect }) {
   const accent = PLATFORM_ACCENT[meeting.platform] || DEFAULT_ACCENT;
 
-  return (
-    <Link href={`/rapat/${meeting.id}`} asChild>
-      <Pressable style={styles.row}>
+  // With onSelect the row just selects (Rapat page's preview pane); without it,
+  // it navigates to the detail page as before (dashboard).
+  const row = (
+      <Pressable style={StyleSheet.flatten([styles.row, selected && styles.rowSelected])} onPress={onSelect}>
         <View style={[styles.iconCircle, { backgroundColor: accent.bg }]}>
           <Feather name={accent.icon} size={16} color={accent.fg} />
         </View>
@@ -56,6 +57,12 @@ export function MeetingRow({ meeting }) {
 
         <Feather name="chevron-right" size={16} color={colors.inkFaint} />
       </Pressable>
+  );
+  return onSelect ? (
+    row
+  ) : (
+    <Link href={`/rapat/${meeting.id}`} asChild>
+      {row}
     </Link>
   );
 }
@@ -65,20 +72,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    paddingVertical: spacing.md,
+    paddingVertical: 10,
     paddingHorizontal: spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  rowSelected: { backgroundColor: colors.goldSoft },
   iconCircle: {
-    width: 38,
-    height: 38,
+    width: 34,
+    height: 34,
     borderRadius: radius.pill,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  main: { flex: 1, gap: 4 },
+  main: { flex: 1, gap: 2 },
   title: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
   metaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 },
   metaTag: {

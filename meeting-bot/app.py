@@ -64,9 +64,24 @@ def _add_cors_headers(response):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
+
+
+# user_id -> (active, checked_at). A deactivated user's existing session must
+# stop working, but hitting the DB on every request would double latency, so
+# the check is cached. ponytail: up to 30s stale, per process.
+_active_cache: dict = {}
+
+
+def _user_is_active(user_id: str) -> bool:
+    cached = _active_cache.get(user_id)
+    if cached and time.time() - cached[1] < 30:
+        return cached[0]
+    active = auth_store.is_active(user_id)
+    _active_cache[user_id] = (active, time.time())
+    return active
 
 
 def login_required(view):
@@ -74,6 +89,9 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
             return jsonify({"error": "Belum login"}), 401
+        if not _user_is_active(session["user_id"]):
+            session.clear()
+            return jsonify({"error": "Akun dinonaktifkan"}), 401
         return view(*args, **kwargs)
 
     return wrapped
@@ -84,6 +102,9 @@ def super_admin_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
             return jsonify({"error": "Belum login"}), 401
+        if not _user_is_active(session["user_id"]):
+            session.clear()
+            return jsonify({"error": "Akun dinonaktifkan"}), 401
         if session.get("role") != "super_admin":
             return jsonify({"error": "Butuh akses super admin"}), 403
         return view(*args, **kwargs)
@@ -120,6 +141,8 @@ def auth_login():
     user = auth_store.verify_login(email, password)
     if user is None:
         return jsonify({"error": "Email atau password salah"}), 401
+    if not user["active"]:
+        return jsonify({"error": "Akun dinonaktifkan. Hubungi admin."}), 403
 
     session["user_id"] = user["id"]
     session["role"] = user["role"]
@@ -138,7 +161,7 @@ def auth_me():
     if not user_id:
         return jsonify({"error": "Belum login"}), 401
     user = auth_store.get_user(user_id)
-    if user is None:
+    if user is None or not user["active"]:
         # The session cookie outlived the user row (e.g. manually deleted
         # from the DB) — clear it rather than keep 401-ing forever with a
         # cookie the client has no way to know is now invalid.
@@ -686,6 +709,63 @@ def admin_stats_route():
     return jsonify(admin_stats.get_stats())
 
 
+@app.get("/admin/users")
+@super_admin_required
+def admin_users_list():
+    return jsonify(auth_store.list_users())
+
+
+@app.post("/admin/users")
+@super_admin_required
+def admin_users_create():
+    data = request.get_json(silent=True) or {}
+    email, password, name = data.get("email"), data.get("password"), data.get("name")
+    role = data.get("role") or "user"
+    if not email or not password or not name:
+        return jsonify({"error": "email, password, dan nama wajib diisi"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password minimal 8 karakter"}), 400
+    if role not in auth_store.ROLES:
+        return jsonify({"error": "Peran tidak dikenal"}), 400
+    try:
+        return jsonify(auth_store.create_user(email, password, name, role))
+    except psycopg2.errors.UniqueViolation:
+        return jsonify({"error": "Email sudah terdaftar"}), 409
+
+
+@app.patch("/admin/users/<user_id>")
+@super_admin_required
+def admin_users_update(user_id):
+    """Rename, change role, or (de)activate. Deactivating replaces deleting:
+    meetings keep pointing at users.id. An admin can't lock themselves out
+    (deactivate or demote their own account)."""
+    data = request.get_json(silent=True) or {}
+    name, role, active = data.get("name"), data.get("role"), data.get("active")
+    if name is not None and not str(name).strip():
+        return jsonify({"error": "Nama tidak boleh kosong"}), 400
+    if role is not None and role not in auth_store.ROLES:
+        return jsonify({"error": "Peran tidak dikenal"}), 400
+    if user_id == session["user_id"] and (active is False or (role is not None and role != "super_admin")):
+        return jsonify({"error": "Kamu tidak bisa menonaktifkan atau menurunkan akunmu sendiri"}), 400
+    if auth_store.get_user(user_id) is None:
+        return jsonify({"error": "Pengguna tidak ditemukan"}), 404
+    user = auth_store.update_user(user_id, name=str(name).strip() if name is not None else None, role=role, active=active)
+    _active_cache.pop(user_id, None)
+    return jsonify(user)
+
+
+@app.post("/admin/users/<user_id>/reset-password")
+@super_admin_required
+def admin_users_reset_password(user_id):
+    password = (request.get_json(silent=True) or {}).get("password") or ""
+    if len(password) < 8:
+        return jsonify({"error": "Password minimal 8 karakter"}), 400
+    if auth_store.get_user(user_id) is None:
+        return jsonify({"error": "Pengguna tidak ditemukan"}), 404
+    auth_store.set_password(user_id, password)
+    return jsonify({"ok": True})
+
+
 @app.get("/admin/export")
 @super_admin_required
 def admin_export():
@@ -712,6 +792,15 @@ def reports_stats_route():
     return jsonify(report_stats.get_stats(session["user_id"]))
 
 
+@app.get("/reports/action-items")
+@login_required
+def reports_action_items():
+    """Rekap of every action item across this user's meetings (see
+    report_stats.action_item_rollup) — separate from /reports/stats because it
+    reads each meeting's summary from R2 and is slow on a cold cache."""
+    return jsonify(report_stats.action_item_rollup(session["user_id"]))
+
+
 @app.get("/reports/export")
 @login_required
 def reports_export():
@@ -719,7 +808,9 @@ def reports_export():
     pipeline/report_pdf.py's generate_user_report()."""
     user = auth_store.get_user(session["user_id"])
     pdf_bytes = report_pdf.generate_user_report(
-        report_stats.get_stats(session["user_id"]), list_meetings(session["user_id"]), generated_by=user["name"]
+        report_stats.get_stats(session["user_id"], with_action_items=True),
+        list_meetings(session["user_id"]),
+        generated_by=user["name"],
     )
     return Response(
         pdf_bytes,

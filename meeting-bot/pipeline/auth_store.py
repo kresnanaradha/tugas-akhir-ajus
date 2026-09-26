@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'user',
     created_at TIMESTAMP NOT NULL
 );
+-- Deactivated accounts can't log in or use an existing session, but their
+-- row stays (meetings point at users.id). NULL counts as active.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;
 """
 register_schema(_TABLE_SQL)
 
@@ -30,7 +33,13 @@ def _public(row: dict) -> dict:
     """Strips password_hash before a user record ever leaves this module —
     every caller (session endpoints, super-admin user list once that
     exists) gets this, never the raw row."""
-    return {"id": row["id"], "email": row["email"], "name": row["name"], "role": row["role"]}
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "active": row.get("active") is not False,
+    }
 
 
 def create_user(email: str, password: str, name: str, role: str = "user") -> dict:
@@ -70,6 +79,52 @@ def get_user(user_id: str) -> dict | None:
 
     row = with_conn(_do)
     return _public(row) if row else None
+
+
+def list_users() -> list[dict]:
+    """Every user with how many meetings they own, newest first (admin UI)."""
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT u.*, (SELECT COUNT(*) FROM meetings m WHERE m.user_id = u.id) AS meeting_count "
+                "FROM users u ORDER BY u.created_at DESC"
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    return [
+        {**_public(r), "meeting_count": r["meeting_count"], "created_at": r["created_at"].strftime("%Y-%m-%dT%H:%M:%S")}
+        for r in with_conn(_do)
+    ]
+
+
+def update_user(user_id: str, name: str | None = None, role: str | None = None, active: bool | None = None) -> dict | None:
+    fields = {k: v for k, v in (("name", name), ("role", role), ("active", active)) if v is not None}
+    if fields:
+
+        def _do(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE users SET {', '.join(f'{c} = %s' for c in fields)} WHERE id = %s", (*fields.values(), user_id)
+                )
+            conn.commit()
+
+        with_conn(_do)
+    return get_user(user_id)
+
+
+def set_password(user_id: str, password: str) -> None:
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (generate_password_hash(password), user_id))
+        conn.commit()
+
+    with_conn(_do)
+
+
+def is_active(user_id: str) -> bool:
+    user = get_user(user_id)
+    return bool(user and user["active"])
 
 
 def count_users() -> int:

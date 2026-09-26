@@ -141,26 +141,35 @@ export default function KnowledgeBaseScreen() {
 
   const showHero = status === "idle";
 
+  const kbCard = (
+            <View style={styles.sideCard}>
+        <Text style={styles.sourcesLabel}>RAPAT DI KNOWLEDGE BASE{kbMeetings ? ` (${kbMeetings.length})` : ""}</Text>
+        {kbMeetings && kbMeetings.length === 0 && (
+          <Text style={styles.cardMeta}>
+            Belum ada. Buka detail rapat lalu klik "Simpan ke Knowledge Base" (hanya ringkasan dan keputusan utama yang disimpan).
+          </Text>
+        )}
+        {kbMeetings && kbMeetings.length > 0 && (
+          <View style={styles.results}>
+            {kbMeetings.map((m) => (
+              <KbMeetingRow key={m.id} meeting={m} onRemove={removeFromKb} />
+            ))}
+          </View>
+        )}
+
+            </View>
+  );
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.content}>
-        {showHero && (
-          <View style={styles.hero}>
-            <View style={styles.heroIcon}>
-              <Feather name="zap" size={22} color={colors.goldDeep} />
-            </View>
-            <Text style={styles.heroTitle}>Knowledge Base</Text>
-            <Text style={styles.heroSubtitle}>Cari apapun dari seluruh rapat Anda</Text>
-          </View>
-        )}
+        <View>
+          <Text style={styles.title}>Knowledge Base</Text>
+          <Text style={styles.heroSubtitle}>Cari apapun dari rapat yang sudah Anda simpan ke Knowledge Base.</Text>
+        </View>
 
-        {!showHero && (
-          <View style={styles.compactHeader}>
-            <Text style={styles.eyebrow}>MENU</Text>
-            <Text style={styles.title}>Knowledge Base</Text>
-          </View>
-        )}
-
+        <View style={styles.split}>
+          <View style={styles.mainCol}>
         <View style={styles.searchBar}>
           <Feather name="search" size={16} color={colors.inkFaint} />
           <TextInput
@@ -181,8 +190,9 @@ export default function KnowledgeBaseScreen() {
           </Pressable>
         </View>
 
-        {showHero && (
-          <>
+
+            {showHero && (
+              <>
             <View style={styles.exampleRow}>
               {EXAMPLE_QUERIES.map((q) => (
                 <Pressable key={q} style={styles.exampleChip} onPress={() => runSearch(q)}>
@@ -190,34 +200,10 @@ export default function KnowledgeBaseScreen() {
                 </Pressable>
               ))}
             </View>
+              </>
+            )}
 
-            <View style={styles.featureRow}>
-              {FEATURES.map((f) => (
-                <View key={f.title} style={styles.featureCard}>
-                  <View style={[styles.featureIcon, { backgroundColor: `${f.color}1A` }]}>
-                    <Feather name={f.icon} size={16} color={f.color} />
-                  </View>
-                  <Text style={styles.featureTitle}>{f.title}</Text>
-                  <Text style={styles.featureDescription}>{f.description}</Text>
-                </View>
-              ))}
-            </View>
-          </>
-        )}
-
-        <Text style={styles.sourcesLabel}>RAPAT DI KNOWLEDGE BASE{kbMeetings ? ` (${kbMeetings.length})` : ""}</Text>
-        {kbMeetings && kbMeetings.length === 0 && (
-          <Text style={styles.cardMeta}>
-            Belum ada. Buka detail rapat lalu klik "Simpan ke Knowledge Base" (hanya ringkasan dan keputusan utama yang disimpan).
-          </Text>
-        )}
-        {kbMeetings && kbMeetings.length > 0 && (
-          <View style={styles.results}>
-            {kbMeetings.map((m) => (
-              <KbMeetingRow key={m.id} meeting={m} onRemove={removeFromKb} />
-            ))}
-          </View>
-        )}
+            {showHero && kbCard}
 
         {status === "error" && (
           <View style={styles.stateBox}>
@@ -252,6 +238,28 @@ export default function KnowledgeBaseScreen() {
             </View>
           </>
         )}
+          </View>
+
+          <View style={styles.sideCol}>
+            {!showHero && kbCard}
+            {showHero && (
+              <View style={styles.sideCard}>
+                <Text style={styles.sourcesLabel}>CARA KERJA</Text>
+            <View style={styles.featureRow}>
+              {FEATURES.map((f) => (
+                <View key={f.title} style={styles.featureCard}>
+                  <View style={[styles.featureIcon, { backgroundColor: `${f.color}1A` }]}>
+                    <Feather name={f.icon} size={16} color={f.color} />
+                  </View>
+                  <Text style={styles.featureTitle}>{f.title}</Text>
+                  <Text style={styles.featureDescription}>{f.description}</Text>
+                </View>
+              ))}
+            </View>
+              </View>
+            )}
+          </View>
+        </View>
       </View>
     </ScrollView>
   );
@@ -259,9 +267,21 @@ export default function KnowledgeBaseScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
-  content: { gap: spacing.md, maxWidth: 900, width: "100%" },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
+  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
 
+  split: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  mainCol: { flex: 1.6, minWidth: 420, gap: spacing.md },
+  sideCol: { flex: 1, minWidth: 300, gap: spacing.md },
+  sideCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+    ...shadow.card,
+  },
   hero: { alignItems: "center", gap: 6, marginBottom: spacing.sm },
   heroIcon: {
     width: 44,
@@ -273,11 +293,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   heroTitle: { ...type.display, color: colors.ink, textAlign: "center" },
-  heroSubtitle: { ...type.body, color: colors.inkSoft, textAlign: "center" },
+  heroSubtitle: { ...type.body, color: colors.inkSoft, marginTop: 2 },
 
   compactHeader: { marginBottom: spacing.xs },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },
-  title: { ...type.display, color: colors.ink, marginTop: 4 },
+  title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
 
   searchBar: {
     flexDirection: "row",
@@ -302,7 +322,7 @@ const styles = StyleSheet.create({
   },
   searchButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  exampleRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, justifyContent: "center", marginTop: spacing.xs },
+  exampleRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xs },
   exampleChip: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -313,18 +333,8 @@ const styles = StyleSheet.create({
   },
   exampleChipLabel: { ...type.small, color: colors.inkSoft },
 
-  featureRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginTop: spacing.lg },
-  featureCard: {
-    flex: 1,
-    minWidth: 220,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: 4,
-    ...shadow.card,
-  },
+  featureRow: { gap: spacing.md },
+  featureCard: { gap: 2 },
   featureIcon: {
     width: 32,
     height: 32,
@@ -336,7 +346,7 @@ const styles = StyleSheet.create({
   featureTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
   featureDescription: { ...type.small, color: colors.inkSoft, lineHeight: 18 },
 
-  stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xxl },
+  stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xl },
   stateText: { ...type.body, color: colors.inkSoft, textAlign: "center" },
 
   answerBox: {

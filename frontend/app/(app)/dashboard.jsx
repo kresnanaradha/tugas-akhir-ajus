@@ -1,11 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
-import { aiInsight } from "@/constants/mock-data";
-import { listMeetings } from "@/lib/api";
+import { getMeeting, listMeetings } from "@/lib/api";
 import { formatMeetingDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth-context";
 import { InsightBanner } from "@/components/InsightBanner";
@@ -35,7 +34,36 @@ const todayLabel = new Intl.DateTimeFormat("id-ID", {
   year: "numeric",
 }).format(new Date());
 
+// The banner's content, from the newest finished meeting's stored summary (no
+// extra AI call): its still-open action items first, else its key decisions.
+function buildInsight(meeting, summary) {
+  const open = (summary?.action_items || []).filter((a) => !a.done);
+  const short = (t, n) => (t.length > n ? `${t.slice(0, n).trim()}...` : t);
+  if (open.length > 0) {
+    const first = open[0];
+    const who = [first.assignee, first.due].filter(Boolean).join(", ");
+    return {
+      headline: `${open.length} action item belum selesai`,
+      detail: `${meeting.title}: ${short(first.task, 110)}${who ? ` (${who})` : ""}${open.length > 1 ? ` dan ${open.length - 1} lainnya` : ""}`,
+      cta: "Buka Rapat",
+      href: `/rapat/${meeting.id}`,
+    };
+  }
+  const decision = summary?.key_decisions?.[0];
+  if (decision) {
+    return { headline: "Keputusan dari rapat terakhir", detail: `${meeting.title}: ${short(decision, 140)}`, cta: "Buka Rapat", href: `/rapat/${meeting.id}` };
+  }
+  return {
+    headline: "Belum ada insight",
+    detail: "Insight muncul setelah rapat selesai diproses dan punya ringkasan.",
+    cta: "Mulai Rapat",
+    href: "/rapat/baru",
+  };
+}
+
 export default function DashboardScreen() {
+  const router = useRouter();
+  const [insight, setInsight] = useState(null);
   const { user } = useAuth();
   const [meetingsStatus, setMeetingsStatus] = useState("loading"); // loading | error | done
   const [meetings, setMeetings] = useState([]);
@@ -48,6 +76,18 @@ export default function DashboardScreen() {
       })
       .catch(() => setMeetingsStatus("error"));
   }, []);
+
+  useEffect(() => {
+    if (meetingsStatus !== "done") return;
+    const latest = meetings.find((m) => m.status === "completed" && m.recording);
+    if (!latest) {
+      setInsight(buildInsight({}, null));
+      return;
+    }
+    getMeeting(latest.id)
+      .then((m) => setInsight(buildInsight(latest, m.summary)))
+      .catch(() => setInsight(buildInsight(latest, null)));
+  }, [meetingsStatus]);
 
   const total = meetings.length;
   const completed = meetings.filter((m) => m.status === "completed").length;
@@ -80,12 +120,12 @@ export default function DashboardScreen() {
         </View>
 
         <InsightBanner
-          eyebrow="AI Insight hari ini"
-          headline={aiInsight.headline}
-          detail={`${aiInsight.detail} · ${aiInsight.metric}`}
-          ctaLabel="Tanya Knowledge Base"
+          eyebrow="Insight dari rapat terakhir"
+          headline={insight?.headline || "Memuat insight..."}
+          detail={insight?.detail || " "}
+          ctaLabel={insight?.cta || "Buka Rapat"}
+          onPressCta={() => insight && router.push(insight.href)}
         />
-
         <View style={styles.statGrid}>
           <StatCard value={String(total)} label="Total Rapat" />
           <StatCard value={`${totalDurationHours}j`} label="Total Durasi" />
@@ -125,6 +165,7 @@ export default function DashboardScreen() {
             </View>
           </View>
 
+          <View style={styles.sideCol}>
           <View style={styles.sidePanel}>
             <Text style={styles.panelTitle}>Aksi Cepat</Text>
             <View style={styles.actionList}>
@@ -144,6 +185,7 @@ export default function DashboardScreen() {
               ))}
             </View>
           </View>
+          </View>
         </View>
       </View>
     </ScrollView>
@@ -152,12 +194,12 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
-  content: { gap: spacing.xl, maxWidth: 1200, width: "100%" },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
+  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
 
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
   dateLabel: { ...type.eyebrow, color: colors.inkFaint },
-  greeting: { ...type.display, color: colors.ink, marginTop: 4 },
+  greeting: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 2 },
   headerActions: { flexDirection: "row", gap: spacing.sm },
 
   secondaryButton: {
@@ -167,8 +209,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
   },
   secondaryButtonLabel: { ...type.bodyMedium, color: colors.ink },
@@ -183,9 +225,9 @@ const styles = StyleSheet.create({
   },
   primaryButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  statGrid: { flexDirection: "row", gap: spacing.lg },
+  statGrid: { flexDirection: "row", gap: spacing.md },
 
-  mainGrid: { flexDirection: "row", gap: spacing.lg, alignItems: "flex-start" },
+  mainGrid: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" },
 
   meetingsPanel: {
     flex: 2.4,
@@ -211,8 +253,8 @@ const styles = StyleSheet.create({
   meetingsState: { padding: spacing.xl, alignItems: "center" },
   meetingsStateText: { ...type.body, color: colors.inkFaint },
 
+  sideCol: { flex: 1, gap: spacing.md },
   sidePanel: {
-    flex: 1,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,

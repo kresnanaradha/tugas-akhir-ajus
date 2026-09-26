@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
+import { UserManagement } from "@/components/UserManagement";
 
 // Same fixed categorical order already used for speaker badges elsewhere in
 // this app (see rapat/[id].jsx's SPEAKER_PALETTE) — reused here instead of
@@ -92,6 +93,8 @@ export default function AdminScreen() {
 
         {status === "done" && stats && (
           <>
+            <View style={styles.columns}>
+            <View style={styles.column}>
             <Text style={styles.sectionLabel}>Volume Rapat</Text>
             <View style={styles.statRow}>
               <StatCard value={stats.meetings.today} label="Rapat Hari Ini" />
@@ -104,6 +107,8 @@ export default function AdminScreen() {
               <BarChart data={stats.meetings_daily.map((d) => ({ date: d.date, value: d.count }))} />
             </View>
 
+            </View>
+            <View style={styles.column}>
             <Text style={styles.sectionLabel}>Bisnis</Text>
             <View style={styles.statRow}>
               <StatCard value={formatIDR(stats.mrr_idr)} label="Pendapatan Berjalan (MRR)" />
@@ -136,6 +141,9 @@ export default function AdminScreen() {
               />
             </View>
 
+            </View>
+            </View>
+
             <Text style={styles.sectionLabel}>Biaya & Penyimpanan</Text>
             <View style={styles.statRow}>
               <StatCard
@@ -148,6 +156,9 @@ export default function AdminScreen() {
             </View>
           </>
         )}
+
+        <Text style={styles.sectionLabel}>Manajemen Pengguna</Text>
+        <UserManagement currentUserId={user?.id} />
       </View>
     </ScrollView>
   );
@@ -155,12 +166,12 @@ export default function AdminScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
-  content: { gap: spacing.md, maxWidth: 1000, width: "100%" },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
+  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
 
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.lg },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },
-  title: { ...type.display, color: colors.ink, marginTop: 4 },
+  title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, maxWidth: 60 * 8 },
 
   exportButton: {
@@ -168,13 +179,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
     backgroundColor: colors.gold,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
     ...shadow.card,
   },
   exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
+  columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  column: { flex: 1, minWidth: 380, gap: spacing.md },
   sectionLabel: { ...type.eyebrow, color: colors.inkFaint, marginTop: spacing.md },
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
 
@@ -189,6 +202,6 @@ const styles = StyleSheet.create({
   },
   chartTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xxl },
+  stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xl },
   stateText: { ...type.body, color: colors.inkSoft, textAlign: "center" },
 });

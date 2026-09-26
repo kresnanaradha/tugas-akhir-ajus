@@ -1098,8 +1098,8 @@ export default function MeetingDetailScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
-  content: { gap: spacing.xl, maxWidth: 1100, width: "100%" },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
+  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
 
   backLink: { ...type.small, color: colors.inkSoft },
 
@@ -1112,7 +1112,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.xl,
+    padding: spacing.lg,
     gap: spacing.sm,
   },
   badgeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
@@ -1126,7 +1126,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   platformBadgeLabel: { ...type.small, color: colors.inkSoft },
-  title: { ...type.display, color: colors.ink },
+  title: { ...type.h1, fontSize: 24, color: colors.ink },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   metaText: { ...type.body, color: colors.inkSoft },
   metaIconGap: { marginLeft: spacing.md },
@@ -1137,7 +1137,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.xxl,
+    padding: spacing.lg,
     alignItems: "center",
     gap: spacing.xl,
   },
@@ -1208,7 +1208,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.xl,
+    padding: spacing.lg,
   },
   summaryCardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
   iconWrap: {
@@ -1476,8 +1476,8 @@ const styles = StyleSheet.create({
     gap: 7,
     backgroundColor: colors.gold,
     borderRadius: radius.sm,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
   },
   saveButtonDisabled: { opacity: 0.6 },
   saveButtonLabel: { ...type.small, fontWeight: "700", color: colors.ink },

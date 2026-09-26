@@ -11,7 +11,8 @@ _DEVICE = "cpu"
 # skripsi" instead of "transkripsi") — override via .env for other domains.
 _DEFAULT_PROMPT = (
     "Rapat mengenai Notulis, bot perekam rapat Zoom dan Google Meet, "
-    "transkripsi otomatis dengan Whisper, dan ringkasan AI."
+    "transkripsi otomatis dengan Whisper, dan ringkasan AI. Istilah yang sering "
+    "muncul: Docker, kontainer, RAM, CPU, GB, skrip, Knowledge Base, diarization, dosen, demo."
 )
 
 _model = None
@@ -23,6 +24,9 @@ def _get_model():
     global _model
     if _model is None:
         prompt = os.getenv("WHISPER_INITIAL_PROMPT", _DEFAULT_PROMPT)
+        extra = os.getenv("EXTRA_VOCAB", "").strip()  # names/terms, same setting summarize.py reads
+        if extra:
+            prompt += f" Nama: {extra}."
         _model = whisperx.load_model(
             os.getenv("WHISPER_MODEL", "medium"),
             device=_DEVICE,

@@ -31,6 +31,10 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS url TEXT;
 -- everywhere this is filtered on, rather than orphaned/hidden. TEXT, not
 -- INTEGER: users.id (auth_store.py) is a hex uuid string, not a serial int.
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS user_id TEXT;
+-- Opt-in to the Knowledge Base: only meetings the user explicitly added
+-- (POST /meetings/<id>/knowledge-base) get indexed. Nullable on purpose --
+-- NULL/false both mean "not in the KB".
+ALTER TABLE meetings ADD COLUMN IF NOT EXISTS in_kb BOOLEAN DEFAULT FALSE;
 """
 register_schema(_TABLE_SQL)
 # recording stays NOT NULL — ALTER TABLE ... DROP NOT NULL turned out to hang

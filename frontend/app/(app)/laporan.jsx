@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
+import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getReportExportUrl, getReportStats } from "@/lib/api";
+import { getReportActionItems, getReportExportUrl, getReportStats } from "@/lib/api";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
@@ -18,6 +19,7 @@ export default function LaporanScreen() {
   const [status, setStatus] = useState("loading"); // loading | error | done
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
+  const [actions, setActions] = useState(null); // null = loading, false = failed
 
   useEffect(() => {
     getReportStats()
@@ -29,6 +31,12 @@ export default function LaporanScreen() {
         setError(e.message || "Gagal memuat laporan");
         setStatus("error");
       });
+  }, []);
+
+  useEffect(() => {
+    getReportActionItems()
+      .then(setActions)
+      .catch(() => setActions(false));
   }, []);
 
   return (
@@ -60,40 +68,101 @@ export default function LaporanScreen() {
         )}
 
         {status === "done" && stats && (
-          <>
-            <Text style={styles.sectionLabel}>Volume Rapat</Text>
-            <View style={styles.statRow}>
-              <StatCard value={stats.meetings.today} label="Rapat Hari Ini" />
-              <StatCard value={stats.meetings.this_week} label="Rapat Minggu Ini" />
-              <StatCard value={stats.meetings.this_month} label="Rapat Bulan Ini" />
-              <StatCard value={stats.meetings.total} label="Total Rapat" />
-            </View>
-            <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>Rapat per Hari (14 Hari Terakhir)</Text>
-              <BarChart data={stats.meetings_daily.map((d) => ({ date: d.date, value: d.count }))} />
+          <View style={styles.columns}>
+            <View style={styles.column}>
+              <Text style={styles.sectionLabel}>Volume Rapat</Text>
+              <View style={styles.statRow}>
+                <StatCard value={stats.meetings.today} label="Hari Ini" />
+                <StatCard value={stats.meetings.this_week} label="Minggu Ini" />
+                <StatCard value={stats.meetings.this_month} label="Bulan Ini" />
+                <StatCard value={stats.meetings.total} label="Total" />
+              </View>
+              <View style={styles.chartCard}>
+                <Text style={styles.chartTitle}>Rapat per Hari (14 Hari Terakhir)</Text>
+                <BarChart data={stats.meetings_daily.map((d) => ({ date: d.date, value: d.count }))} />
+              </View>
             </View>
 
-            <Text style={styles.sectionLabel}>Rekaman</Text>
-            <View style={styles.statRow}>
-              <StatCard value={`${(stats.total_duration_minutes / 60).toFixed(1)} jam`} label="Total Durasi Rekaman" />
-              <StatCard
-                value={`${Math.round((stats.meetings.completed / (stats.meetings.total || 1)) * 100)}%`}
-                label="Tingkat Keberhasilan"
-                delta={`${stats.meetings.failed} gagal`}
-                deltaColor={colors.danger}
-              />
+            <View style={styles.column}>
+              <Text style={styles.sectionLabel}>Rekaman</Text>
+              <View style={styles.statRow}>
+                <StatCard value={`${(stats.total_duration_minutes / 60).toFixed(1)} jam`} label="Total Durasi Rekaman" />
+                <StatCard
+                  value={`${Math.round((stats.meetings.completed / (stats.meetings.total || 1)) * 100)}%`}
+                  label="Tingkat Keberhasilan"
+                  delta={`${stats.meetings.failed} gagal`}
+                  deltaColor={colors.danger}
+                />
+              </View>
+              <View style={styles.chartCard}>
+                <Text style={styles.chartTitle}>Distribusi Platform</Text>
+                <HorizontalBarChart
+                  data={Object.entries(stats.platform_counts).map(([platform, n]) => ({
+                    label: PLATFORM_LABELS[platform] || platform,
+                    value: n,
+                    color: PLATFORM_COLORS[platform] || colors.inkFaint,
+                  }))}
+                />
+              </View>
             </View>
-            <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>Distribusi Platform</Text>
-              <HorizontalBarChart
-                data={Object.entries(stats.platform_counts).map(([platform, n]) => ({
-                  label: PLATFORM_LABELS[platform] || platform,
-                  value: n,
-                  color: PLATFORM_COLORS[platform] || colors.inkFaint,
-                }))}
-              />
+          </View>
+        )}
+
+        <Text style={styles.sectionLabel}>Tindak Lanjut (Action Item)</Text>
+        {actions === null && (
+          <View style={styles.stateBox}>
+            <ActivityIndicator color={colors.gold} />
+            <Text style={styles.stateText}>Menghitung action item dari semua rapat...</Text>
+          </View>
+        )}
+        {actions === false && <Text style={styles.stateText}>Gagal memuat rekap action item.</Text>}
+        {actions && (
+          <View style={styles.columns}>
+            <View style={styles.column}>
+              <View style={styles.statRow}>
+                <StatCard value={actions.total} label="Total Action Item" />
+                <StatCard value={actions.done} label="Selesai" delta={`${Math.round((actions.done / (actions.total || 1)) * 100)}%`} deltaColor={colors.success} />
+                <StatCard value={actions.open} label="Belum Selesai" deltaColor={colors.danger} />
+              </View>
+              <View style={styles.chartCard}>
+                <Text style={styles.chartTitle}>Per Penanggung Jawab</Text>
+                {actions.by_assignee.length === 0 ? (
+                  <Text style={styles.stateText}>Belum ada action item.</Text>
+                ) : (
+                  <HorizontalBarChart
+                    data={actions.by_assignee.slice(0, 8).map((r) => ({
+                      label: r.assignee,
+                      value: r.open + r.done,
+                      color: r.open > 0 ? colors.goldDeep : colors.success,
+                    }))}
+                  />
+                )}
+              </View>
             </View>
-          </>
+
+            <View style={styles.column}>
+              <View style={[styles.chartCard, { flex: 1 }]}>
+                <Text style={styles.chartTitle}>Belum Selesai ({actions.open})</Text>
+                <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={{ gap: 2 }}>
+                  {actions.open_items.length === 0 && <Text style={styles.stateText}>Semua action item sudah selesai.</Text>}
+                  {actions.open_items.map((it, i) => (
+                    <Link key={i} href={`/rapat/${it.meeting_id}`} asChild>
+                      <Pressable style={styles.openRow}>
+                        <Feather name="square" size={13} color={colors.inkFaint} style={{ marginTop: 3 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.openTask}>{it.task}</Text>
+                          <Text style={styles.openMeta} numberOfLines={1}>
+                            {[it.assignee, it.due, it.meeting_title].filter(Boolean).join(" · ")}
+                          </Text>
+                        </View>
+                        <Feather name="chevron-right" size={13} color={colors.inkFaint} />
+                      </Pressable>
+                    </Link>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          </View>
         )}
       </View>
     </ScrollView>
@@ -102,12 +171,12 @@ export default function LaporanScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
-  content: { gap: spacing.md, maxWidth: 1000, width: "100%" },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
+  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
 
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.lg },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },
-  title: { ...type.display, color: colors.ink, marginTop: 4 },
+  title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, maxWidth: 60 * 8 },
 
   exportButton: {
@@ -115,13 +184,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
     backgroundColor: colors.gold,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
     ...shadow.card,
   },
   exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
+  columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  column: { flex: 1, minWidth: 380, gap: spacing.md },
+  openRow: { flexDirection: "row", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
+  openTask: { ...type.small, fontSize: 13.5, color: colors.ink, lineHeight: 18 },
+  openMeta: { ...type.small, color: colors.inkFaint },
   sectionLabel: { ...type.eyebrow, color: colors.inkFaint, marginTop: spacing.md },
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
 
@@ -136,6 +210,6 @@ const styles = StyleSheet.create({
   },
   chartTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xxl },
+  stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xl },
   stateText: { ...type.body, color: colors.inkSoft, textAlign: "center" },
 });

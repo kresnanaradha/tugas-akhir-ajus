@@ -49,11 +49,11 @@ export function TopBar() {
 
 const styles = StyleSheet.create({
   bar: {
-    height: 64,
+    height: 56,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     backgroundColor: colors.surface,

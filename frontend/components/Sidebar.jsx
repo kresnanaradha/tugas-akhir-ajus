@@ -96,15 +96,15 @@ export function Sidebar() {
 
 const styles = StyleSheet.create({
   sidebar: {
-    width: 232,
+    width: 208,
     backgroundColor: colors.surface,
     borderRightWidth: 1,
     borderRightColor: colors.border,
-    paddingVertical: spacing.xl,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
     justifyContent: "space-between",
   },
-  brand: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: spacing.xxl, paddingHorizontal: spacing.xs },
+  brand: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: spacing.xl, paddingHorizontal: spacing.xs },
   logo: { width: 26, height: 26 },
   brandLabel: { ...type.h1, color: colors.ink },
   sectionLabel: {

@@ -207,6 +207,39 @@ export async function getAdminStats() {
   return handleResponse(res);
 }
 
+// Super admin user management — see /admin/users* in app.py.
+export async function listUsers() {
+  return handleResponse(await apiFetch("/admin/users"));
+}
+
+export async function createUser({ name, email, password, role }) {
+  const res = await apiFetch("/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, password, role }),
+  });
+  return handleResponse(res);
+}
+
+// fields: any of {name, role, active} — deactivating replaces deleting.
+export async function updateUser(id, fields) {
+  const res = await apiFetch(`/admin/users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
+  return handleResponse(res);
+}
+
+export async function resetUserPassword(id, password) {
+  const res = await apiFetch(`/admin/users/${encodeURIComponent(id)}/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  return handleResponse(res);
+}
+
 // URL for the formal PDF report — for a plain link/anchor, not fetched as
 // JSON (the browser handles the download). See GET /admin/export.
 export function getAdminExportUrl() {
@@ -219,6 +252,13 @@ export function getAdminExportUrl() {
 export async function getReportStats() {
   const res = await apiFetch("/reports/stats");
   return handleResponse(res);
+}
+
+// Rekap of every action item across this user's meetings — totals, per
+// assignee, and the still-open items. Separate call because it's slow on a
+// cold cache (see GET /reports/action-items).
+export async function getReportActionItems() {
+  return handleResponse(await apiFetch("/reports/action-items"));
 }
 
 // URL for this user's own PDF report — for a plain link/anchor, not fetched

@@ -35,10 +35,10 @@ export function PlaceholderPage({ icon, title, description, comingFeatures }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
   content: { gap: spacing.sm, maxWidth: 720, width: "100%" },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },
-  title: { ...type.display, color: colors.ink, marginTop: 4 },
+  title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, marginBottom: spacing.xl, maxWidth: 60 * 8 },
 
   card: {
@@ -46,7 +46,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.xl,
+    padding: spacing.lg,
     gap: spacing.sm,
   },
   iconWrap: {

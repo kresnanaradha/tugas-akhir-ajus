@@ -98,6 +98,50 @@ def generate_report(stats: dict, meetings: list[dict], generated_by: str) -> byt
             colWidths=[9 * cm, 8 * cm],
             style=_table_style(),
         ),
+        Paragraph("Tindak Lanjut (Action Item)", section_style),
+        Table(
+            [
+                ["Total Action Item", str(ai["total"])],
+                ["Selesai", str(ai["done"])],
+                ["Belum Selesai", str(ai["open"])],
+            ],
+            colWidths=[9 * cm, 8 * cm],
+            style=_table_style(header=False),
+        ),
+        *(
+            [
+                Spacer(1, 8),
+                Table(
+                    [["Penanggung Jawab", "Belum", "Selesai"]]
+                    + [[r["assignee"], str(r["open"]), str(r["done"])] for r in ai["by_assignee"]],
+                    colWidths=[9 * cm, 4 * cm, 4 * cm],
+                    style=_table_style(),
+                ),
+            ]
+            if ai["by_assignee"]
+            else []
+        ),
+        *(
+            [
+                Spacer(1, 8),
+                Table(
+                    [["Tugas yang Belum Selesai", "PIC", "Tenggat"]]
+                    + [
+                        [
+                            Paragraph(f"{it['task']}<br/><font size=7 color='#8A8F9E'>{it['meeting_title']}</font>", ParagraphStyle("cell2", fontSize=8.5, textColor=_INK)),
+                            it["assignee"] or "—",
+                            it["due"] or "—",
+                        ]
+                        for it in ai["open_items"]
+                    ],
+                    colWidths=[9.5 * cm, 4 * cm, 3.5 * cm],
+                    repeatRows=1,
+                    style=_table_style(),
+                ),
+            ]
+            if ai["open_items"]
+            else []
+        ),
         Paragraph("Detail Rapat", section_style),
     ]
 
@@ -145,6 +189,8 @@ def generate_user_report(stats: dict, meetings: list[dict], generated_by: str) -
     success_rate = round(m["completed"] / max(1, m["total"]) * 100)
     total_hours = stats["total_duration_minutes"] / 60
     platform_label = {"google_meet": "Google Meet", "zoom": "Zoom", "upload": "Upload"}
+
+    ai = stats["action_items"]
 
     elements = [
         Paragraph("NOTULIS", title_style),

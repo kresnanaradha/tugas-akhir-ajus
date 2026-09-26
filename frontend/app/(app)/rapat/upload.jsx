@@ -153,11 +153,11 @@ export default function UploadRapatScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.xxl },
-  content: { gap: spacing.md, maxWidth: 640, width: "100%" },
+  scrollContent: { alignItems: "center", padding: spacing.lg },
+  content: { gap: spacing.md, maxWidth: 1000, width: "100%" },
 
   backLink: { ...type.small, color: colors.inkSoft, marginBottom: spacing.md },
-  title: { ...type.display, color: colors.ink },
+  title: { ...type.h1, fontSize: 24, color: colors.ink },
   subtitle: { ...type.body, color: colors.inkSoft, marginBottom: spacing.lg },
 
   card: {
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.xl,
+    padding: spacing.lg,
   },
 
   dropInner: { alignItems: "center" },

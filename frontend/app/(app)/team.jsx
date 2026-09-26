@@ -37,10 +37,10 @@ export default function TeamScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: "center", padding: spacing.xxl },
+  screen: { flex: 1, alignItems: "center", padding: spacing.lg },
   content: { gap: spacing.sm, maxWidth: 720, width: "100%" },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },
-  title: { ...type.display, color: colors.ink, marginTop: 4 },
+  title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, marginBottom: spacing.xl },
 
   emptyCard: {
@@ -48,7 +48,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.xxl,
+    padding: spacing.lg,
     alignItems: "center",
     gap: spacing.sm,
   },
@@ -71,8 +71,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.sm,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
     marginTop: spacing.sm,
     opacity: 0.6,
   },

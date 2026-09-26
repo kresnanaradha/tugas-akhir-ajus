@@ -59,38 +59,32 @@ def _get_collection():
 _KIND_PREFIX = {
     "executive_summary": "Ringkasan rapat",
     "key_decision": "Keputusan rapat",
-    "topic": "Topik yang dibahas",
-    "action_item": "Action item",
 }
 
 
 def _chunks_for(summary: dict) -> list[tuple[str, str]]:
-    """Splits one meeting's summary into (kind, text) chunks to embed
-    separately, rather than one big blob per meeting — a search for "action
-    item soal upload audio" should match that one action item directly, not
-    compete against the whole executive summary's similarity score."""
+    """Only the executive summary and key decisions go into the KB (advisor's
+    call: topics/action items add noise, the summary already covers them).
+    The summary is now several paragraphs long, and this embedding model only
+    reads ~128 tokens per input, so it's embedded one paragraph per chunk
+    instead of as one blob whose tail would be silently ignored."""
     chunks = []
-    if summary.get("executive_summary"):
-        chunks.append(("executive_summary", summary["executive_summary"]))
+    for paragraph in (summary.get("executive_summary") or "").split("\n\n"):
+        if paragraph.strip():
+            chunks.append(("executive_summary", paragraph.strip()))
     for decision in summary.get("key_decisions") or []:
         chunks.append(("key_decision", decision))
-    for topic in summary.get("topics_discussed") or []:
-        chunks.append(("topic", topic))
-    for item in summary.get("action_items") or []:
-        text = item.get("task") or ""
-        if item.get("assignee"):
-            text += f" (PIC: {item['assignee']})"
-        if item.get("due"):
-            text += f" (due: {item['due']})"
-        if text:
-            chunks.append(("action_item", text))
     return chunks
 
 
+def remove_meeting(meeting_id: str) -> None:
+    _get_collection().delete(where={"meeting_id": meeting_id})
+
+
 def index_meeting(meeting_id: str, summary: dict) -> None:
-    """(Re-)indexes one meeting's summary — called after every summarize()
-    call (initial pipeline run, or a re-summarize from the transcript
-    editor). Chunk ids are deterministic (meeting_id + kind + position), so
+    """(Re-)indexes one meeting's summary — only for meetings the user opted
+    in (POST /meetings/<id>/knowledge-base), and again after a re-summarize
+    from the transcript editor if it's still opted in. Chunk ids are deterministic (meeting_id + kind + position), so
     re-indexing the same meeting overwrites its old chunks via upsert
     instead of accumulating duplicates every time a transcript gets edited
     and re-summarized."""

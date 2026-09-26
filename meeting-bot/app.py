@@ -484,6 +484,29 @@ def update_transcript(meeting_id):
     return jsonify(result)
 
 
+_summary_lock = threading.Lock()
+
+
+@app.post("/meetings/<meeting_id>/knowledge-base")
+@login_required
+def meeting_knowledge_base(meeting_id):
+    """Opt this meeting in/out of the Knowledge Base ({"enabled": bool}).
+    Only the executive summary + key decisions get indexed."""
+    record = get_meeting(meeting_id)
+    if record is None:
+        return jsonify({"error": "Meeting not found"}), 404
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    if enabled:
+        summary = artifacts.load_summary(meeting_id)
+        if summary is None:
+            return jsonify({"error": "No summary for this meeting yet"}), 404
+        knowledge_base.index_meeting(meeting_id, summary)
+    else:
+        knowledge_base.remove_meeting(meeting_id)
+    update_meeting(meeting_id, in_kb=enabled)
+    return jsonify({"in_kb": enabled})
+
+
 @app.post("/meetings/<meeting_id>/action-items/<int:index>/toggle")
 @login_required
 def toggle_action_item(meeting_id, index):
@@ -497,16 +520,23 @@ def toggle_action_item(meeting_id, index):
     if not record["recording"]:
         return jsonify({"error": "Recording not available yet"}), 404
 
-    summary = artifacts.load_summary(meeting_id)
-    if summary is None:
-        return jsonify({"error": "No summary for this meeting yet"}), 404
+    # Read-modify-write of the whole summary file: two quick clicks used to
+    # both read the same old copy and the second save erased the first
+    # check, so serialize it. The client sends the wanted `done` value
+    # (idempotent) instead of relying on a blind flip.
+    # ponytail: one process-wide lock, per-meeting locks if it ever contends.
+    with _summary_lock:
+        summary = artifacts.load_summary(meeting_id)
+        if summary is None:
+            return jsonify({"error": "No summary for this meeting yet"}), 404
 
-    items = summary.get("action_items") or []
-    if index < 0 or index >= len(items):
-        return jsonify({"error": "Invalid action item index"}), 400
+        items = summary.get("action_items") or []
+        if index < 0 or index >= len(items):
+            return jsonify({"error": "Invalid action item index"}), 400
 
-    items[index]["done"] = not items[index].get("done", False)
-    artifacts.save_summary(meeting_id, summary)
+        done = (request.get_json(silent=True) or {}).get("done")
+        items[index]["done"] = bool(done) if done is not None else not items[index].get("done", False)
+        artifacts.save_summary(meeting_id, summary)
     return jsonify(summary)
 
 

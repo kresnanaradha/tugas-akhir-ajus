@@ -1,10 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { Link } from "expo-router";
-import { useState } from "react";
+import { Link, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { searchKnowledgeBase } from "@/lib/api";
+import { listMeetings, searchKnowledgeBase, setKnowledgeBase } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 
 // Search-only, deliberately no chat/conversation UI — the advisor's explicit
@@ -76,7 +76,45 @@ function ResultCard({ result }) {
   );
 }
 
+function KbMeetingRow({ meeting, onRemove }) {
+  const { date, time } = formatMeetingDate(meeting.created_at);
+  return (
+    <View style={styles.kbRow}>
+      <Link href={`/rapat/${meeting.id}`} asChild>
+        <Pressable style={{ flex: 1 }}>
+          <Text style={styles.kbRowTitle} numberOfLines={1}>{meeting.title}</Text>
+          <Text style={styles.cardMeta}>
+            {PLATFORM_LABEL[meeting.platform] || meeting.platform} · {date}, {time}
+          </Text>
+        </Pressable>
+      </Link>
+      <Pressable style={styles.kbRemove} onPress={() => onRemove(meeting.id)} hitSlop={6}>
+        <Feather name="x" size={13} color={colors.inkSoft} />
+        <Text style={styles.kbRemoveLabel}>Keluarkan</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export default function KnowledgeBaseScreen() {
+  const [kbMeetings, setKbMeetings] = useState(null); // null = loading
+
+  // Refetch on every focus so a meeting added from its own page shows up here.
+  useFocusEffect(
+    useCallback(() => {
+      listMeetings()
+        .then((all) => setKbMeetings(all.filter((m) => m.in_kb)))
+        .catch(() => setKbMeetings([]));
+    }, [])
+  );
+
+  function removeFromKb(id) {
+    setKbMeetings((list) => list.filter((m) => m.id !== id));
+    setKnowledgeBase(id, false).catch(() =>
+      listMeetings().then((all) => setKbMeetings(all.filter((m) => m.in_kb))).catch(() => {})
+    );
+  }
+
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("idle"); // idle | loading | error | done
   const [answer, setAnswer] = useState(null);
@@ -165,6 +203,20 @@ export default function KnowledgeBaseScreen() {
               ))}
             </View>
           </>
+        )}
+
+        <Text style={styles.sourcesLabel}>RAPAT DI KNOWLEDGE BASE{kbMeetings ? ` (${kbMeetings.length})` : ""}</Text>
+        {kbMeetings && kbMeetings.length === 0 && (
+          <Text style={styles.cardMeta}>
+            Belum ada. Buka detail rapat lalu klik "Simpan ke Knowledge Base" (hanya ringkasan dan keputusan utama yang disimpan).
+          </Text>
+        )}
+        {kbMeetings && kbMeetings.length > 0 && (
+          <View style={styles.results}>
+            {kbMeetings.map((m) => (
+              <KbMeetingRow key={m.id} meeting={m} onRemove={removeFromKb} />
+            ))}
+          </View>
         )}
 
         {status === "error" && (
@@ -316,5 +368,19 @@ const styles = StyleSheet.create({
   kindBadgeLabel: { ...type.small, fontWeight: "700" },
   cardMeta: { ...type.small, color: colors.inkFaint },
   cardScore: { ...type.small, color: colors.inkFaint, marginLeft: "auto", fontVariant: ["tabular-nums"] },
+  kbRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  kbRowTitle: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
+  kbRemove: { flexDirection: "row", alignItems: "center", gap: 4 },
+  kbRemoveLabel: { ...type.small, color: colors.inkSoft },
   cardText: { ...type.body, color: colors.ink, lineHeight: 21 },
 });

@@ -6,7 +6,9 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5050";
 async function handleResponse(res) {
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || `Request gagal (${res.status})`);
+    const err = new Error(data.error || `Request gagal (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -120,12 +122,26 @@ export async function updateTranscript(id, transcript, lineSpeakers, lineTexts) 
   return handleResponse(res);
 }
 
-// Flips one action item's done flag — see POST
-// /meetings/<id>/action-items/<index>/toggle in app.py. Returns the updated
-// summary object.
-export async function toggleActionItem(id, index) {
+// Sets one action item's done flag — see POST
+// /meetings/<id>/action-items/<index>/toggle in app.py. Sends the wanted
+// value (not a blind flip) so quick successive clicks can't cancel each
+// other. Returns the updated summary object.
+export async function toggleActionItem(id, index, done) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items/${index}/toggle`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ done }),
+  });
+  return handleResponse(res);
+}
+
+// Opt a meeting in/out of the Knowledge Base (only its executive summary +
+// key decisions get indexed) — see POST /meetings/<id>/knowledge-base.
+export async function setKnowledgeBase(id, enabled) {
+  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/knowledge-base`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
   });
   return handleResponse(res);
 }

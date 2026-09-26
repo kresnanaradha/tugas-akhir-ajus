@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { Link, useLocalSearchParams } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -13,7 +13,7 @@ import {
 } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getJobStatus, getMeeting, getRecordingUrl, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
+import { getJobStatus, getMeeting, getRecordingUrl, setKnowledgeBase, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -54,6 +54,38 @@ function joinTranscriptLines(lines, lineSpeakers) {
   return lines.map((l, i) => (lineSpeakers[i] ? `[${lineSpeakers[i]}] ${l.text}` : l.text)).join("\n");
 }
 
+// The editor always starts from the raw transcript, but a save also writes the
+// chosen names and edited text into segments.json (same line order). Rebuild
+// the editor state from that so saved names/edits are still there after a
+// reload: per raw speaker id the most common saved name wins (global rename),
+// and any line that differs from it becomes a per-line override.
+function buildEditorState(meeting) {
+  let lines = parseTranscriptLines(meeting.transcript);
+  const names = {};
+  const overrides = {};
+  const segs = meeting.segments;
+  if (segs && segs.length === lines.length) {
+    const counts = {};
+    lines.forEach((l, i) => {
+      if (!l.speaker) return;
+      const n = segs[i].speaker || l.speaker;
+      counts[l.speaker] = counts[l.speaker] || {};
+      counts[l.speaker][n] = (counts[l.speaker][n] || 0) + 1;
+    });
+    for (const raw of Object.keys(counts)) {
+      const [best] = Object.entries(counts[raw]).sort((a, b) => b[1] - a[1])[0];
+      if (best !== raw) names[raw] = best;
+    }
+    lines.forEach((l, i) => {
+      if (!l.speaker) return;
+      const n = segs[i].speaker || l.speaker;
+      if (n !== (names[l.speaker] || l.speaker)) overrides[i] = n;
+    });
+    lines = lines.map((l, i) => ({ ...l, text: segs[i].text ?? l.text }));
+  }
+  return { lines, names, overrides };
+}
+
 function SpeakerBadge({ speaker }) {
   const color = speakerColor(speaker);
   return (
@@ -63,39 +95,98 @@ function SpeakerBadge({ speaker }) {
   );
 }
 
-// Editable variant used only in the transcript editor — color keys off the
-// currently-displayed value (not the raw speaker id), so two speakers
-// merged into the same name immediately show the same color instead of
-// only matching after a save+reload. The users/user icon toggles whether
-// typing here renames this speaker id everywhere (isGlobal) or just this
-// one line (diarization sometimes mis-attributes a single line to the
-// wrong speaker cluster). The merge icon opens a pick-list of the other
-// speaker names already used in this transcript, so merging two
-// over-segmented clusters doesn't require retyping the name identically.
-function EditableSpeakerBadge({ speaker, value, isGlobal, onToggleGlobal, onChangeText, otherLabels, mergeOpen, onToggleMerge, onMerge }) {
-  const color = speakerColor(value);
+// One row of the "Nama Pembicara" panel: renames a diarization id
+// (SPEAKER_00) everywhere. Keeps its own draft and only commits on blur/enter,
+// so lines don't change (and the field doesn't snap back to the raw id when
+// emptied) while the user is still typing. Empty commit = back to the raw id.
+// Raw <textarea> (web-only app) that grows to fit its text. RN's multiline
+// TextInput always reserves at least two rows, which left an empty gap under
+// every one-line transcript row.
+function LineTextarea({ value, onChange, onFocus }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onFocus={onFocus}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        width: "100%",
+        boxSizing: "border-box",
+        border: "none",
+        outline: "none",
+        resize: "none",
+        overflow: "hidden",
+        background: "transparent",
+        padding: 0,
+        margin: 0,
+        display: "block",
+        fontFamily: 'System, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+        fontSize: 14,
+        lineHeight: "20px",
+        color: colors.ink,
+      }}
+    />
+  );
+}
+
+function SpeakerNameRow({ raw, name, onCommit }) {
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [name]);
+  const commit = () => onCommit(draft.trim());
+  const color = speakerColor(raw);
+  return (
+    <View style={styles.nameCell}>
+      <View style={styles.nameCellLabel}>
+        <View style={[styles.mergeMenuDot, { backgroundColor: color }]} />
+        <Text style={[styles.nameCellRaw, { color }]}>{raw}</Text>
+      </View>
+      <TextInput
+        style={[styles.nameInput, !!name && styles.nameInputFilled]}
+        value={draft}
+        placeholder="Nama asli"
+        placeholderTextColor={colors.inkFaint}
+        onChangeText={setDraft}
+        onBlur={commit}
+        onSubmitEditing={commit}
+      />
+    </View>
+  );
+}
+
+// Per-line badge: click to move just this line to another speaker (for when
+// diarization put one sentence under the wrong person). Renaming a whole
+// speaker happens in the panel above instead.
+function LineSpeakerBadge({ raw, value, overridden, options, open, onToggle, onPick, onReset }) {
+  const color = speakerColor(overridden ? value : raw);
   return (
     <View style={styles.speakerBadgeWrap}>
-      <View style={[styles.speakerBadge, { backgroundColor: `${color}22` }]}>
-        <Pressable onPress={onToggleGlobal} style={styles.speakerScopeToggle} hitSlop={6}>
-          <Feather name={isGlobal ? "users" : "user"} size={11} color={color} />
-        </Pressable>
-        <TextInput style={[styles.speakerBadgeInput, { color }]} value={value} onChangeText={onChangeText} />
-        {otherLabels.length > 0 && (
-          <Pressable onPress={onToggleMerge} style={styles.speakerScopeToggle} hitSlop={6}>
-            <Feather name="git-merge" size={11} color={color} />
-          </Pressable>
-        )}
-      </View>
-      {mergeOpen && (
+      <Pressable onPress={onToggle} style={[styles.speakerBadge, { backgroundColor: `${color}22` }]}>
+        <Text style={[styles.speakerBadgeLabel, { color }]}>{value}</Text>
+        <Feather name="chevron-down" size={11} color={color} />
+      </Pressable>
+      {open && (
         <View style={styles.mergeMenu}>
-          <Text style={styles.mergeMenuLabel}>Gabung ke:</Text>
-          {otherLabels.map((label) => (
-            <Pressable key={label} style={styles.mergeMenuItem} onPress={() => onMerge(label)}>
+          <Text style={styles.mergeMenuLabel}>Pindahkan baris ini ke:</Text>
+          {options.map((label) => (
+            <Pressable key={label} style={styles.mergeMenuItem} onPress={() => onPick(label)}>
               <View style={[styles.mergeMenuDot, { backgroundColor: speakerColor(label) }]} />
               <Text style={styles.mergeMenuItemLabel}>{label}</Text>
             </Pressable>
           ))}
+          {overridden && (
+            <Pressable style={styles.mergeMenuItem} onPress={onReset}>
+              <Feather name="rotate-ccw" size={11} color={colors.inkSoft} />
+              <Text style={styles.mergeMenuItemLabel}>Kembalikan ke pembicara asli</Text>
+            </Pressable>
+          )}
         </View>
       )}
     </View>
@@ -171,11 +262,6 @@ export default function MeetingDetailScreen() {
   // diarization mis-attributed that single line to the wrong speaker
   // cluster rather than the whole cluster actually being a different person.
   const [lineOverrides, setLineOverrides] = useState({});
-  // { <line index>: boolean } — whether that line's badge, when edited,
-  // renames the speaker id everywhere (true, default) or just that line
-  // (false). Per-line so different lines of the same speaker can be in
-  // different modes at once.
-  const [lineIsGlobal, setLineIsGlobal] = useState({});
   // Which line's "gabung ke speaker lain" pick-list is open — only one at
   // a time, since it's rendered inline right under that line's badge.
   const [mergeOpenIndex, setMergeOpenIndex] = useState(null);
@@ -187,7 +273,32 @@ export default function MeetingDetailScreen() {
   const [focusedLineIndex, setFocusedLineIndex] = useState(null);
   const [savingTranscript, setSavingTranscript] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [kbSaving, setKbSaving] = useState(false);
+  const [kbError, setKbError] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
+  // Edits (names, moved lines, text) not yet saved: the summary only changes on save.
+  const [dirty, setDirty] = useState(false);
+
+  // Edit tab: which raw-transcript line the video is currently on. Lines map to
+  // segments by index (same assumption the save sync already relies on), so
+  // only trust it when both have the same length.
+  const [playing, setPlaying] = useState(false);
+  const editorScrollRef = useRef(null);
+  const lineEls = useRef({});
+  const activeLine =
+    meeting?.segments && meeting.segments.length === editedLines.length
+      ? meeting.segments.findIndex((seg) => seg.start != null && currentTime >= seg.start && currentTime < seg.end)
+      : -1;
+  // Follow the video only while it plays, so it never fights the user typing.
+  useEffect(() => {
+    // Web-only app: measure the row's DOM node against the scroll box directly.
+    const box = editorScrollRef.current?.getScrollableNode?.();
+    const row = lineEls.current[activeLine];
+    if (playing && box && row) {
+      const top = row.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 40;
+      box.scrollTop = Math.max(0, top);
+    }
+  }, [activeLine, playing]);
 
   useEffect(() => () => clearTimeout(pollTimer.current), []);
 
@@ -195,10 +306,10 @@ export default function MeetingDetailScreen() {
     getMeeting(id)
       .then((data) => {
         setMeeting(data);
-        setEditedLines(parseTranscriptLines(data.transcript));
-        setSpeakerNames({});
-        setLineOverrides({});
-        setLineIsGlobal({});
+        const editor = buildEditorState(data);
+        setEditedLines(editor.lines);
+        setSpeakerNames(editor.names);
+        setLineOverrides(editor.overrides);
         setScreenStatus("done");
         if (LIVE_STATUSES.includes(data.status)) {
           setLiveStatus(data.status);
@@ -224,6 +335,32 @@ export default function MeetingDetailScreen() {
   // reopened the page. Retrying (with a cap so a genuinely dead backend
   // doesn't poll forever) fixes both that and the "shows failed" glitch.
   const MAX_CONSECUTIVE_POLL_FAILURES = 10;
+
+  // GET /jobs/<id> only knows jobs held in that server process's memory. A 404
+  // there does not mean the job failed: the server may have restarted, or the
+  // job may be running in a different worker container, or was started outside
+  // the API. The meetings table still tracks the real status, so fall back to
+  // polling that until it stops being a live status.
+  function pollMeeting() {
+    getMeeting(id)
+      .then((fresh) => {
+        if (LIVE_STATUSES.includes(fresh.status)) {
+          setLiveStatus(fresh.status);
+          pollTimer.current = setTimeout(pollMeeting, 3000);
+          return;
+        }
+        setMeeting(fresh);
+        const editor = buildEditorState(fresh);
+        setEditedLines(editor.lines);
+        setSpeakerNames(editor.names);
+        setLineOverrides(editor.overrides);
+        setLiveStatus(null);
+      })
+      .catch(() => {
+        pollTimer.current = setTimeout(pollMeeting, 3000);
+      });
+  }
+
   function poll(jobId) {
     getJobStatus(jobId)
       .then((data) => {
@@ -237,10 +374,10 @@ export default function MeetingDetailScreen() {
           // never carried.
           getMeeting(id).then((fresh) => {
             setMeeting(fresh);
-            setEditedLines(parseTranscriptLines(fresh.transcript));
-            setSpeakerNames({});
-            setLineOverrides({});
-            setLineIsGlobal({});
+            const editor = buildEditorState(fresh);
+            setEditedLines(editor.lines);
+            setSpeakerNames(editor.names);
+            setLineOverrides(editor.overrides);
             setLiveStatus(null);
           });
         } else if (data.status === "failed") {
@@ -250,6 +387,10 @@ export default function MeetingDetailScreen() {
         }
       })
       .catch((e) => {
+        if (e.status === 404) {
+          pollMeeting();
+          return;
+        }
         pollFailures.current += 1;
         if (pollFailures.current >= MAX_CONSECUTIVE_POLL_FAILURES) {
           setLiveError(e.message || "Gagal memuat status rekaman");
@@ -296,6 +437,7 @@ export default function MeetingDetailScreen() {
         summary_error: result.summary_error,
       }));
       setSavedNotice(true);
+      setDirty(false);
     } catch (e) {
       setSaveError(e.message || "Gagal menyimpan transkrip");
     } finally {
@@ -304,33 +446,31 @@ export default function MeetingDetailScreen() {
   }
 
   function handleToggleActionItem(index) {
-    // Optimistic — flip it locally right away, reconcile with whatever the
-    // server actually persisted once the request comes back (same file on
-    // disk, so this should always agree, but never trust just the optimism).
-    setMeeting((m) => ({
-      ...m,
-      summary: {
-        ...m.summary,
-        action_items: m.summary.action_items.map((item, i) =>
-          i === index ? { ...item, done: !item.done } : item
-        ),
-      },
-    }));
-    toggleActionItem(id, index)
-      .then((summary) => setMeeting((m) => ({ ...m, summary })))
-      .catch(() => {
-        // Revert on failure — flip it back rather than leaving the UI
-        // showing a state the server never actually saved.
-        setMeeting((m) => ({
-          ...m,
-          summary: {
-            ...m.summary,
-            action_items: m.summary.action_items.map((item, i) =>
-              i === index ? { ...item, done: !item.done } : item
-            ),
-          },
-        }));
-      });
+    // Optimistic, and the local state stays the source of truth: the request
+    // carries the wanted value and its response is ignored (it may predate a
+    // later click), so rapid successive checks can't erase each other. Only
+    // this one item is reverted if the save fails.
+    const done = !meeting.summary.action_items[index].done;
+    const setDone = (value) =>
+      setMeeting((m) => ({
+        ...m,
+        summary: {
+          ...m.summary,
+          action_items: m.summary.action_items.map((item, i) => (i === index ? { ...item, done: value } : item)),
+        },
+      }));
+    setDone(done);
+    toggleActionItem(id, index, done).catch(() => setDone(!done));
+  }
+
+  function handleToggleKb() {
+    const enabled = !meeting.in_kb;
+    setKbSaving(true);
+    setKbError("");
+    setKnowledgeBase(id, enabled)
+      .then(() => setMeeting((m) => ({ ...m, in_kb: enabled })))
+      .catch((e) => setKbError(e.message || "Gagal memperbarui Knowledge Base"))
+      .finally(() => setKbSaving(false));
   }
 
   const isLive = liveStatus && liveStatus !== "failed";
@@ -477,8 +617,19 @@ export default function MeetingDetailScreen() {
                           <View style={styles.iconWrap}>
                             <Feather name="zap" size={16} color={colors.goldDeep} />
                           </View>
-                          <Text style={styles.summaryCardLabel}>Executive Summary</Text>
+                          <Text style={[styles.summaryCardLabel, { flex: 1 }]}>Executive Summary</Text>
+                          <Pressable
+                            style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
+                            onPress={handleToggleKb}
+                            disabled={kbSaving}
+                          >
+                            <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
+                            <Text style={styles.kbButtonLabel}>
+                              {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
+                            </Text>
+                          </Pressable>
                         </View>
+                        {!!kbError && <Text style={styles.errorText}>{kbError}</Text>}
                         <Text style={styles.summaryText}>{meeting.summary.executive_summary}</Text>
                       </View>
 
@@ -615,58 +766,97 @@ export default function MeetingDetailScreen() {
                     <View style={styles.editorGrid}>
                       <View style={styles.editorCol}>
                         <Text style={styles.editorColTitle}>Transkrip Mentah</Text>
+                        {meeting.transcript && (
+                          <View style={styles.namesPanel}>
+                            <View style={styles.namesHeader}>
+                              <Feather name="users" size={14} color={colors.goldDeep} />
+                              <Text style={styles.namesTitle}>Nama Pembicara</Text>
+                            </View>
+                            <Text style={styles.namesHint}>
+                              Isi nama asli agar tampil di semua baris dan ringkasan setelah disimpan.
+                            </Text>
+                            <View style={styles.namesGrid}>
+                              {[...new Set(editedLines.map((l) => l.speaker).filter(Boolean))].map((raw) => (
+                                <SpeakerNameRow
+                                  key={raw}
+                                  raw={raw}
+                                  name={speakerNames[raw] || ""}
+                                  onCommit={(name) => {
+                                    if (name !== (speakerNames[raw] || "")) setDirty(true);
+                                    setSpeakerNames((m) => {
+                                      const next = { ...m };
+                                      if (name) next[raw] = name;
+                                      else delete next[raw];
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              ))}
+                            </View>
+                          </View>
+                        )}
                         {meeting.transcript ? (
-                          <ScrollView style={styles.editorLinesBox}>
+                          <ScrollView ref={editorScrollRef} style={styles.editorLinesBox}>
                             {(() => {
                               const lineSpeakers = resolveLineSpeakers(editedLines, speakerNames, lineOverrides);
-                              // Raw diarization ids (SPEAKER_00, SPEAKER_01, ...), always kept
-                              // available as merge targets even after every line showing one has
-                              // been renamed/merged away — otherwise once e.g. SPEAKER_01 gets
-                              // merged into SPEAKER_00, no line displays "SPEAKER_01" anymore and
-                              // there's no way to pick it back to undo the merge.
                               const rawLabels = [...new Set(editedLines.map((l) => l.speaker).filter(Boolean))];
-                              const applyName = (i, name) => {
-                                if (lineIsGlobal[i] ?? true) {
-                                  setSpeakerNames((m) => ({ ...m, [editedLines[i].speaker]: name }));
-                                } else {
-                                  setLineOverrides((m) => ({ ...m, [i]: name }));
-                                }
-                              };
+                              const nameOf = (raw) => speakerNames[raw] || raw;
+                              const pickOptions = [...new Set(rawLabels.map(nameOf))];
                               return editedLines.map((line, i) => (
                                 <View
                                   key={i}
-                                  style={[styles.editorLineRow, mergeOpenIndex === i && styles.editorLineRowElevated]}
+                                  style={[
+                                    styles.editorLineRow,
+                                    i === activeLine && styles.editorLineRowActive,
+                                    mergeOpenIndex === i && styles.editorLineRowElevated,
+                                  ]}
+                                  ref={(el) => {
+                                    lineEls.current[i] = el;
+                                  }}
                                 >
                                   {line.speaker && (
                                     <View style={styles.editorLineHeader}>
-                                      <EditableSpeakerBadge
-                                        speaker={line.speaker}
+                                      {meeting.segments?.length === editedLines.length && meeting.segments[i].start != null && (
+                                        <Pressable onPress={() => seekTo(meeting.segments[i].start)} hitSlop={6}>
+                                          <Text style={styles.segmentTime}>{formatElapsed(Math.floor(meeting.segments[i].start))}</Text>
+                                        </Pressable>
+                                      )}
+                                      <LineSpeakerBadge
+                                        raw={line.speaker}
                                         value={lineSpeakers[i]}
-                                        isGlobal={lineIsGlobal[i] ?? true}
-                                        onToggleGlobal={() =>
-                                          setLineIsGlobal((m) => ({ ...m, [i]: !(m[i] ?? true) }))
-                                        }
-                                        onChangeText={(name) => applyName(i, name)}
-                                        otherLabels={[...new Set([...rawLabels, ...lineSpeakers.filter(Boolean)])].filter(
-                                          (l) => l !== lineSpeakers[i]
-                                        )}
-                                        mergeOpen={mergeOpenIndex === i}
-                                        onToggleMerge={() => setMergeOpenIndex((cur) => (cur === i ? null : i))}
-                                        onMerge={(name) => {
-                                          applyName(i, name);
+                                        overridden={!!lineOverrides[i]}
+                                        options={pickOptions.filter((l) => l !== lineSpeakers[i])}
+                                        open={mergeOpenIndex === i}
+                                        onToggle={() => setMergeOpenIndex((cur) => (cur === i ? null : i))}
+                                        onPick={(name) => {
+                                          setDirty(true);
+                                          setLineOverrides((m) => {
+                                            const next = { ...m };
+                                            if (name === nameOf(line.speaker)) delete next[i];
+                                            else next[i] = name;
+                                            return next;
+                                          });
+                                          setMergeOpenIndex(null);
+                                        }}
+                                        onReset={() => {
+                                          setDirty(true);
+                                          setLineOverrides((m) => {
+                                            const next = { ...m };
+                                            delete next[i];
+                                            return next;
+                                          });
                                           setMergeOpenIndex(null);
                                         }}
                                       />
                                     </View>
                                   )}
-                                  <TextInput
-                                    style={styles.editorLineInput}
-                                    multiline
+                                  <LineTextarea
                                     value={line.text}
                                     onFocus={() => setFocusedLineIndex(i)}
-                                    onChangeText={(text) =>
-                                      setEditedLines((lines) => lines.map((l, j) => (j === i ? { ...l, text } : l)))
-                                    }
+                                    onChange={(text) => {
+                                      setDirty(true);
+                                      setEditedLines((lines) => lines.map((l, j) => (j === i ? { ...l, text } : l)));
+                                    }}
                                   />
                                 </View>
                               ));
@@ -682,6 +872,17 @@ export default function MeetingDetailScreen() {
                       </View>
 
                       <View style={styles.editorCol}>
+                        {meeting.recording && (
+                          <video
+                            ref={videoRef}
+                            controls
+                            style={{ width: "100%", borderRadius: radius.md, backgroundColor: "#000", maxHeight: 230, objectFit: "contain", display: "block" }}
+                            src={getRecordingUrl(meeting.id)}
+                            onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+                            onPlay={() => setPlaying(true)}
+                            onPause={() => setPlaying(false)}
+                          />
+                        )}
                         <View style={styles.editorColHeader}>
                           <Feather name="zap" size={13} color={colors.goldDeep} />
                           <Text style={styles.editorColTitle}>Saran Perbaikan AI</Text>
@@ -725,7 +926,14 @@ export default function MeetingDetailScreen() {
                           );
                         })()}
                         <View style={styles.editorActions}>
-                          {savedNotice && <Text style={styles.savedNoticeText}>Tersimpan, ringkasan diperbarui.</Text>}
+                          {dirty && !savingTranscript && (
+                            <Text style={styles.dirtyNoticeText}>
+                              Ada perubahan yang belum disimpan. Ringkasan baru ikut berubah setelah kamu klik tombol di bawah.
+                            </Text>
+                          )}
+                          {savedNotice && !dirty && (
+                            <Text style={styles.savedNoticeText}>Tersimpan, ringkasan diperbarui.</Text>
+                          )}
                           {!!saveError && <Text style={styles.errorText}>{saveError}</Text>}
                           <Pressable
                             style={[styles.saveButton, savingTranscript && styles.saveButtonDisabled]}
@@ -877,6 +1085,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   summaryCardLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
+  kbButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  kbButtonOn: { backgroundColor: colors.goldSoft, borderColor: colors.gold },
+  kbButtonLabel: { ...type.small, fontWeight: "600", color: colors.ink },
   summaryText: { ...type.body, color: colors.inkSoft, lineHeight: 21 },
 
   twoCol: { flexDirection: "row", gap: spacing.lg },
@@ -957,6 +1177,7 @@ const styles = StyleSheet.create({
   segmentText: { ...type.body, color: colors.ink, lineHeight: 20 },
   speakerBadgeWrap: { position: "relative", alignSelf: "flex-start" },
   speakerBadge: {
+    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
@@ -966,6 +1187,34 @@ const styles = StyleSheet.create({
   },
   speakerBadgeLabel: { ...type.small, fontWeight: "700" },
   speakerScopeToggle: { paddingVertical: 1 },
+  namesPanel: {
+    gap: 4,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    ...shadow.card,
+  },
+  namesHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  namesTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
+  namesHint: { ...type.small, color: colors.inkFaint },
+  namesGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xs },
+  nameCell: { flexGrow: 1, flexBasis: 100, minWidth: 100, gap: 4 },
+  nameCellLabel: { flexDirection: "row", alignItems: "center", gap: 6 },
+  nameCellRaw: { ...type.small, fontWeight: "700", letterSpacing: 0.3 },
+  nameInput: {
+    ...type.body,
+    color: colors.ink,
+    paddingVertical: 7,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    outlineStyle: "none",
+  },
+  nameInputFilled: { backgroundColor: colors.goldSoft, borderColor: colors.gold, fontWeight: "600" },
   speakerBadgeInput: { ...type.small, fontWeight: "700", padding: 0, minWidth: 60, outlineStyle: "none" },
   mergeMenu: {
     position: "absolute",
@@ -988,8 +1237,8 @@ const styles = StyleSheet.create({
   syncNote: { ...type.small, color: colors.inkFaint, fontStyle: "italic" },
 
   // Transcript editor (Transkrip tab)
-  editorGrid: { flexDirection: "row", gap: spacing.lg, alignItems: "stretch" },
-  editorCol: { flex: 1, gap: spacing.sm },
+  editorGrid: { flexDirection: "row", gap: spacing.xl, alignItems: "flex-start" },
+  editorCol: { flex: 1, gap: spacing.md },
   editorColHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
   editorColTitle: { ...type.h2, color: colors.ink },
   editorRawBox: {
@@ -1003,8 +1252,8 @@ const styles = StyleSheet.create({
   editorScroll: { maxHeight: 420 },
   plainTranscript: { ...type.small, color: colors.inkSoft, lineHeight: 19 },
   editorLinesBox: {
-    maxHeight: 420,
-    minHeight: 360,
+    maxHeight: 460,
+    minHeight: 320,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.gold,
@@ -1013,7 +1262,8 @@ const styles = StyleSheet.create({
   },
   editorLineRow: {
     gap: 4,
-    padding: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
@@ -1023,7 +1273,8 @@ const styles = StyleSheet.create({
   // that row is a separate, later-painted sibling with no z-index of its
   // own. Lifting the whole open row above its siblings fixes it.
   editorLineRowElevated: { position: "relative", zIndex: 20 },
-  editorLineHeader: { flexDirection: "row" },
+  editorLineHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  editorLineRowActive: { backgroundColor: colors.goldSoft, borderLeftWidth: 3, borderLeftColor: colors.gold },
   // Right column's read-only counterpart to editorLinesBox/editorLineRow —
   // same per-speaker-line layout so the two columns read as one continuous
   // idea, but deliberately undecorated (muted bg instead of the left's gold
@@ -1037,7 +1288,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   suggestLineRow: { gap: spacing.sm },
-  suggestLineText: { ...type.body, fontSize: 17, color: colors.ink, lineHeight: 27 },
+  suggestLineText: { ...type.body, fontSize: 14, color: colors.ink, lineHeight: 20 },
   editorLineInput: {
     ...type.body,
     color: colors.ink,
@@ -1046,11 +1297,13 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     outlineStyle: "none",
   },
-  editorActions: { gap: spacing.sm, alignItems: "flex-end" },
+  editorActions: { gap: spacing.sm, alignItems: "stretch" },
   savedNoticeText: { ...type.small, color: colors.success },
+  dirtyNoticeText: { ...type.small, color: colors.goldDeep, fontWeight: "600" },
   saveButton: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 7,
     backgroundColor: colors.gold,
     borderRadius: radius.sm,

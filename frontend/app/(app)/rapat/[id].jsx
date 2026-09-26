@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, useLocalSearchParams } from "expo-router";
+import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,7 +13,7 @@ import {
 } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getJobStatus, getMeeting, getRecordingUrl, setKnowledgeBase, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
+import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, replaceActionItems, setKnowledgeBase, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -278,6 +278,15 @@ export default function MeetingDetailScreen() {
   const [savedNotice, setSavedNotice] = useState(false);
   // Edits (names, moved lines, text) not yet saved: the summary only changes on save.
   const [dirty, setDirty] = useState(false);
+  const router = useRouter();
+  // Action item editor: which item is being edited (index, "new", or null) + its draft.
+  const [editingItem, setEditingItem] = useState(null);
+  const [itemDraft, setItemDraft] = useState({ task: "", assignee: "", due: "" });
+  const [itemSaving, setItemSaving] = useState(false);
+  const [itemError, setItemError] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   // Edit tab: which raw-transcript line the video is currently on. Lines map to
   // segments by index (same assumption the save sync already relies on), so
@@ -463,6 +472,99 @@ export default function MeetingDetailScreen() {
     toggleActionItem(id, index, done).catch(() => setDone(!done));
   }
 
+  function startEditItem(index) {
+    const item = index === "new" ? {} : meeting.summary.action_items[index];
+    setItemDraft({ task: item.task || "", assignee: item.assignee || "", due: item.due || "" });
+    setItemError("");
+    setEditingItem(index);
+  }
+
+  async function saveItems(items) {
+    setItemSaving(true);
+    setItemError("");
+    try {
+      const summary = await replaceActionItems(id, items);
+      setMeeting((m) => ({ ...m, summary }));
+      setEditingItem(null);
+    } catch (e) {
+      setItemError(e.message || "Gagal menyimpan action item");
+    } finally {
+      setItemSaving(false);
+    }
+  }
+
+  function handleSaveItem() {
+    if (!itemDraft.task.trim()) {
+      setItemError("Isi tugas tidak boleh kosong");
+      return;
+    }
+    const items = [...(meeting.summary.action_items || [])];
+    if (editingItem === "new") items.push({ ...itemDraft, done: false });
+    else items[editingItem] = { ...items[editingItem], ...itemDraft };
+    saveItems(items);
+  }
+
+  function handleRemoveItem(index) {
+    saveItems(meeting.summary.action_items.filter((_, i) => i !== index));
+  }
+
+  async function handleDeleteMeeting() {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteMeeting(id);
+      router.replace("/rapat");
+    } catch (e) {
+      setDeleteError(e.message || "Gagal menghapus rapat");
+      setDeleting(false);
+    }
+  }
+
+  function renderItemForm(index) {
+    return (
+      <View key={index} style={styles.itemForm}>
+        <TextInput
+          style={styles.itemInput}
+          value={itemDraft.task}
+          onChangeText={(task) => setItemDraft((d) => ({ ...d, task }))}
+          placeholder="Tugas"
+          placeholderTextColor={colors.inkFaint}
+          multiline
+        />
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <TextInput
+            style={[styles.itemInput, { flex: 1 }]}
+            value={itemDraft.assignee}
+            onChangeText={(assignee) => setItemDraft((d) => ({ ...d, assignee }))}
+            placeholder="Penanggung jawab"
+            placeholderTextColor={colors.inkFaint}
+          />
+          <TextInput
+            style={[styles.itemInput, { flex: 1 }]}
+            value={itemDraft.due}
+            onChangeText={(due) => setItemDraft((d) => ({ ...d, due }))}
+            placeholder="Tenggat"
+            placeholderTextColor={colors.inkFaint}
+          />
+        </View>
+        {!!itemError && <Text style={styles.errorText}>{itemError}</Text>}
+        <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+          <Pressable style={[styles.smallButton, styles.smallButtonPrimary]} onPress={handleSaveItem} disabled={itemSaving}>
+            <Text style={styles.smallButtonLabel}>{itemSaving ? "Menyimpan..." : "Simpan"}</Text>
+          </Pressable>
+          <Pressable style={styles.smallButton} onPress={() => setEditingItem(null)} disabled={itemSaving}>
+            <Text style={styles.smallButtonLabel}>Batal</Text>
+          </Pressable>
+          {index !== "new" && (
+            <Pressable style={{ marginLeft: "auto" }} onPress={() => handleRemoveItem(index)} disabled={itemSaving}>
+              <Text style={[styles.smallButtonLabel, { color: colors.danger }]}>Hapus</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+    );
+  }
+
   function handleToggleKb() {
     const enabled = !meeting.in_kb;
     setKbSaving(true);
@@ -507,6 +609,24 @@ export default function MeetingDetailScreen() {
                   <Feather name="video" size={12} color={colors.inkSoft} />
                   <Text style={styles.platformBadgeLabel}>{PLATFORM_LABEL[meeting.platform] || meeting.platform}</Text>
                 </View>
+                {!isLive && !confirmDelete && (
+                  <Pressable style={[styles.smallButton, { marginLeft: "auto" }]} onPress={() => setConfirmDelete(true)}>
+                    <Feather name="trash-2" size={12} color={colors.danger} />
+                    <Text style={[styles.smallButtonLabel, { color: colors.danger }]}>Hapus Rapat</Text>
+                  </Pressable>
+                )}
+                {confirmDelete && (
+                  <View style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                    {!!deleteError && <Text style={styles.errorText}>{deleteError}</Text>}
+                    <Text style={styles.actionItemMeta}>Hapus permanen beserta rekaman dan transkrip?</Text>
+                    <Pressable style={[styles.smallButton, styles.smallButtonDanger]} onPress={handleDeleteMeeting} disabled={deleting}>
+                      <Text style={[styles.smallButtonLabel, { color: "#fff" }]}>{deleting ? "Menghapus..." : "Ya, hapus"}</Text>
+                    </Pressable>
+                    <Pressable style={styles.smallButton} onPress={() => setConfirmDelete(false)} disabled={deleting}>
+                      <Text style={styles.smallButtonLabel}>Batal</Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
               <Text style={styles.title}>{meeting.title}</Text>
               <View style={styles.metaRow}>
@@ -654,21 +774,32 @@ export default function MeetingDetailScreen() {
                         </View>
                       </View>
 
-                      {meeting.summary.action_items?.length > 0 && (
-                        <View style={styles.actionItemsCard}>
-                          <Text style={styles.colTitle}>Action Items</Text>
-                          {meeting.summary.action_items.map((item, i) => (
-                            <Pressable
-                              key={i}
-                              style={styles.actionItemRow}
-                              onPress={() => handleToggleActionItem(i)}
-                            >
-                              <Feather
-                                name={item.done ? "check-square" : "square"}
-                                size={15}
-                                color={item.done ? colors.success : colors.inkFaint}
-                                style={{ marginTop: 2 }}
-                              />
+                      <View style={styles.actionItemsCard}>
+                        <View style={styles.actionItemsHeader}>
+                          <Text style={[styles.colTitle, { flex: 1 }]}>Action Items</Text>
+                          {editingItem !== "new" && (
+                            <Pressable style={styles.smallButton} onPress={() => startEditItem("new")}>
+                              <Feather name="plus" size={12} color={colors.ink} />
+                              <Text style={styles.smallButtonLabel}>Tambah</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                        {!meeting.summary.action_items?.length && editingItem !== "new" && (
+                          <Text style={styles.actionItemMeta}>Belum ada action item.</Text>
+                        )}
+                        {meeting.summary.action_items?.map((item, i) =>
+                          editingItem === i ? (
+                            renderItemForm(i)
+                          ) : (
+                            <View key={i} style={styles.actionItemRow}>
+                              <Pressable onPress={() => handleToggleActionItem(i)} hitSlop={6}>
+                                <Feather
+                                  name={item.done ? "check-square" : "square"}
+                                  size={15}
+                                  color={item.done ? colors.success : colors.inkFaint}
+                                  style={{ marginTop: 2 }}
+                                />
+                              </Pressable>
                               <View style={{ flex: 1 }}>
                                 <Text style={[styles.actionItemTask, item.done && styles.actionItemTaskDone]}>
                                   {item.task}
@@ -679,10 +810,14 @@ export default function MeetingDetailScreen() {
                                   </Text>
                                 )}
                               </View>
-                            </Pressable>
-                          ))}
-                        </View>
-                      )}
+                              <Pressable onPress={() => startEditItem(i)} hitSlop={6}>
+                                <Feather name="edit-2" size={13} color={colors.inkFaint} style={{ marginTop: 3 }} />
+                              </Pressable>
+                            </View>
+                          )
+                        )}
+                        {editingItem === "new" && renderItemForm("new")}
+                      </View>
                     </View>
                   ) : (
                     <View style={styles.section}>
@@ -1134,6 +1269,40 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.sm,
   },
+  actionItemsHeader: { flexDirection: "row", alignItems: "center" },
+  itemForm: {
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    borderRadius: radius.sm,
+    backgroundColor: colors.bg,
+  },
+  itemInput: {
+    ...type.small,
+    color: colors.ink,
+    paddingVertical: 6,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    outlineStyle: "none",
+  },
+  smallButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  smallButtonPrimary: { backgroundColor: colors.gold, borderColor: colors.gold },
+  smallButtonDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
+  smallButtonLabel: { ...type.small, fontWeight: "600", color: colors.ink },
   actionItemRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   actionItemTask: { ...type.body, color: colors.ink, lineHeight: 20 },
   actionItemTaskDone: { color: colors.inkFaint, textDecorationLine: "line-through" },

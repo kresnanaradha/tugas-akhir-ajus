@@ -135,6 +135,24 @@ export async function toggleActionItem(id, index, done) {
   return handleResponse(res);
 }
 
+// Replaces the whole action item list ({task, assignee, due, done}[]) — one
+// call covers edit, add and remove. See PUT /meetings/<id>/action-items.
+export async function replaceActionItems(id, items) {
+  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  return handleResponse(res);
+}
+
+// Permanently deletes a meeting (R2 files, KB chunks, DB row) — owner or
+// super admin only, refused while it's still recording/processing.
+export async function deleteMeeting(id) {
+  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
+  return handleResponse(res);
+}
+
 // Opt a meeting in/out of the Knowledge Base (only its executive summary +
 // key decisions get indexed) — see POST /meetings/<id>/knowledge-base.
 export async function setKnowledgeBase(id, enabled) {

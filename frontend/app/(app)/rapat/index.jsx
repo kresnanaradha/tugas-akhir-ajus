@@ -215,7 +215,7 @@ export default function RapatScreen() {
                   <Feather name="inbox" size={20} color={colors.inkFaint} />
                   <Text style={styles.stateText}>
                     {meetings.length === 0
-                      ? 'Belum ada rapat yang direkam. Mulai dari "Rapat Baru" atau "Upload Audio" di dashboard.'
+                      ? 'Belum ada rapat yang direkam. Mulai dari "Rapat Baru" atau "Upload" di dashboard.'
                       : "Tidak ada rapat untuk filter ini."}
                   </Text>
                 </View>

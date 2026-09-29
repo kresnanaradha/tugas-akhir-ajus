@@ -24,7 +24,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, report_pdf, report_stats, storage
+from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, mailer, report_pdf, report_stats, storage
 from pipeline.meetings_store import delete_meeting, find_meeting_by_url, get_meeting, list_meetings, start_meeting, update_meeting
 from pipeline.summarize import fix_transcript, summarize
 from pipeline.transcribe import transcribe
@@ -224,7 +224,30 @@ def _process_recording(local_recording_path: str, meeting_id: str, num_speakers:
     except Exception as e:
         result["summary_error"] = str(e)
 
+    if "summary" in result:
+        _notify_meeting_ready(meeting_id, result["summary"])
+
     return result
+
+
+def _notify_meeting_ready(meeting_id: str, summary: dict) -> None:
+    """Best-effort email to the meeting's owner once a summary exists — a
+    mail hiccup (or SMTP not configured at all, see mailer._config) must
+    never fail the pipeline that already produced a real result."""
+    try:
+        record = get_meeting(meeting_id)
+        user = auth_store.get_user(record["user_id"]) if record and record.get("user_id") else None
+        if not user:
+            return  # no owner to notify (pre-auth meeting, or upload with no session)
+        excerpt = (summary.get("executive_summary") or "").split("\n\n")[0]
+        mailer.send_meeting_ready_email(
+            to_email=user["email"],
+            title=record["title"],
+            summary_excerpt=excerpt,
+            meeting_url=f"{LOCAL_FRONTEND_URL}/rapat/{meeting_id}",
+        )
+    except Exception as e:
+        print(f"[mailer] failed to notify for meeting {meeting_id}: {e}")
 
 
 # In-memory job registry for the join endpoints below — POC-scale only (lost
@@ -567,6 +590,7 @@ def toggle_action_item(meeting_id, index):
         done = (request.get_json(silent=True) or {}).get("done")
         items[index]["done"] = bool(done) if done is not None else not items[index].get("done", False)
         artifacts.save_summary(meeting_id, summary)
+    report_stats.invalidate_action_item_cache(session["user_id"])
     return jsonify(summary)
 
 
@@ -601,6 +625,7 @@ def replace_action_items(meeting_id):
             return jsonify({"error": "No summary for this meeting yet"}), 404
         summary["action_items"] = items
         artifacts.save_summary(meeting_id, summary)
+    report_stats.invalidate_action_item_cache(session["user_id"])
     return jsonify(summary)
 
 

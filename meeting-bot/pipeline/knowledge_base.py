@@ -15,6 +15,7 @@ server to run.
 """
 
 import os
+import re
 
 import chromadb
 from openai import OpenAI
@@ -60,6 +61,12 @@ _KIND_PREFIX = {
     "executive_summary": "Ringkasan rapat",
     "key_decision": "Keputusan rapat",
 }
+# Words baked into every chunk's embedding via _KIND_PREFIX ("rapat" is in
+# both labels) -- excluded from the lexical boost below too, or a query like
+# "apa keputusan rapat" would boost whichever chunk happens to literally
+# repeat "rapat" in its own sentence, recreating the same bias on a chunk's
+# own text instead of the injected label.
+_META_WORDS = {w for label in _KIND_PREFIX.values() for w in re.findall(r"[\w]+", label.lower())}
 
 
 def _chunks_for(summary: dict) -> list[tuple[str, str]]:
@@ -114,6 +121,37 @@ def index_meeting(meeting_id: str, summary: dict) -> None:
     collection.upsert(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
 
 
+# Common Indonesian function words -- excluded from the lexical boost below
+# so it only fires on content words (names, specific terms), not on "akan"/
+# "dengan"/etc, which would otherwise match almost every sentence and
+# recreate the exact bias this is meant to fix.
+_STOPWORDS = {
+    "yang", "akan", "dengan", "untuk", "dari", "pada", "adalah", "dan", "atau",
+    "ini", "itu", "dia", "ia", "saya", "kami", "kita", "kamu", "anda", "mereka",
+    "juga", "saat", "karena", "oleh", "para", "tidak", "bisa", "dapat", "sudah",
+    "belum", "masih", "agar", "jika", "kalau", "tanpa", "dalam", "atas", "bagi",
+    "tentang", "sebagai", "seperti", "lebih", "sangat", "hanya", "saja", "ada",
+    "bukan", "semua", "setiap", "antara", "sebelum", "sesudah", "setelah",
+    "hingga", "sampai", "mulai", "terus", "lain", "baru", "lama", "banyak",
+}
+
+
+def _lexical_boost(query: str, text: str) -> float:
+    """Dense embeddings compress specific names/terms into similar regions as
+    other content, so a short keyword-style query (e.g. "Keputusan kresna")
+    can rank a chunk that doesn't even mention "kresna" above one that does
+    -- confirmed empirically: the _KIND_PREFIX label below dominates a
+    2-word query that happens to share a word with it. This is the standard
+    fix (hybrid dense+lexical search): a real content word from the query
+    that appears verbatim in the chunk's own text (not the injected kind
+    label) nudges it up. 0.15 per distinct matched word, capped at 0.3.
+    """
+    words = {w for w in re.findall(r"[\w]+", query.lower()) if len(w) >= 4 and w not in _STOPWORDS and w not in _META_WORDS}
+    boundary = chr(92) + "b"
+    matched = sum(1 for w in words if re.search(boundary + re.escape(w) + boundary, text.lower()))
+    return min(0.3, matched * 0.15)
+
+
 def search(query: str, meeting_ids: list[str], top_k: int = 5) -> list[dict]:
     """Returns up to top_k {meeting_id, kind, text, distance} matches from the
     given meetings only, closest first. Caller (app.py) joins meeting_id against the meetings
@@ -122,30 +160,52 @@ def search(query: str, meeting_ids: list[str], top_k: int = 5) -> list[dict]:
     if not meeting_ids or collection.count() == 0:
         return []
     query_embedding = _get_model().encode([query]).tolist()
+    # Widen the candidate pool beyond top_k -- the lexical boost below can
+    # promote a chunk that ranked just outside a bare-cosine top_k.
+    candidate_k = min(top_k * 4, collection.count())
     result = collection.query(
         query_embeddings=query_embedding,
-        n_results=min(top_k, collection.count()),
+        n_results=candidate_k,
         where={"meeting_id": {"$in": meeting_ids}},
     )
+
+    # Cosine distance is 1 - cosine_similarity, so this recovers a plain
+    # 0-1 similarity score (clamped — a distance slightly over 1 from
+    # floating-point noise would otherwise go negative).
+    #
+    # Raw cosine similarity from this (multilingual MiniLM) model doesn't
+    # spread across 0-1 the way "percent relevant" implies: empirically, a
+    # genuinely on-topic match sits around 0.35-0.5, and a totally unrelated
+    # one around 0.1-0.15 -- confirmed by comparing "apa keputusan rapat"
+    # (0.49) against "resep nasi goreng" (0.15) on the same collection. Shown
+    # raw, a correct top match reads as a discouraging "36% relevan". _FLOOR
+    # drops noise below the "unrelated" range instead of always forcing
+    # top_k results regardless of quality; _CEIL..._FLOOR is rescaled to 0-1
+    # so a genuinely strong match reads like one.
+    # ponytail: bounds picked from one manual comparison, not a proper
+    # calibration set -- revisit if this model or the KB's content changes.
+    _FLOOR, _CEIL = 0.2, 0.6
 
     matches = []
     for i in range(len(result["ids"][0])):
         distance = result["distances"][0][i]
-        # Cosine distance is 1 - cosine_similarity, so this recovers a plain
-        # 0-1 similarity score (clamped — a distance slightly over 1 from
-        # floating-point noise would otherwise go negative) for display,
-        # instead of making the frontend interpret a raw distance number.
-        similarity = max(0.0, 1.0 - distance)
+        text = result["documents"][0][i]
+        raw = max(0.0, 1.0 - distance)
+        blended = min(1.0, raw + _lexical_boost(query, text))
+        if blended < _FLOOR:
+            continue
+        similarity = min(1.0, (blended - _FLOOR) / (_CEIL - _FLOOR))
         matches.append(
             {
                 "meeting_id": result["metadatas"][0][i]["meeting_id"],
                 "kind": result["metadatas"][0][i]["kind"],
-                "text": result["documents"][0][i],
+                "text": text,
                 "distance": distance,
                 "similarity": similarity,
             }
         )
-    return matches
+    matches.sort(key=lambda m: m["similarity"], reverse=True)
+    return matches[:top_k]
 
 
 _ANSWER_SYSTEM_PROMPT = (

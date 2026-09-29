@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getReportActionItems, getReportExportUrl, getReportStats } from "@/lib/api";
+import { getReportActionItems, getReportExportUrl, getReportStats, toggleActionItem } from "@/lib/api";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
@@ -38,6 +38,37 @@ export default function LaporanScreen() {
       .then(setActions)
       .catch(() => setActions(false));
   }, []);
+
+  // Rows here come from every meeting's own action_items array (via
+  // meeting_id + index, see GET /reports/action-items), not just this one
+  // meeting — so unlike the meeting detail page, marking one done here also
+  // has to update this rollup's own counts locally (an open item leaving the
+  // "Belum Selesai" list, its assignee's open/done split shifting) instead
+  // of just flipping one flag. Optimistic, reverted on failure.
+  function markDone(item) {
+    setActions((a) => ({
+      ...a,
+      done: a.done + 1,
+      open: a.open - 1,
+      open_items: a.open_items.filter((it) => it !== item),
+      by_assignee: a.by_assignee.map((r) =>
+        r.assignee === (item.assignee || "Belum ditentukan") ? { ...r, open: r.open - 1, done: r.done + 1 } : r
+      ),
+    }));
+    toggleActionItem(item.meeting_id, item.index, true).catch(() => {
+      // Reverts by putting it back at the end of the list — exact original
+      // order isn't worth tracking for a failure path that should be rare.
+      setActions((a) => ({
+        ...a,
+        done: a.done - 1,
+        open: a.open + 1,
+        open_items: [...a.open_items, item],
+        by_assignee: a.by_assignee.map((r) =>
+          r.assignee === (item.assignee || "Belum ditentukan") ? { ...r, open: r.open + 1, done: r.done - 1 } : r
+        ),
+      }));
+    });
+  }
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
@@ -146,18 +177,22 @@ export default function LaporanScreen() {
                 <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={{ gap: 2 }}>
                   {actions.open_items.length === 0 && <Text style={styles.stateText}>Semua action item sudah selesai.</Text>}
                   {actions.open_items.map((it, i) => (
-                    <Link key={i} href={`/rapat/${it.meeting_id}`} asChild>
-                      <Pressable style={styles.openRow}>
+                    <View key={i} style={styles.openRow}>
+                      <Pressable onPress={() => markDone(it)} hitSlop={8}>
                         <Feather name="square" size={13} color={colors.inkFaint} style={{ marginTop: 3 }} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.openTask}>{it.task}</Text>
-                          <Text style={styles.openMeta} numberOfLines={1}>
-                            {[it.assignee, it.due, it.meeting_title].filter(Boolean).join(" · ")}
-                          </Text>
-                        </View>
-                        <Feather name="chevron-right" size={13} color={colors.inkFaint} />
                       </Pressable>
-                    </Link>
+                      <Link href={`/rapat/${it.meeting_id}`} asChild>
+                        <Pressable style={styles.openRowLink}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.openTask}>{it.task}</Text>
+                            <Text style={styles.openMeta} numberOfLines={1}>
+                              {[it.assignee, it.due, it.meeting_title].filter(Boolean).join(" · ")}
+                            </Text>
+                          </View>
+                          <Feather name="chevron-right" size={13} color={colors.inkFaint} />
+                        </Pressable>
+                      </Link>
+                    </View>
                   ))}
                 </ScrollView>
               </View>

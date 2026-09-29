@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -792,25 +792,29 @@ export default function MeetingDetailScreen() {
                             renderItemForm(i)
                           ) : (
                             <View key={i} style={styles.actionItemRow}>
-                              <Pressable onPress={() => handleToggleActionItem(i)} hitSlop={6}>
+                              {/* Whole left side (checkbox + text) toggles, not just the
+                                  tiny icon — a full-row click target used to work before
+                                  the edit pencil was added, and a small icon alone is easy
+                                  to miss and feels like "the checkbox doesn't save". */}
+                              <Pressable style={styles.actionItemMain} onPress={() => handleToggleActionItem(i)}>
                                 <Feather
                                   name={item.done ? "check-square" : "square"}
                                   size={15}
                                   color={item.done ? colors.success : colors.inkFaint}
                                   style={{ marginTop: 2 }}
                                 />
-                              </Pressable>
-                              <View style={{ flex: 1 }}>
-                                <Text style={[styles.actionItemTask, item.done && styles.actionItemTaskDone]}>
-                                  {item.task}
-                                </Text>
-                                {(item.assignee || item.due) && (
-                                  <Text style={styles.actionItemMeta}>
-                                    {[item.assignee, item.due].filter(Boolean).join(" · ")}
+                                <View style={{ flex: 1 }}>
+                                  <Text style={[styles.actionItemTask, item.done && styles.actionItemTaskDone]}>
+                                    {item.task}
                                   </Text>
-                                )}
-                              </View>
-                              <Pressable onPress={() => startEditItem(i)} hitSlop={6}>
+                                  {(item.assignee || item.due) && (
+                                    <Text style={styles.actionItemMeta}>
+                                      {[item.assignee, item.due].filter(Boolean).join(" · ")}
+                                    </Text>
+                                  )}
+                                </View>
+                              </Pressable>
+                              <Pressable onPress={() => startEditItem(i)} hitSlop={10}>
                                 <Feather name="edit-2" size={13} color={colors.inkFaint} style={{ marginTop: 3 }} />
                               </Pressable>
                             </View>
@@ -1303,6 +1307,7 @@ const styles = StyleSheet.create({
   smallButtonPrimary: { backgroundColor: colors.gold, borderColor: colors.gold },
   smallButtonDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
   smallButtonLabel: { ...type.small, fontWeight: "600", color: colors.ink },
+  actionItemMain: { flex: 1, flexDirection: "row", alignItems: "flex-start", gap: 10 },
   actionItemRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   actionItemTask: { ...type.body, color: colors.ink, lineHeight: 20 },
   actionItemTaskDone: { color: colors.inkFaint, textDecorationLine: "line-through" },

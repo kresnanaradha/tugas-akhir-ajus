@@ -22,7 +22,7 @@ function greetingWord() {
 // href: null = not wired to a page yet.
 const QUICK_ACTIONS = [
   { icon: "video", label: "Rapat Baru", note: "Bot join otomatis", href: "/rapat/baru" },
-  { icon: "upload", label: "Upload Audio", note: "Transkripsi file lama", href: "/rapat/upload" },
+  { icon: "upload", label: "Upload", note: "Transkripsi file lama", href: "/rapat/upload" },
   { icon: "shuffle", label: "Bandingkan Rapat", note: "AI side-by-side", href: "/perbandingan" },
   { icon: "search", label: "Knowledge Base", note: "Tanya dari rapat", href: "/knowledge-base" },
 ];
@@ -107,7 +107,7 @@ export default function DashboardScreen() {
             <Link href="/rapat/upload" asChild>
               <Pressable style={styles.secondaryButton}>
                 <Feather name="upload" size={14} color={colors.ink} />
-                <Text style={styles.secondaryButtonLabel}>Upload Audio</Text>
+                <Text style={styles.secondaryButtonLabel}>Upload</Text>
               </Pressable>
             </Link>
             <Link href="/rapat/baru" asChild>

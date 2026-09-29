@@ -36,11 +36,16 @@ def _action_item_rollup(user_id: str) -> dict:
 
     items = []
     for m, summary in zip(meetings, summaries):
-        for a in (summary or {}).get("action_items") or []:
+        for index, a in enumerate((summary or {}).get("action_items") or []):
             items.append(
                 {
                     "meeting_id": m["id"],
                     "meeting_title": m["title"],
+                    # Index into that meeting's own action_items array (same order
+                    # summary.json stores it in) -- the frontend needs this to call
+                    # POST /meetings/<id>/action-items/<index>/toggle from this
+                    # cross-meeting list, since a rollup entry doesn't have its own id.
+                    "index": index,
                     "task": a.get("task"),
                     "assignee": a.get("assignee"),
                     "due": a.get("due"),
@@ -68,6 +73,12 @@ def _action_item_rollup(user_id: str) -> dict:
 
 def action_item_rollup(user_id: str) -> dict:
     return _action_item_rollup(user_id)
+
+
+def invalidate_action_item_cache(user_id: str) -> None:
+    """Called after a toggle/edit changes a meeting's action items, so the
+    Laporan rollup doesn't keep serving stale done/open counts for up to 60s."""
+    _rollup_cache.pop(user_id, None)
 
 
 def get_stats(user_id: str, with_action_items: bool = False) -> dict:

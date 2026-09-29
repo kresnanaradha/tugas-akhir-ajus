@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { Link, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
@@ -120,6 +120,15 @@ export default function KnowledgeBaseScreen() {
   const [answer, setAnswer] = useState(null);
   const [results, setResults] = useState([]);
   const [error, setError] = useState("");
+
+  // Lets the TopBar's search box (and anything else) link straight to a
+  // result here via /knowledge-base?q=... instead of only supporting typing
+  // into this page's own box.
+  const { q: initialQuery } = useLocalSearchParams();
+  useEffect(() => {
+    if (initialQuery) runSearch(String(initialQuery));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
 
   function runSearch(q) {
     const value = (q ?? query).trim();

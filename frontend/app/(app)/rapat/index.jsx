@@ -1,13 +1,14 @@
 import { Feather } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { Link, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { getMeeting, listMeetings } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { MeetingRow } from "@/components/MeetingRow";
 import { StatusPill } from "@/components/StatusPill";
+import { useAuth } from "@/lib/auth-context";
 
 const LIVE = ["joining", "recording", "stopping", "processing"];
 const FILTERS = [
@@ -129,16 +130,24 @@ function MeetingPreview({ meeting }) {
 }
 
 export default function RapatScreen() {
+  const { q } = useLocalSearchParams();
+  const { user } = useAuth();
   const [status, setStatus] = useState("loading"); // loading | error | done
   const [meetings, setMeetings] = useState([]);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
+  // Pre-filled from the TopBar's search box (?q=...) but editable here too.
+  const [searchQuery, setSearchQuery] = useState(q ? String(q) : "");
   const [selectedId, setSelectedId] = useState(null);
 
   useEffect(() => {
     listMeetings()
       .then((data) => {
-        const rows = data.map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }));
+        const rows = data.map((m) => ({
+          ...m,
+          ...formatMeetingDate(m.created_at),
+          isFromTeammate: !!m.user_id && m.user_id !== user?.id,
+        }));
         setMeetings(rows);
         setSelectedId(rows[0]?.id ?? null);
         setStatus("done");
@@ -150,7 +159,8 @@ export default function RapatScreen() {
   }, []);
 
   const test = FILTERS.find((f) => f.key === filter).test;
-  const visible = meetings.filter(test);
+  const q2 = searchQuery.trim().toLowerCase();
+  const visible = meetings.filter(test).filter((m) => !q2 || m.title.toLowerCase().includes(q2));
   const selected = meetings.find((m) => m.id === selectedId) || null;
 
   return (
@@ -180,6 +190,22 @@ export default function RapatScreen() {
 
         <View style={styles.split}>
           <View style={styles.listCol}>
+            <View style={styles.searchBox}>
+              <Feather name="search" size={14} color={colors.inkFaint} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Cari judul rapat..."
+                placeholderTextColor={colors.inkFaint}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              {!!searchQuery && (
+                <Pressable onPress={() => setSearchQuery("")} hitSlop={6}>
+                  <Feather name="x" size={14} color={colors.inkFaint} />
+                </Pressable>
+              )}
+            </View>
+
             <View style={styles.filterRow}>
               {FILTERS.map((f) => (
                 <Pressable
@@ -275,6 +301,18 @@ const styles = StyleSheet.create({
   listCol: { flex: 1.15, minWidth: 420, gap: spacing.sm },
   previewCol: { flex: 1, minWidth: 340 },
 
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    height: 38,
+  },
+  searchInput: { ...type.body, color: colors.ink, flex: 1, outlineStyle: "none" },
   filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: {
     paddingVertical: 4,

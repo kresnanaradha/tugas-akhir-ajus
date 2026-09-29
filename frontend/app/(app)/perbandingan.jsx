@@ -1,9 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getMeeting, listMeetings } from "@/lib/api";
+import { getComparisonExportUrl, getMeeting, listMeetings } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 
 // Only meetings with a real summary are worth comparing.
@@ -196,8 +196,21 @@ export default function PerbandinganScreen() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.content}>
-        <Text style={styles.title}>Perbandingan Rapat</Text>
-        <Text style={styles.description}>Bandingkan ringkasan, keputusan, dan action item dua rapat secara berdampingan.</Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>Perbandingan Rapat</Text>
+            <Text style={styles.description}>Bandingkan ringkasan, keputusan, dan action item dua rapat secara berdampingan.</Text>
+          </View>
+          {leftId && rightId && (
+            <Pressable
+              style={styles.exportButton}
+              onPress={() => window.open(getComparisonExportUrl(leftId, rightId), "_blank")}
+            >
+              <Feather name="download" size={14} color={colors.ink} />
+              <Text style={styles.exportButtonLabel}>Export PDF</Text>
+            </Pressable>
+          )}
+        </View>
 
         {status === "loading" && (
           <View style={styles.stateBox}>
@@ -223,8 +236,20 @@ const styles = StyleSheet.create({
   scrollContent: { alignItems: "center", padding: spacing.lg },
   content: { gap: spacing.md, maxWidth: 1400, width: "100%" },
 
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.lg },
   title: { ...type.h1, fontSize: 24, color: colors.ink },
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, marginBottom: spacing.sm },
+  exportButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: colors.gold,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    ...shadow.card,
+  },
+  exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
   stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xl },
   stateText: { ...type.body, color: colors.inkSoft },

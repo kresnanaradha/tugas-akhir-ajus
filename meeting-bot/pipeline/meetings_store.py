@@ -35,6 +35,9 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS user_id TEXT;
 -- (POST /meetings/<id>/knowledge-base) get indexed. Nullable on purpose --
 -- NULL/false both mean "not in the KB".
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS in_kb BOOLEAN DEFAULT FALSE;
+-- Per-meeting opt-in to share with the owner's team (see pipeline/team_store.py)
+-- -- sharing is never automatic just because the owner is on a team.
+ALTER TABLE meetings ADD COLUMN IF NOT EXISTS shared_with_team BOOLEAN DEFAULT FALSE;
 """
 register_schema(_TABLE_SQL)
 # recording stays NOT NULL — ALTER TABLE ... DROP NOT NULL turned out to hang
@@ -189,9 +192,14 @@ def delete_meeting(meeting_id: str) -> None:
 
 
 def list_meetings(user_id: str | None = None) -> list[dict]:
-    """All meetings, or just one user's — `user_id IS NULL` rows (recorded
-    before the `user_id` column existed) always show up too, so pre-auth
-    history doesn't disappear from whoever's using the app now."""
+    """All meetings (super admin only, `user_id=None`), or just one user's
+    own meetings plus teammates' meetings they've explicitly opted into
+    sharing (`shared_with_team`) — being on the same team never exposes a
+    meeting the owner didn't toggle on. Orphaned pre-auth rows (`user_id IS
+    NULL`, recorded before login existed) are deliberately NOT included
+    here any more — they used to show to every logged-in user, which meant
+    every account saw the same old test recordings as their own "Rapat"
+    list. They're still reachable through the unscoped admin view/export."""
 
     def _do(conn):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -199,8 +207,17 @@ def list_meetings(user_id: str | None = None) -> list[dict]:
                 cur.execute("SELECT * FROM meetings ORDER BY created_at DESC")
             else:
                 cur.execute(
-                    "SELECT * FROM meetings WHERE user_id = %s OR user_id IS NULL ORDER BY created_at DESC",
-                    (user_id,),
+                    """
+                    SELECT * FROM meetings
+                    WHERE user_id = %s
+                        OR (shared_with_team AND user_id IN (
+                            SELECT id FROM users
+                            WHERE team_id IS NOT NULL
+                                AND team_id = (SELECT team_id FROM users WHERE id = %s)
+                        ))
+                    ORDER BY created_at DESC
+                    """,
+                    (user_id, user_id),
                 )
             return [dict(row) for row in cur.fetchall()]
 
@@ -210,12 +227,30 @@ def list_meetings(user_id: str | None = None) -> list[dict]:
     return rows
 
 
+def count_own_this_month(user_id: str) -> int:
+    """Exactly this user's own meetings started this calendar month — for
+    the Free plan's monthly quota (see app.py's _check_meeting_quota).
+    Deliberately NOT counts_by_period()'s "this_month", which also counts
+    orphaned pre-auth rows (user_id IS NULL) as visible-to-everyone; those
+    aren't meetings this user personally used a quota slot for."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM meetings WHERE user_id = %s AND created_at >= date_trunc('month', CURRENT_DATE)",
+                (user_id,),
+            )
+            return cur.fetchone()[0]
+
+    return with_conn(_do)
+
+
 def counts_by_period(user_id: str | None = None) -> dict:
     """{"today", "this_week", "this_month", "total", "completed", "failed"} —
     for the super admin dashboard (unscoped) and /reports (scoped to one
-    user, see list_meetings() for why NULL user_id rows are always
-    included). date_trunc('week', ...) starts weeks on Monday (Postgres
-    default), matching Indonesian convention."""
+    user — orphaned pre-auth rows are excluded, same as list_meetings()).
+    date_trunc('week', ...) starts weeks on Monday (Postgres default),
+    matching Indonesian convention."""
 
     def _do(conn):
         with conn.cursor() as cur:
@@ -229,7 +264,7 @@ def counts_by_period(user_id: str | None = None) -> dict:
                     COUNT(*) FILTER (WHERE status = 'completed') AS completed,
                     COUNT(*) FILTER (WHERE status = 'failed') AS failed
                 FROM meetings
-                {"WHERE user_id = %s OR user_id IS NULL" if user_id is not None else ""}
+                {"WHERE user_id = %s" if user_id is not None else ""}
                 """,
                 (user_id,) if user_id is not None else None,
             )
@@ -260,7 +295,7 @@ def daily_counts(days: int = 14, user_id: str | None = None) -> list[dict]:
                 SELECT d::date, COALESCE(COUNT(m.id), 0)
                 FROM generate_series(CURRENT_DATE - (%s - 1) * INTERVAL '1 day', CURRENT_DATE, INTERVAL '1 day') d
                 LEFT JOIN meetings m ON date_trunc('day', m.created_at) = d
-                    {"AND (m.user_id = %s OR m.user_id IS NULL)" if user_id is not None else ""}
+                    {"AND m.user_id = %s" if user_id is not None else ""}
                 GROUP BY d
                 ORDER BY d
                 """,
@@ -281,7 +316,7 @@ def platform_counts(user_id: str | None = None) -> dict:
             cur.execute(
                 f"""
                 SELECT platform, COUNT(*) FROM meetings
-                {"WHERE user_id = %s OR user_id IS NULL" if user_id is not None else ""}
+                {"WHERE user_id = %s" if user_id is not None else ""}
                 GROUP BY platform
                 """,
                 (user_id,) if user_id is not None else None,
@@ -300,7 +335,7 @@ def total_duration_minutes(user_id: str | None = None) -> float:
             cur.execute(
                 f"""
                 SELECT COALESCE(SUM(duration_minutes), 0) FROM meetings
-                {"WHERE user_id = %s OR user_id IS NULL" if user_id is not None else ""}
+                {"WHERE user_id = %s" if user_id is not None else ""}
                 """,
                 (user_id,) if user_id is not None else None,
             )

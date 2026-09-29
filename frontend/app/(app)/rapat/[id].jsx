@@ -13,9 +13,11 @@ import {
 } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, replaceActionItems, setKnowledgeBase, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
+import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, replaceActionItems, setKnowledgeBase, shareMeetingWithTeam, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
+import { BackLink } from "@/components/BackLink";
 import { StatusPill } from "@/components/StatusPill";
+import { useAuth } from "@/lib/auth-context";
 
 // Cycles through existing theme colors rather than introducing new ones —
 // consistent color per speaker label, not a real identity (diarization only
@@ -235,6 +237,8 @@ function PulsingDot() {
 
 export default function MeetingDetailScreen() {
   const { id } = useLocalSearchParams();
+  const { user } = useAuth();
+  const [sharingTeam, setSharingTeam] = useState(false);
   const [screenStatus, setScreenStatus] = useState("loading"); // loading | error | done
   const [meeting, setMeeting] = useState(null);
   const [error, setError] = useState("");
@@ -575,6 +579,15 @@ export default function MeetingDetailScreen() {
       .finally(() => setKbSaving(false));
   }
 
+  function handleToggleShareTeam() {
+    const enabled = !meeting.shared_with_team;
+    setSharingTeam(true);
+    shareMeetingWithTeam(id, enabled)
+      .then(() => setMeeting((m) => ({ ...m, shared_with_team: enabled })))
+      .catch(() => {})
+      .finally(() => setSharingTeam(false));
+  }
+
   const isLive = liveStatus && liveStatus !== "failed";
   const isLiveFailed = liveStatus === "failed";
   const stepIndex = STEP_INDEX[liveStatus] ?? 0;
@@ -582,9 +595,7 @@ export default function MeetingDetailScreen() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.content}>
-        <Link href="/rapat" style={styles.backLink}>
-          <Feather name="chevron-left" size={14} color={colors.inkSoft} /> Kembali ke Daftar Rapat
-        </Link>
+        <BackLink label="Kembali ke Daftar Rapat" />
 
         {screenStatus === "loading" && (
           <View style={styles.stateBox}>
@@ -609,8 +620,23 @@ export default function MeetingDetailScreen() {
                   <Feather name="video" size={12} color={colors.inkSoft} />
                   <Text style={styles.platformBadgeLabel}>{PLATFORM_LABEL[meeting.platform] || meeting.platform}</Text>
                 </View>
+                {!isLive && !confirmDelete && user?.team_id && meeting.user_id === user.id && (
+                  <Pressable
+                    style={[styles.smallButton, meeting.shared_with_team && styles.kbButtonOn, { marginLeft: "auto" }]}
+                    onPress={handleToggleShareTeam}
+                    disabled={sharingTeam}
+                  >
+                    <Feather name={meeting.shared_with_team ? "check" : "users"} size={12} color={colors.ink} />
+                    <Text style={styles.smallButtonLabel}>
+                      {meeting.shared_with_team ? "Dibagikan ke Team" : "Bagikan ke Team"}
+                    </Text>
+                  </Pressable>
+                )}
                 {!isLive && !confirmDelete && (
-                  <Pressable style={[styles.smallButton, { marginLeft: "auto" }]} onPress={() => setConfirmDelete(true)}>
+                  <Pressable
+                    style={[styles.smallButton, !(user?.team_id && meeting.user_id === user?.id) && { marginLeft: "auto" }]}
+                    onPress={() => setConfirmDelete(true)}
+                  >
                     <Feather name="trash-2" size={12} color={colors.danger} />
                     <Text style={[styles.smallButtonLabel, { color: colors.danger }]}>Hapus Rapat</Text>
                   </Pressable>

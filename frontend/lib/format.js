@@ -21,3 +21,15 @@ export const PLATFORM_LABEL = {
   zoom: "Zoom",
   upload: "Upload Audio",
 };
+
+// Up to 2 initials from a display name, for the avatar circles in
+// Sidebar/TopBar/Pengaturan — one shared implementation instead of three
+// copies drifting apart.
+export function initialsOf(name) {
+  return (name || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+}

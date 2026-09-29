@@ -71,10 +71,17 @@ export default function DashboardScreen() {
   useEffect(() => {
     listMeetings()
       .then((data) => {
-        setMeetings(data.map((m) => ({ ...m, ...formatMeetingDate(m.created_at) })));
+        setMeetings(
+          data.map((m) => ({
+            ...m,
+            ...formatMeetingDate(m.created_at),
+            isFromTeammate: !!m.user_id && m.user_id !== user?.id,
+          }))
+        );
         setMeetingsStatus("done");
       })
       .catch(() => setMeetingsStatus("error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

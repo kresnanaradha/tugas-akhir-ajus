@@ -33,7 +33,13 @@ export function AuthProvider({ children }) {
     setStatus("anonymous");
   }
 
-  return <AuthContext.Provider value={{ user, status, signIn, signOut }}>{children}</AuthContext.Provider>;
+  // Refreshes the cached user after a self-service profile edit (Pengaturan's
+  // "Nama" field) — same setter as signIn, just named for what it's for here.
+  function updateUser(u) {
+    setUser(u);
+  }
+
+  return <AuthContext.Provider value={{ user, status, signIn, signOut, updateUser }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

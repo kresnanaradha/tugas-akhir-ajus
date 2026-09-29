@@ -52,6 +52,36 @@ export async function getMe() {
   return handleResponse(res);
 }
 
+// Self-service "delete account" — actually deactivates (old meetings still
+// point at this user's id) and clears the session server-side. See
+// POST /auth/me/deactivate.
+export async function deactivateAccount() {
+  const res = await apiFetch("/auth/me/deactivate", { method: "POST" });
+  return handleResponse(res);
+}
+
+// Self-service profile edit (name, email, phone, email_notifications —
+// pass only what changed) — see PATCH /auth/me.
+export async function updateProfile(fields) {
+  const res = await apiFetch("/auth/me", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
+  return handleResponse(res);
+}
+
+// Self-service password change, requires the current password — see
+// POST /auth/me/password.
+export async function changePassword(currentPassword, newPassword) {
+  const res = await apiFetch("/auth/me/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  return handleResponse(res);
+}
+
 // Runs the bot's full pipeline (transcribe -> fix -> summarize) on an
 // already-recorded file. Can take several minutes for long recordings.
 // numSpeakers is optional — the uploader's best guess at how many people are
@@ -265,6 +295,88 @@ export async function getReportActionItems() {
 // as JSON (the browser handles the download). See GET /reports/export.
 export function getReportExportUrl() {
   return `${API_BASE_URL}/reports/export`;
+}
+
+// URL for the Perbandingan Rapat page's PDF export — see GET /perbandingan/export.
+export function getComparisonExportUrl(meetingIdA, meetingIdB) {
+  return `${API_BASE_URL}/perbandingan/export?a=${encodeURIComponent(meetingIdA)}&b=${encodeURIComponent(meetingIdB)}`;
+}
+
+// The caller's team + member list, or null if not on one — see GET /teams/me.
+export async function getMyTeam() {
+  return handleResponse(await apiFetch("/teams/me"));
+}
+
+export async function createTeam(name) {
+  const res = await apiFetch("/teams", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return handleResponse(res);
+}
+
+export async function renameTeam(teamId, name) {
+  const res = await apiFetch(`/teams/${encodeURIComponent(teamId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return handleResponse(res);
+}
+
+// Admin-only. `email` is optional — omit it to get a shareable link without
+// sending mail. Returns {token, invite_url, expires_at}.
+export async function inviteToTeam(email) {
+  const res = await apiFetch("/teams/invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email || null }),
+  });
+  return handleResponse(res);
+}
+
+// {team_name} for the join page to show before the user commits.
+export async function previewTeamInvite(token) {
+  return handleResponse(await apiFetch(`/teams/invite/${encodeURIComponent(token)}`));
+}
+
+export async function joinTeam(token) {
+  const res = await apiFetch("/teams/join", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  return handleResponse(res);
+}
+
+// Self-service leave (any role) — same server-side effect as an admin
+// removing this same user via removeTeamMember().
+export async function leaveTeam() {
+  return handleResponse(await apiFetch("/teams/leave", { method: "POST" }));
+}
+
+export async function removeTeamMember(userId) {
+  return handleResponse(await apiFetch(`/teams/members/${encodeURIComponent(userId)}`, { method: "DELETE" }));
+}
+
+export async function updateTeamMemberRole(userId, role) {
+  const res = await apiFetch(`/teams/members/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  return handleResponse(res);
+}
+
+// Per-meeting opt-in to team sharing — see POST /meetings/<id>/share-team.
+export async function shareMeetingWithTeam(id, enabled) {
+  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/share-team`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  return handleResponse(res);
 }
 
 // RAG Knowledge Base search — returns {answer, results}. `answer` is one

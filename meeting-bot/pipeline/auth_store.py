@@ -18,6 +18,19 @@ CREATE TABLE IF NOT EXISTS users (
 -- Deactivated accounts can't log in or use an existing session, but their
 -- row stays (meetings point at users.id). NULL counts as active.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;
+-- Optional contact info shown/edited on the Pengaturan page.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+-- Whether app.py's _notify_meeting_ready() should email this user when a
+-- meeting's summary is ready. NULL counts as TRUE (opted in by default,
+-- matching the feature's original always-on behavior before this toggle
+-- existed) -- see _public()'s `is not False` check below.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN DEFAULT TRUE;
+-- A user belongs to at most one team at a time (not a Slack-style multi-
+-- workspace setup) -- see pipeline/team_store.py. NULL team_id = no team.
+-- team_role is only meaningful when team_id is set: 'admin' (can invite,
+-- remove members, rename the team) or 'member'.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_role TEXT;
 """
 register_schema(_TABLE_SQL)
 
@@ -37,8 +50,12 @@ def _public(row: dict) -> dict:
         "id": row["id"],
         "email": row["email"],
         "name": row["name"],
+        "phone": row.get("phone"),
         "role": row["role"],
         "active": row.get("active") is not False,
+        "email_notifications": row.get("email_notifications") is not False,
+        "team_id": row.get("team_id"),
+        "team_role": row.get("team_role"),
     }
 
 
@@ -98,8 +115,31 @@ def list_users() -> list[dict]:
     ]
 
 
-def update_user(user_id: str, name: str | None = None, role: str | None = None, active: bool | None = None) -> dict | None:
-    fields = {k: v for k, v in (("name", name), ("role", role), ("active", active)) if v is not None}
+def update_user(
+    user_id: str,
+    name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    role: str | None = None,
+    active: bool | None = None,
+    email_notifications: bool | None = None,
+) -> dict | None:
+    """Raises psycopg2.errors.UniqueViolation (via with_conn) if `email` is
+    already taken by another account — same as create_user()."""
+    if email is not None:
+        email = email.strip().lower()
+    fields = {
+        k: v
+        for k, v in (
+            ("name", name),
+            ("email", email),
+            ("phone", phone),
+            ("role", role),
+            ("active", active),
+            ("email_notifications", email_notifications),
+        )
+        if v is not None
+    }
     if fields:
 
         def _do(conn):

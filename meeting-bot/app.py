@@ -24,8 +24,16 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, mailer, report_pdf, report_stats, storage
-from pipeline.meetings_store import delete_meeting, find_meeting_by_url, get_meeting, list_meetings, start_meeting, update_meeting
+from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, mailer, report_pdf, report_stats, storage, team_store
+from pipeline.meetings_store import (
+    count_own_this_month,
+    delete_meeting,
+    find_meeting_by_url,
+    get_meeting,
+    list_meetings,
+    start_meeting,
+    update_meeting,
+)
 from pipeline.summarize import fix_transcript, summarize
 from pipeline.transcribe import transcribe
 from pipeline.xendit_client import create_subscription_session, deactivate_recurring_plan
@@ -169,6 +177,65 @@ def auth_me():
         return jsonify({"error": "Belum login"}), 401
     return jsonify(user)
 
+
+@app.patch("/auth/me")
+@login_required
+def update_own_profile():
+    """Self-service profile edit (name, email, phone, email notification
+    preference) — unlike PATCH /admin/users/<id>, this only ever touches
+    the caller's own row, so no super_admin_required and no id in the URL
+    to mix up. Every field is optional; only the ones present in the body
+    get changed."""
+    data = request.get_json(silent=True) or {}
+    name, email, phone = data.get("name"), data.get("email"), data.get("phone")
+    if name is not None and not str(name).strip():
+        return jsonify({"error": "Nama tidak boleh kosong"}), 400
+    if email is not None and not str(email).strip():
+        return jsonify({"error": "Email tidak boleh kosong"}), 400
+    try:
+        user = auth_store.update_user(
+            session["user_id"],
+            name=str(name).strip() if name is not None else None,
+            email=str(email).strip() if email is not None else None,
+            phone=str(phone).strip() if phone is not None else None,
+            email_notifications=data["email_notifications"] if "email_notifications" in data else None,
+        )
+    except psycopg2.errors.UniqueViolation:
+        return jsonify({"error": "Email sudah dipakai akun lain"}), 409
+    return jsonify(user)
+
+
+@app.post("/auth/me/deactivate")
+@login_required
+def deactivate_own_account():
+    """Self-service "delete account" — deactivates rather than actually
+    deleting the row, same reasoning as the admin-side version: old
+    meetings still point at users.id. Clears the session immediately
+    afterward (same as logout) so the now-deactivated session can't keep
+    being used."""
+    auth_store.update_user(session["user_id"], active=False)
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.post("/auth/me/password")
+@login_required
+def change_own_password():
+    """Self-service password change — requires the current password (unlike
+    the admin's reset-password, which doesn't, since that's an intentional
+    override for a locked-out user by someone who's already trusted)."""
+    data = request.get_json(silent=True) or {}
+    current_password, new_password = data.get("current_password"), data.get("new_password")
+    if not current_password or not new_password:
+        return jsonify({"error": "Password saat ini dan password baru wajib diisi"}), 400
+    if len(new_password) < 8:
+        return jsonify({"error": "Password baru minimal 8 karakter"}), 400
+    me = auth_store.get_user(session["user_id"])
+    if auth_store.verify_login(me["email"], current_password) is None:
+        return jsonify({"error": "Password saat ini salah"}), 403
+    auth_store.set_password(session["user_id"], new_password)
+    return jsonify({"ok": True})
+
 # Whatever ffmpeg (whisperx's loader) can decode — covers both bot output
 # (.webm) and typical uploads.
 UPLOAD_EXTENSIONS = {".webm", ".mp4", ".mp3", ".wav", ".m4a", ".ogg"}
@@ -239,6 +306,8 @@ def _notify_meeting_ready(meeting_id: str, summary: dict) -> None:
         user = auth_store.get_user(record["user_id"]) if record and record.get("user_id") else None
         if not user:
             return  # no owner to notify (pre-auth meeting, or upload with no session)
+        if not user["email_notifications"]:
+            return  # opted out on the Pengaturan page
         excerpt = (summary.get("executive_summary") or "").split("\n\n")[0]
         mailer.send_meeting_ready_email(
             to_email=user["email"],
@@ -296,6 +365,31 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
         _jobs[job_id].update(phase="done", result=result)
 
 
+def _plan_limits(user_id: str) -> dict:
+    plan = billing_store.get_subscription(user_id)["plan"]
+    return billing_store.PLAN_LIMITS.get(plan, billing_store.PLAN_LIMITS["free"])
+
+
+def _kb_allowed(user_id: str) -> bool:
+    """Knowledge Base (opt-in + search) is a Pro/Team feature — see the
+    "Knowledge Base pencarian semantik" bullet on the Pengaturan page's
+    Pro/Team plans, absent from Free's."""
+    return billing_store.get_subscription(user_id)["plan"] != "free"
+
+
+def _check_meeting_quota(user_id: str) -> str | None:
+    """None if this user can start another meeting right now, else a
+    user-facing error message — see billing_store.PLAN_LIMITS. Counts
+    joins and uploads together (both consume a "rapat" slot)."""
+    limit = _plan_limits(user_id)["meetings_per_month"]
+    if limit is None:
+        return None
+    used = count_own_this_month(user_id)
+    if used >= limit:
+        return f"Paket Free dibatasi {limit} rapat per bulan (sudah terpakai {used}). Upgrade ke Pro untuk rapat tanpa batas."
+    return None
+
+
 def _join(bot_cls, platform: str, title: str):
     data = request.get_json(force=True) or {}
     url = data.get("url")
@@ -323,12 +417,22 @@ def _join(bot_cls, platform: str, title: str):
     if existing:
         return jsonify({"job_id": existing["id"], "shared": True})
 
+    quota_error = _check_meeting_quota(session["user_id"])
+    if quota_error:
+        return jsonify({"error": quota_error}), 402
+
+    # Free's recording length cap (see billing_store.PLAN_LIMITS) is a
+    # tighter ceiling on top of MAX_DURATION_MIN, not a replacement for it —
+    # a Pro/Team user is still bounded by that env var, just not by a plan.
+    plan_cap = _plan_limits(session["user_id"])["max_duration_minutes"]
+    max_duration = min(MAX_DURATION_MIN, plan_cap) if plan_cap is not None else MAX_DURATION_MIN
+
     job_id = uuid.uuid4().hex
     # bot.status transitions (joining -> recording -> stopping) get persisted
     # to the meetings row live, via start_meeting()/update_meeting() below —
     # that's what lets the Rapat list show "Sedang Merekam" instead of the
     # row only appearing once the whole pipeline is done.
-    bot = bot_cls(url, name, MAX_DURATION_MIN, on_status_change=lambda status: update_meeting(job_id, status=status))
+    bot = bot_cls(url, name, max_duration, on_status_change=lambda status: update_meeting(job_id, status=status))
     with _jobs_lock:
         # Recording relies on capturing the whole (virtual) display, not just
         # the meeting tab (see CLAUDE.md's "Known accepted limitation") — that
@@ -420,6 +524,9 @@ def knowledge_base_search():
     (see pipeline/knowledge_base.py's module docstring). `results` is always
     populated even if the answer synthesis fails, so the UI can fall back to
     showing just the raw matches."""
+    if not _kb_allowed(session["user_id"]):
+        return jsonify({"error": "Knowledge Base adalah fitur paket Pro/Team. Upgrade untuk memakainya."}), 402
+
     query = (request.args.get("q") or "").strip()
     if not query:
         return jsonify({"error": "q is required"}), 400
@@ -550,6 +657,11 @@ def meeting_knowledge_base(meeting_id):
         return jsonify({"error": "Meeting not found"}), 404
     enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
     if enabled:
+        # Opting IN needs Pro/Team; opting a meeting back OUT is always
+        # allowed regardless of plan, so a downgrade never strands someone
+        # unable to remove their own meeting from the index.
+        if not _kb_allowed(session["user_id"]):
+            return jsonify({"error": "Knowledge Base adalah fitur paket Pro/Team. Upgrade untuk memakainya."}), 402
         summary = artifacts.load_summary(meeting_id)
         if summary is None:
             return jsonify({"error": "No summary for this meeting yet"}), 404
@@ -687,6 +799,10 @@ def upload():
     file = request.files.get("file")
     if not file or not file.filename:
         return jsonify({"error": "file is required (multipart/form-data field 'file')"}), 400
+
+    quota_error = _check_meeting_quota(session["user_id"])
+    if quota_error:
+        return jsonify({"error": quota_error}), 402
 
     ext = Path(file.filename).suffix.lower()
     if ext not in UPLOAD_EXTENSIONS:
@@ -844,6 +960,32 @@ def reports_export():
     )
 
 
+@app.get("/perbandingan/export")
+@login_required
+def perbandingan_export():
+    """PDF version of the Perbandingan Rapat page — same two meetings side
+    by side, via pipeline/report_pdf.py's generate_comparison_report().
+    Same read permission as GET /meetings/<id> (login only, no per-meeting
+    ownership check — this app doesn't gate reads by owner, only deletes)."""
+    a_id, b_id = request.args.get("a"), request.args.get("b")
+    if not a_id or not b_id:
+        return jsonify({"error": "Parameter a dan b (id rapat) wajib diisi"}), 400
+
+    meeting_a, meeting_b = get_meeting(a_id), get_meeting(b_id)
+    if meeting_a is None or meeting_b is None:
+        return jsonify({"error": "Salah satu rapat tidak ditemukan"}), 404
+    for m in (meeting_a, meeting_b):
+        m["summary"] = artifacts.load_summary(m["id"]) if m["recording"] else None
+
+    user = auth_store.get_user(session["user_id"])
+    pdf_bytes = report_pdf.generate_comparison_report(meeting_a, meeting_b, generated_by=user["name"])
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=notulis-perbandingan-rapat.pdf"},
+    )
+
+
 # Where the actual frontend dev server runs — always plain localhost, since
 # the browser doing the redirect is the same machine either way.
 LOCAL_FRONTEND_URL = os.getenv("LOCAL_FRONTEND_URL", "http://localhost:8081")
@@ -866,7 +1008,7 @@ def billing_return():
 @app.get("/billing/status")
 @login_required
 def billing_status():
-    return jsonify(billing_store.get_subscription())
+    return jsonify(billing_store.get_subscription(session["user_id"]))
 
 
 @app.post("/billing/checkout")
@@ -881,27 +1023,25 @@ def billing_checkout():
     if plan not in billing_store.PLAN_PRICES:
         return jsonify({"error": f"unknown plan '{plan}', expected one of {list(billing_store.PLAN_PRICES)}"}), 400
 
-    reference_id = f"{billing_store.DEFAULT_ACCOUNT_ID}-{plan}-{uuid.uuid4().hex[:8]}"
+    user_id = session["user_id"]
+    reference_id = f"{user_id}-{plan}-{uuid.uuid4().hex[:8]}"
     # Falls back to a placeholder if PUBLIC_URL isn't set — checkout still
     # completes, the user just lands somewhere unhelpful afterward instead
     # of bouncing back into the app (see /billing/return above).
     return_base = PUBLIC_URL or "https://example.com"
     try:
-        # Named checkout_session, not session — shadowing Flask's `session`
-        # (imported for /auth/*) here would be harmless today since this
-        # function doesn't touch it, but it's exactly the kind of name that
-        # bites later when this function gets scoped to the logged-in user.
+        # Named checkout_session, not session (Flask's, imported for /auth/*).
         checkout_session = create_subscription_session(
             reference_id=reference_id,
             plan_amount=billing_store.PLAN_PRICES[plan],
-            email=os.getenv("BILLING_EMAIL", "demo@notulis.app"),
+            email=auth_store.get_user(user_id)["email"],
             success_url=f"{return_base}/billing/return?status=success",
             cancel_url=f"{return_base}/billing/return?status=cancel",
         )
     except requests.HTTPError as e:
         return jsonify({"error": f"Xendit error: {e.response.text}"}), 502
 
-    billing_store.start_checkout(plan, checkout_session["payment_session_id"])
+    billing_store.start_checkout(plan, checkout_session["payment_session_id"], account_id=user_id)
     return jsonify({"checkout_url": checkout_session["payment_link_url"]})
 
 
@@ -914,13 +1054,13 @@ def billing_cancel():
     once that date passes). Deactivating the Xendit plan here is what
     actually stops future billing, immediately — worth retrying by hand if
     this fails, since otherwise Xendit could still charge one more cycle."""
-    plan_id = billing_store.cancel_subscription()
+    plan_id = billing_store.cancel_subscription(session["user_id"])
     if plan_id:
         try:
             deactivate_recurring_plan(plan_id)
         except requests.HTTPError as e:
             print(f"[billing] failed to deactivate Xendit plan {plan_id}: {e}")
-    return jsonify(billing_store.get_subscription())
+    return jsonify(billing_store.get_subscription(session["user_id"]))
 
 
 @app.post("/billing/webhook")
@@ -955,6 +1095,147 @@ def billing_webhook():
             billing_store.mark_past_due(plan_id)
 
     return jsonify({"received": True})
+
+
+@app.get("/teams/me")
+@login_required
+def get_my_team():
+    """None if the caller isn't on a team, else {team, members} — members
+    include role so the frontend can show an admin-only invite/remove UI."""
+    user = auth_store.get_user(session["user_id"])
+    if not user["team_id"]:
+        return jsonify(None)
+    return jsonify({"team": team_store.get_team(user["team_id"]), "members": team_store.list_members(user["team_id"])})
+
+
+@app.post("/teams")
+@login_required
+def create_team():
+    """Starts a team with the caller as its sole admin member. Requires the
+    Team plan (same PLAN_LIMITS check used for meeting quotas/KB) and that
+    the caller isn't already on a team — leave/get-removed first."""
+    user = auth_store.get_user(session["user_id"])
+    if user["team_id"]:
+        return jsonify({"error": "Anda sudah tergabung dalam sebuah team"}), 400
+    if billing_store.get_subscription(session["user_id"])["plan"] != "team":
+        return jsonify({"error": "Membuat team memerlukan paket Team"}), 402
+    name = (request.get_json(silent=True) or {}).get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Nama team wajib diisi"}), 400
+    return jsonify(team_store.create_team(name, session["user_id"]))
+
+
+@app.patch("/teams/<team_id>")
+@login_required
+def rename_my_team(team_id):
+    user = auth_store.get_user(session["user_id"])
+    if user["team_id"] != team_id or user["team_role"] != "admin":
+        return jsonify({"error": "Hanya admin team yang bisa mengubah ini"}), 403
+    name = (request.get_json(silent=True) or {}).get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Nama team wajib diisi"}), 400
+    team_store.rename_team(team_id, name)
+    return jsonify(team_store.get_team(team_id))
+
+
+@app.post("/teams/invite")
+@login_required
+def invite_to_team():
+    """Admin-only. Returns the invite link regardless of whether the email
+    actually sent (mailer is best-effort) — an admin can always copy/share
+    the link by hand if SMTP isn't configured or delivery fails."""
+    user = auth_store.get_user(session["user_id"])
+    if not user["team_id"] or user["team_role"] != "admin":
+        return jsonify({"error": "Hanya admin team yang bisa mengundang anggota"}), 403
+    email = ((request.get_json(silent=True) or {}).get("email") or "").strip() or None
+    invite = team_store.create_invite(user["team_id"], user["id"], email=email)
+    invite_url = f"{LOCAL_FRONTEND_URL}/team/gabung/{invite['token']}"
+    if email:
+        try:
+            team = team_store.get_team(user["team_id"])
+            mailer.send_team_invite_email(email, team["name"], user["name"], invite_url)
+        except Exception as e:
+            print(f"[team] failed to send invite email to {email}: {e}")
+    return jsonify({"token": invite["token"], "invite_url": invite_url, "expires_at": invite["expires_at"].strftime("%Y-%m-%dT%H:%M:%S")})
+
+
+@app.get("/teams/invite/<token>")
+@login_required
+def preview_team_invite(token):
+    """Lets the join page show "Anda akan bergabung ke team X" before the
+    user commits by POSTing /teams/join."""
+    invite = team_store.get_invite(token)
+    if invite is None:
+        return jsonify({"error": "Tautan undangan tidak valid atau sudah kedaluwarsa"}), 404
+    team = team_store.get_team(invite["team_id"])
+    return jsonify({"team_name": team["name"]})
+
+
+@app.post("/teams/join")
+@login_required
+def join_team():
+    user = auth_store.get_user(session["user_id"])
+    if user["team_id"]:
+        return jsonify({"error": "Anda sudah tergabung dalam sebuah team. Keluar dulu untuk gabung team lain."}), 400
+    token = (request.get_json(silent=True) or {}).get("token")
+    team = team_store.accept_invite(token, session["user_id"])
+    if team is None:
+        return jsonify({"error": "Tautan undangan tidak valid atau sudah kedaluwarsa"}), 404
+    return jsonify(team)
+
+
+@app.post("/teams/leave")
+@login_required
+def leave_team():
+    user = auth_store.get_user(session["user_id"])
+    if not user["team_id"]:
+        return jsonify({"error": "Anda belum tergabung dalam team apa pun"}), 400
+    team_store.remove_member(session["user_id"])
+    return jsonify({"left": True})
+
+
+@app.delete("/teams/members/<user_id>")
+@login_required
+def remove_team_member(user_id):
+    admin = auth_store.get_user(session["user_id"])
+    target = auth_store.get_user(user_id)
+    if not admin["team_id"] or admin["team_role"] != "admin":
+        return jsonify({"error": "Hanya admin team yang bisa mengeluarkan anggota"}), 403
+    if target is None or target["team_id"] != admin["team_id"]:
+        return jsonify({"error": "Pengguna bukan anggota team ini"}), 404
+    team_store.remove_member(user_id)
+    return jsonify({"removed": True})
+
+
+@app.patch("/teams/members/<user_id>")
+@login_required
+def update_team_member_role(user_id):
+    admin = auth_store.get_user(session["user_id"])
+    target = auth_store.get_user(user_id)
+    if not admin["team_id"] or admin["team_role"] != "admin":
+        return jsonify({"error": "Hanya admin team yang bisa mengubah peran anggota"}), 403
+    if target is None or target["team_id"] != admin["team_id"]:
+        return jsonify({"error": "Pengguna bukan anggota team ini"}), 404
+    role = (request.get_json(silent=True) or {}).get("role")
+    if role not in ("admin", "member"):
+        return jsonify({"error": "role harus 'admin' atau 'member'"}), 400
+    team_store.set_role(user_id, admin["team_id"], role)
+    return jsonify({"role": role})
+
+
+@app.post("/meetings/<meeting_id>/share-team")
+@login_required
+def share_meeting_with_team(meeting_id):
+    """Per-meeting opt-in ({"enabled": bool}) — being on a team never shares
+    a meeting on its own, see meetings_store.list_meetings()."""
+    record = get_meeting(meeting_id)
+    if record is None:
+        return jsonify({"error": "Meeting not found"}), 404
+    if record.get("user_id") != session["user_id"]:
+        return jsonify({"error": "Hanya pemilik rapat yang bisa membagikannya"}), 403
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    update_meeting(meeting_id, shared_with_team=enabled)
+    return jsonify({"shared_with_team": enabled})
 
 
 if __name__ == "__main__":

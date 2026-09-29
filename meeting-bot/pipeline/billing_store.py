@@ -21,11 +21,21 @@ ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS cancel_at_period_end BOOLEAN 
 """
 register_schema(_TABLE_SQL)
 
-# Single-tenant POC — there's no real auth/user accounts yet (see CLAUDE.md's
-# "Known POC gaps"), so there's exactly one subscription row for the whole
-# app instead of one per user. Swap this for a real user id once auth
-# exists; every function below already takes/returns an id for that.
+# Fallback account id for a caller that doesn't pass its own (kept mainly so
+# every function below still works if ever called without a real user id —
+# app.py's routes always pass session["user_id"] now that auth exists).
 DEFAULT_ACCOUNT_ID = "default"
+
+# What each plan actually allows — matches the bullet points shown on the
+# frontend's Pengaturan page ("5 rapat direkam / bulan" for Free, "Rapat
+# direkam tanpa batas" for Pro/Team). None = no cap. Enforced in app.py's
+# _check_meeting_quota()/_join(); a plan not in this dict (shouldn't happen)
+# falls back to Free's limits, the safe default.
+PLAN_LIMITS = {
+    "free": {"meetings_per_month": 5, "max_duration_minutes": 60},
+    "pro": {"meetings_per_month": None, "max_duration_minutes": None},
+    "team": {"meetings_per_month": None, "max_duration_minutes": None},
+}
 
 # In IDR — matches the pricing shown on the frontend's Pengaturan page. Free
 # has no checkout at all (nothing to charge). Lives here (not app.py) so

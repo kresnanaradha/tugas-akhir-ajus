@@ -92,6 +92,20 @@ def _render_html(title: str, summary_excerpt: str, meeting_url: str) -> str:
 </div>"""
 
 
+def _send(config: dict, to_email: str, subject: str, text: str, html_body: str) -> None:
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = config["from"]
+    msg["To"] = to_email
+    msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    with smtplib.SMTP(config["host"], config["port"], timeout=15) as server:
+        server.starttls()
+        server.login(config["user"], config["password"])
+        server.sendmail(config["from"], [to_email], msg.as_string())
+
+
 def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, meeting_url: str) -> None:
     """Raises on failure — callers decide whether/how to swallow it (see
     app.py's _process_recording, which logs and moves on rather than
@@ -102,22 +116,59 @@ def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, me
         # feature stays inert until someone fills in .env, same as the rest
         # of this app's optional integrations.
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Transkrip siap: {title}"
-    msg["From"] = config["from"]
-    msg["To"] = to_email
-
     text = (
         f"Transkrip dan ringkasan rapat \"{title}\" sudah selesai diproses.\n\n"
         f"Ringkasan:\n{summary_excerpt}\n\n"
         f"Lihat detail lengkapnya: {meeting_url}\n\n"
         "-- Notulis"
     )
-    html_body = _render_html(title, summary_excerpt, meeting_url)
-    msg.attach(MIMEText(text, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+    _send(config, to_email, f"Transkrip siap: {title}", text, _render_html(title, summary_excerpt, meeting_url))
 
-    with smtplib.SMTP(config["host"], config["port"], timeout=15) as server:
-        server.starttls()
-        server.login(config["user"], config["password"])
-        server.sendmail(config["from"], [to_email], msg.as_string())
+
+def send_team_invite_email(to_email: str, team_name: str, inviter_name: str, invite_url: str) -> None:
+    """Best-effort, same as send_meeting_ready_email — a failed invite email
+    doesn't block the invite link itself from working (app.py still returns
+    it in the response either way)."""
+    config = _config()
+    if config is None:
+        return
+
+    safe_team = html.escape(team_name)
+    safe_inviter = html.escape(inviter_name)
+    text = (
+        f"{inviter_name} mengundang Anda bergabung ke team \"{team_name}\" di Notulis.\n\n"
+        f"Gabung lewat tautan ini: {invite_url}\n\n"
+        "Tautan ini berlaku selama 7 hari.\n\n"
+        "-- Notulis"
+    )
+    font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    html_body = f"""\
+<div style="background-color:{_BG};padding:32px 16px;font-family:{font};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;">
+    <tr>
+      <td style="padding-bottom:20px;">
+        <span style="font-size:18px;font-weight:700;color:{_INK};">Notulis</span>
+      </td>
+    </tr>
+    <tr>
+      <td style="background-color:{_SURFACE};border:1px solid {_BORDER};border-radius:12px;padding:28px;">
+        <h1 style="margin:0 0 6px;font-size:20px;line-height:1.3;color:{_INK};">Undangan Team</h1>
+        <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:{_INK_SOFT};">
+          <strong>{safe_inviter}</strong> mengundang Anda bergabung ke team <strong>{safe_team}</strong> di Notulis.
+        </p>
+        <a href="{invite_url}"
+           style="display:inline-block;background-color:{_GOLD};color:{_INK};font-size:14px;font-weight:700;
+                  text-decoration:none;border-radius:8px;padding:11px 22px;">
+          Gabung Team
+        </a>
+        <p style="margin:20px 0 0;font-size:12px;color:{_INK_FAINT};">Tautan ini berlaku selama 7 hari.</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding-top:20px;text-align:center;">
+        <span style="font-size:12px;color:{_INK_FAINT};">Email ini dikirim otomatis oleh Notulis.</span>
+      </td>
+    </tr>
+  </table>
+</div>"""
+    _send(config, to_email, f"Undangan bergabung ke team {team_name}", text, html_body)

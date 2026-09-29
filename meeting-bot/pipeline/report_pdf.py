@@ -8,12 +8,15 @@ reads as Notulis's own report rather than a generic library output.
 
 import io
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors as pdf_colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+_PLATFORM_LABEL = {"google_meet": "Google Meet", "zoom": "Zoom", "upload": "Upload"}
 
 # Mirrors frontend/constants/theme.js's palette, not reportlab's defaults —
 # the whole point of a letterhead is that it's recognizably this app's own.
@@ -236,6 +239,107 @@ def generate_user_report(stats: dict, meetings: list[dict], generated_by: str) -
 
     elements.append(Spacer(1, 16))
     elements.append(Paragraph("Dokumen ini dibuat otomatis oleh sistem Notulis.", footer_style))
+
+    doc.build(elements)
+    return buf.getvalue()
+
+
+def _meeting_cell(meeting: dict) -> list:
+    """One meeting's block for the side-by-side comparison table below — a
+    list of flowables, since a reportlab Table cell takes a list of
+    flowables, not a single one. escape() everywhere user/AI-generated text
+    lands, since Paragraph parses its text as a tiny XML-like markup and a
+    stray '<' or '&' in a summary would otherwise break the whole document."""
+    cell_title = ParagraphStyle("cellTitle", fontSize=12, textColor=_INK, fontName="Helvetica-Bold", spaceAfter=2)
+    cell_meta = ParagraphStyle("cellMeta", fontSize=8, textColor=_INK_SOFT, spaceAfter=10)
+    cell_heading = ParagraphStyle(
+        "cellHeading", fontSize=9, textColor=_GOLD_DEEP, fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4
+    )
+    cell_body = ParagraphStyle("cellBody", fontSize=8.5, textColor=_INK, leading=12)
+
+    summary = meeting.get("summary") or {}
+    platform = _PLATFORM_LABEL.get(meeting["platform"], meeting["platform"])
+    duration = f"{meeting['duration_minutes']:.1f} mnt" if meeting.get("duration_minutes") else "—"
+
+    flow = [
+        Paragraph(escape(meeting["title"]), cell_title),
+        Paragraph(f"{platform} &middot; {escape(meeting['created_at'][:10])} &middot; {duration}", cell_meta),
+    ]
+
+    if not summary:
+        flow.append(Paragraph("Rapat ini belum punya ringkasan.", cell_body))
+        return flow
+
+    flow.append(Paragraph("RINGKASAN", cell_heading))
+    for paragraph in (summary.get("executive_summary") or "").split("\n\n"):
+        if paragraph.strip():
+            flow.append(Paragraph(escape(paragraph.strip()), cell_body))
+            flow.append(Spacer(1, 4))
+
+    decisions = summary.get("key_decisions") or []
+    flow.append(Paragraph(f"KEPUTUSAN UTAMA ({len(decisions)})", cell_heading))
+    for d in decisions:
+        flow.append(Paragraph(f"&#8226; {escape(d)}", cell_body))
+
+    topics = summary.get("topics_discussed") or []
+    flow.append(Paragraph(f"TOPIK DIBAHAS ({len(topics)})", cell_heading))
+    flow.append(Paragraph(escape(", ".join(topics)) or "&ndash;", cell_body))
+
+    items = summary.get("action_items") or []
+    done = sum(1 for a in items if a.get("done"))
+    flow.append(Paragraph(f"ACTION ITEM ({done}/{len(items)} selesai)", cell_heading))
+    for a in items:
+        mark = "&#9745;" if a.get("done") else "&#9744;"
+        meta = " ".join(f"({escape(x)})" for x in (a.get("assignee"), a.get("due")) if x)
+        flow.append(Paragraph(f"{mark} {escape(a.get('task') or '')} {meta}", cell_body))
+
+    return flow
+
+
+def generate_comparison_report(meeting_a: dict, meeting_b: dict, generated_by: str) -> bytes:
+    """The Perbandingan Rapat page's PDF export — the same two meetings
+    side by side, via reportlab's standard trick for that: a 2-column,
+    1-row Table whose cells each hold a list of flowables (see
+    _meeting_cell) rather than two separate documents."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        title="Perbandingan Rapat Notulis",
+    )
+    base = getSampleStyleSheet()
+    title_style = ParagraphStyle("NotulisTitle", parent=base["Title"], fontSize=20, textColor=_INK, spaceAfter=2)
+    subtitle_style = ParagraphStyle("NotulisSubtitle", parent=base["Normal"], fontSize=10, textColor=_INK_SOFT)
+    footer_style = ParagraphStyle("NotulisFooter", parent=base["Normal"], fontSize=8, textColor=_INK_SOFT)
+
+    col_width = 8.7 * cm
+    comparison_table = Table(
+        [[_meeting_cell(meeting_a), _meeting_cell(meeting_b)]],
+        colWidths=[col_width, col_width],
+        style=TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BOX", (0, 0), (0, 0), 1, _BORDER),
+                ("BOX", (1, 0), (1, 0), 1, _BORDER),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ]
+        ),
+    )
+
+    elements = [
+        Paragraph("NOTULIS", title_style),
+        Paragraph("Perbandingan Rapat", subtitle_style),
+        Paragraph(
+            f"Dibuat: {datetime.now().strftime('%d %B %Y, %H:%M')} WIB &nbsp;&middot;&nbsp; Oleh: {escape(generated_by)}",
+            subtitle_style,
+        ),
+        Spacer(1, 14),
+        comparison_table,
+        Spacer(1, 16),
+        Paragraph("Dokumen ini dibuat otomatis oleh sistem Notulis.", footer_style),
+    ]
 
     doc.build(elements)
     return buf.getvalue()

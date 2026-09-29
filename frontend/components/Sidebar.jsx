@@ -5,15 +5,7 @@ import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, type } from "@/constants/theme";
 import { logout as apiLogout } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-
-function initialsOf(name) {
-  return (name || "")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join("");
-}
+import { initialsOf } from "@/lib/format";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: "home" },
@@ -83,7 +75,7 @@ export function Sidebar() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.userName}>{user?.name}</Text>
-            <Text style={styles.userRole}>{user?.role === "super_admin" ? "Super Admin" : "Admin"}</Text>
+            <Text style={styles.userRole}>{user?.role === "super_admin" ? "Super Admin" : "User"}</Text>
           </View>
           <Pressable onPress={handleLogout} hitSlop={8}>
             <Feather name="log-out" size={16} color={colors.inkFaint} />

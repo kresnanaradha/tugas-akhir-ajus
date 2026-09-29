@@ -33,6 +33,12 @@ export function MeetingRow({ meeting, selected, onSelect }) {
           </Text>
           <View style={styles.metaRow}>
             <Text style={styles.metaTag}>{PLATFORM_LABEL[meeting.platform] || meeting.platform}</Text>
+            {meeting.isFromTeammate && (
+              <View style={styles.metaItem}>
+                <Feather name="users" size={11} color={colors.goldDeep} />
+                <Text style={[styles.meta, { color: colors.goldDeep, fontWeight: "600" }]}>Dibagikan Team</Text>
+              </View>
+            )}
             {meeting.duration_minutes != null && (
               <View style={styles.metaItem}>
                 <Feather name="clock" size={11} color={colors.inkFaint} />

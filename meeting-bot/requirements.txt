@@ -19,6 +19,9 @@ openai
 psycopg2-binary
 requests
 boto3
+# Hands a finished recording off to a transcriber container over a Redis
+# queue instead of transcribing in-process (see pipeline/job_queue.py).
+redis
 # RAG Knowledge Base (search-only, not a chatbot — see pipeline/knowledge_base.py):
 # sentence-transformers for local embeddings, chromadb as the vector store.
 chromadb

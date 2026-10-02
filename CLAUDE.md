@@ -39,17 +39,70 @@ NULL = no team) — see "Team" below.
 
 **Meeting lifecycle** — `POST /google/join` / `/zoom/join` start the bot in
 a background thread and return `{job_id}` immediately; poll `GET
-/jobs/<id>` for `{status: "joining"|"recording"|"stopping"|"processing"
-|"done"|"failed", elapsed_seconds?, result?, error?}`. `POST
+/jobs/<id>` for `{status: "joining"|"recording"|"stopping"|"processing",
+elapsed_seconds?, error?}` while the bot is still joining/recording. `POST
 /jobs/<id>/stop` ends the recording early via `bot.stop_event` (checked
 once a second in `bots/base.py`'s `record()`), for the "Stop Rekam" button.
-`POST /upload` runs the same pipeline synchronously on an already-recorded
-file. `_jobs` is an in-memory dict, lost on restart — fine at POC scale.
-`_join()` rejects a second join (`409`) while one is already in progress in
-that process — see "Known accepted limitation" for why this still matters
-even with multiple worker containers. `/jobs/<id>` and `/jobs/<id>/stop`
-are **not** `login_required` (a stray gap, low priority since a job id is
-an unguessable uuid).
+`_jobs` is an in-memory dict, lost on restart — fine at POC scale. `_join()`
+rejects a second join (`409`) while one is already in progress in that
+process — see "Known accepted limitation" for why this still matters even
+with multiple worker containers. `/jobs/<id>` and `/jobs/<id>/stop` are
+**not** `login_required` (a stray gap, low priority since a job id is an
+unguessable uuid).
+
+Once the bot finishes and uploads the recording, this process's job is
+**done** — `_jobs.pop(job_id)`, so a later `GET /jobs/<id>` 404s on
+purpose. Transcription happens elsewhere now (see "Recorder/transcriber
+split" below); the frontend already falls back to polling `GET
+/meetings/<id>` on a 404 (`rapat/[id].jsx`'s `pollMeeting()`), which reads
+the real status from Postgres, so this needed **zero frontend changes**.
+`POST /upload` is the one exception: it still runs transcribe→fix→summarize
+synchronously in-process via `_process_recording()` (no live recording to
+cut short, so no queue hand-off was needed there — not yet moved onto the
+queue, see "Known gaps").
+
+**Recorder/transcriber split** (`pipeline/job_queue.py`, `transcriber_service.py`,
+`Dockerfile.transcriber`) — recording (Playwright+Chromium+Xvfb, one
+lightweight container per concurrent bot) and transcription (whisperx+torch,
+heavy but only 1-2 instances needed) used to share one container/process;
+this OOM-killed a live test (`mem_limit=3g`, Chrome and whisper together
+during optimization-week load testing, see "Docker multi-worker" below) and
+is now split into two kinds of container connected by a Redis queue:
+- A recorder (`_run_join_job` in `app.py`) uploads the finished recording to
+  R2, sets `meetings.status = "processing"`, and pushes
+  `{meeting_id, recording_key, num_speakers}` onto Redis
+  (`job_queue.enqueue_transcription()`) instead of transcribing itself.
+- `transcriber-1`/`transcriber-2` (`docker-compose.yml`, built from
+  `Dockerfile.transcriber`, `python:3.12-slim` base — no Playwright/
+  Chromium/Xvfb at all) run `transcriber_service.py`, a plain loop that
+  blocks on `job_queue.dequeue_transcription()` (Redis `BLPOP`), downloads
+  the recording from R2 (`storage.download_to_file()`), runs the same
+  transcribe→fix→summarize→email pipeline `_process_recording()` uses for
+  `/upload`, and writes `meetings.status = "completed"/"failed"` when done.
+  Exactly 2 instances (not scaled 1:1 with bot count) so transcription's
+  RAM/CPU — the heaviest part of the whole pipeline — never exceeds 2
+  concurrent jobs regardless of how many bots are recording at once.
+- Confirmed end-to-end on a real Zoom join: recorded → uploaded → queued →
+  picked up by `transcriber-2` (a *different* container than the one that
+  recorded) → transcribed → summarized → `status: "completed"` in Postgres.
+- `pipeline/summarize.py` used to import `knowledge_base` (chromadb +
+  sentence-transformers) at module level even though it's only used when a
+  meeting has `in_kb = true` — that alone made the trimmed transcriber
+  image fail to boot (`ModuleNotFoundError: chromadb`). Fixed by moving that
+  import inside the `if meeting.get("in_kb")` branch, so a caller that never
+  touches KB-enabled meetings (the transcriber, almost always) doesn't need
+  chromadb installed at all.
+- Redis needs `redis-py`'s `socket_timeout` set *larger* than
+  `BLPOP`'s own timeout (`pipeline/job_queue.py`) — left unset, redis-py's
+  socket read timed out first every ~5s ("`TimeoutError: Timeout reading
+  from socket`") instead of `BLPOP` just returning nil the way the protocol
+  intends. `transcriber_service.py`'s loop also wraps the dequeue call
+  itself in try/except now, not just per-job processing — a transient Redis
+  hiccup must never crash a long-running worker.
+- Redis is `requirepass`-protected (`REDIS_PASSWORD` in `.env`) even though
+  it's never exposed outside the compose network (no `ports:` on the
+  `redis` service) — defense in depth against a future port-mapping mistake,
+  especially once this runs on a real VPS.
 
 **Meetings** — `GET /meetings` (this user's own, plus any pre-auth row with
 `user_id IS NULL`, plus any teammate's meeting explicitly opted into team
@@ -186,17 +239,28 @@ pass (`executive_summary`, length scaled to the transcript so it covers the
 pass (`key_decisions`, `topics_discussed`, `action_items` as JSON).
 
 **Docker multi-worker** (`docker-compose.yml`, `Dockerfile`,
-`docker-entrypoint.sh`) — 10 independent worker services (`worker-1`
-through `worker-10`), each the full backend image in its own container
-with its own Xvfb virtual display, its own Google account/session
+`docker-entrypoint.sh`) — 10 independent worker (recorder) services
+(`worker-1` through `worker-10`), each the full backend image in its own
+container with its own Xvfb virtual display, its own Google account/session
 (`auth/worker-N.json`, mounted read-only), and its own host port; all
-share one Postgres/R2/`.env`. **Only `worker-1` actually has a logged-in
-Google session right now** — `worker-2` through `worker-10` need
-`bots/google_login.py` run once per account before they're usable (see
-"Next steps"). Nothing routes a join to "whichever worker is free" yet —
-the frontend still points at one fixed `EXPO_PUBLIC_API_URL`, so today this
-only proves 10 isolated bot processes *can* run side by side, not that the
-app picks one automatically.
+share one Postgres/R2/`.env`, plus now `redis`/`transcriber-1`/
+`transcriber-2` (see "Recorder/transcriber split" above). **Only `worker-1`
+actually has a logged-in Google session right now** — `worker-2` through
+`worker-10` need `bots/google_login.py` run once per account before they're
+usable (see "Next steps"). Nothing routes a join to "whichever worker is
+free" yet — the frontend still points at one fixed `EXPO_PUBLIC_API_URL`,
+so today this only proves 10 isolated bot processes *can* run side by side,
+not that the app picks one automatically.
+
+`worker-test`/`worker-test-2` (same compose file) are a separate,
+throwaway pair used for load-testing during the optimization week (torch
+CPU-only build via `Dockerfile`'s `TORCH_CPU` build arg, `mem_limit`/`cpus`
+caps, no Google auth mount — tested with Zoom instead, which needs no
+login). 2 concurrent Zoom bots there measured a combined ~2.9GB RAM/~40%
+CPU — comfortably under a 6-CPU/7.7GB budget — but transcription sharing
+the SAME `mem_limit=3g` container as the recording OOM-killed the job; that
+finding is what drove the recorder/transcriber split above, not just a
+theoretical concern.
 
 ### Frontend (`frontend/`)
 
@@ -352,8 +416,21 @@ spending hours re-debugging it.
   left a meeting — it runs the full `MAX_RECORDING_DURATION_MINUTES`
   otherwise.
 - **`_jobs` is in-memory, per-process** — lost on restart, not shared
-  across the 10 worker processes. A real queue (Redis) was deferred until
-  the pipeline itself had a chance to be validated end-to-end first.
+  across the 10 worker processes. Only tracks the live join/record phase
+  now (see "Recorder/transcriber split"); it was never meant to survive a
+  restart mid-transcription anyway, and now doesn't need to, since Redis
+  holds that hand-off instead.
+- **`POST /upload` isn't on the transcriber queue** — it still runs
+  transcribe→fix→summarize synchronously in the API process that received
+  the upload (`_process_recording()`), same as before the recorder/
+  transcriber split. No live recording to protect there (no Stop Rekam
+  button, no OOM risk from Chrome+whisper sharing a container since
+  uploads never launch Chrome at all), so it was left alone rather than
+  queued for its own sake.
+- **Job queue has no dead-letter/retry handling** (`pipeline/job_queue.py`)
+  — a transcriber that crashes mid-job silently drops it; the meeting stays
+  `"processing"` forever. Fine at this job volume, would need an ack/requeue
+  scheme (e.g. `BRPOPLPUSH` into a processing list) to survive that.
 
 ## To resume on another machine
 

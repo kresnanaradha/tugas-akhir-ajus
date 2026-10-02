@@ -24,7 +24,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from pipeline import admin_stats, artifacts, auth_store, billing_store, knowledge_base, mailer, report_pdf, report_stats, storage, team_store
+from pipeline import admin_stats, artifacts, auth_store, billing_store, job_queue, knowledge_base, mailer, report_pdf, report_stats, storage, team_store
 from pipeline.meetings_store import (
     count_own_this_month,
     delete_meeting,
@@ -348,21 +348,25 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
 
     with _jobs_lock:
         _jobs[job_id]["phase"] = "processing"
-    # `recording` here is still the local scratch path, just so
-    # GET /meetings/<id> and friends see a truthy value while transcribe/fix/
-    # summarize run against it below — overwritten with the real R2 key once
-    # upload_recording() hands it off further down.
-    update_meeting(job_id, status="processing", recording=local_recording_path, duration_minutes=duration_minutes)
 
-    result = _process_recording(local_recording_path, job_id, num_speakers)
+    # Recorder's job ends here now -- upload, then hand off to a transcriber
+    # container over Redis instead of running transcribe/fix/summarize
+    # in-process (see pipeline/job_queue.py). Recording+transcription
+    # sharing one container's memory limit is exactly what OOM-killed a
+    # live test (worker-test-2, mem_limit=3g) -- see CLAUDE.md.
     recording_key = storage.upload_recording(local_recording_path, job_id)
-    result["status"] = "done"
-    result["recording"] = recording_key
-    final_status = "failed" if result.get("transcript_error") else "completed"
-    update_meeting(job_id, status=final_status, recording=recording_key)
+    update_meeting(job_id, status="processing", recording=recording_key, duration_minutes=duration_minutes)
+    job_queue.enqueue_transcription(job_id, recording_key, num_speakers)
 
+    # Drop this job from _jobs (rather than marking it "done") so a later
+    # GET /jobs/<id> 404s -- the frontend already falls back to polling
+    # GET /meetings/<id> on a 404 (see rapat/[id].jsx's pollMeeting()), which
+    # DOES reflect the transcriber's eventual status update since that comes
+    # from Postgres, not this process's memory. This process has no way to
+    # truthfully report "done" any more; the transcriber is a separate
+    # process that finishes the job later, possibly in another container.
     with _jobs_lock:
-        _jobs[job_id].update(phase="done", result=result)
+        _jobs.pop(job_id, None)
 
 
 def _plan_limits(user_id: str) -> dict:

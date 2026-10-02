@@ -121,6 +121,15 @@ def total_size_bytes() -> int:
     return total
 
 
+def download_to_file(key: str, local_path: str) -> None:
+    """The inverse of upload_recording() -- fetches an object straight to a
+    local path. Used by transcriber_service.py: whisperx needs a real local
+    file to decode audio from, but the recording it's transcribing now lives
+    on a different container/host than the one that recorded it (see
+    "Team" -- er, the recorder/transcriber split in CLAUDE.md)."""
+    _get_client().download_file(_bucket(), key, local_path)
+
+
 def upload_recording(local_path: str, meeting_id: str) -> str:
     """Uploads a finished recording to R2 and deletes the local copy — the
     actual "off local disk" part of this migration. Everything upstream

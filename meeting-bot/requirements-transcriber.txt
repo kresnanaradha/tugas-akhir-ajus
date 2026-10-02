@@ -1,0 +1,15 @@
+# transcriber_service.py's actual dependency set -- no flask, playwright,
+# chromadb or sentence-transformers, none of which the standalone
+# transcriber touches. torch/torchvision/torchaudio installed separately
+# from the CPU wheel index in Dockerfile.transcriber, same as worker-test.
+python-dotenv
+whisperx
+boto3
+# meetings_store.py/db.py (read/write meeting status), job_queue.py (pop
+# jobs), summarize.py (fix_transcript/summarize), auth_store.py (email
+# lookup for mailer -- werkzeug is its only extra import, for password
+# hashing this service never actually calls).
+psycopg2-binary
+redis
+openai
+werkzeug

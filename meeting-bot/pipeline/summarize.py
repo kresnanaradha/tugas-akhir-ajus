@@ -4,7 +4,7 @@ import re
 
 from openai import OpenAI
 
-from . import artifacts, knowledge_base, meetings_store, usage_store
+from . import artifacts, meetings_store, usage_store
 
 _MODEL = "gpt-4o-mini"
 
@@ -215,9 +215,15 @@ def summarize(transcript: str, meeting_id: str) -> dict:
 
     # KB is opt-in: only refresh the index if the user already added this
     # meeting (best-effort, a Chroma hiccup shouldn't fail the summary).
+    # Imported lazily, not at module level -- chromadb/sentence-transformers
+    # are a real dependency weight (see knowledge_base.py) that a caller
+    # which never touches KB-enabled meetings shouldn't have to install at
+    # all (e.g. transcriber_service.py's trimmed image, see CLAUDE.md).
     try:
         meeting = meetings_store.get_meeting(meeting_id)
         if meeting and meeting.get("in_kb"):
+            from . import knowledge_base
+
             knowledge_base.index_meeting(meeting_id, summary)
     except Exception as e:
         print(f"[knowledge_base] failed to re-index meeting {meeting_id}: {e}")

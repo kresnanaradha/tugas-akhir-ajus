@@ -30,6 +30,29 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
 
 WORKDIR /app
 
+# Unset (default): whisperx pulls in torch unpinned, which resolves to a
+# CUDA build (~confirmed 2.8.0+cu128, bundling the full CUDA runtime) even
+# though this box has no GPU (compute_type="int8" on faster-whisper is what
+# actually runs transcription — see CLAUDE.md). Set to 1 (worker-test only,
+# see docker-compose.yml) to install the CPU-only wheel FIRST so whisperx's
+# own install afterward is satisfied by it instead of pulling CUDA — the
+# standard trick for this, since pip won't replace an already-satisfying
+# package. worker-1..10 stay on the default (unset) so nothing about their
+# already-working image changes.
+ARG TORCH_CPU=
+# torchvision AND torchaudio too, not just torch: sentence-transformers/
+# transformers pull in torchvision transitively, pyannote (diarization)
+# pulls in torchaudio -- both are native extensions compiled against one
+# exact torch build, and leaving pip to grab either on its own resolved an
+# ABI-incompatible version each time ("RuntimeError: operator
+# torchvision::nms does not exist", then separately "OSError:
+# libtorch_cuda.so: cannot open shared object file" from torchaudio --
+# both confirmed live, torchaudio only surfacing once diarization actually
+# ran). 0.23.0 / 2.8.0 are torch 2.8.0's matched releases.
+RUN if [ -n "$TORCH_CPU" ]; then \
+      pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu; \
+    fi
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install chromium

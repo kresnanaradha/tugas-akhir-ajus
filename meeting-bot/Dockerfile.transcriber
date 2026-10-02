@@ -1,0 +1,33 @@
+# i04 ("pisahkan transkriber dari bot", see CLAUDE.md) -- runs
+# transcriber_service.py, a standalone worker that pops jobs off Redis (see
+# pipeline/job_queue.py) instead of bundling transcription into the same
+# container as Playwright+Chromium+Xvfb+PulseAudio, which OOM-killed a live
+# test when both shared one container's memory limit.
+FROM python:3.12-slim
+
+# ffmpeg: whisperx's audio loader shells out to it (see CLAUDE.md). Nothing
+# else from the bot image's apt list (xvfb, pulseaudio) applies here --
+# this container never opens a browser or captures audio/video live.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Same pinned CPU-only trio as Dockerfile's TORCH_CPU path (see its
+# comment) -- torchaudio too this time, not just torchvision: pyannote
+# (diarization) pulls it in transitively, and same as torchvision it's a
+# native extension tied to one exact torch build ("OSError: libtorch_cuda.so:
+# cannot open shared object file", confirmed live -- pyannote only hits this
+# path, which worker-test's smoke test didn't exercise, so it slipped
+# through that check). 2.8.0 is torch 2.8.0's matched torchaudio release.
+RUN pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements-transcriber.txt .
+RUN pip install --no-cache-dir -r requirements-transcriber.txt
+
+COPY pipeline/ pipeline/
+COPY transcriber_service.py .
+
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "transcriber_service.py"]

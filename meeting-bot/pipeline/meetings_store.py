@@ -38,6 +38,14 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS in_kb BOOLEAN DEFAULT FALSE;
 -- Per-meeting opt-in to share with the owner's team (see pipeline/team_store.py)
 -- -- sharing is never automatic just because the owner is on a team.
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS shared_with_team BOOLEAN DEFAULT FALSE;
+-- Extra people who may VIEW a meeting they don't own: someone who submitted the
+-- same live link as the owner and was handed that existing meeting instead of a
+-- second bot (app.py's _join, "transcript sharing per link"). View-only.
+CREATE TABLE IF NOT EXISTS meeting_viewers (
+    meeting_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY (meeting_id, user_id)
+);
 """
 register_schema(_TABLE_SQL)
 # recording stays NOT NULL — ALTER TABLE ... DROP NOT NULL turned out to hang
@@ -182,9 +190,31 @@ def update_meeting(meeting_id: str, **fields) -> None:
     with_conn(_do)
 
 
+def add_viewer(meeting_id: str, user_id: str) -> None:
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO meeting_viewers (meeting_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (meeting_id, user_id),
+            )
+        conn.commit()
+
+    with_conn(_do)
+
+
+def is_viewer(meeting_id: str, user_id: str) -> bool:
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM meeting_viewers WHERE meeting_id = %s AND user_id = %s", (meeting_id, user_id))
+            return cur.fetchone() is not None
+
+    return with_conn(_do)
+
+
 def delete_meeting(meeting_id: str) -> None:
     def _do(conn):
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM meeting_viewers WHERE meeting_id = %s", (meeting_id,))
             cur.execute("DELETE FROM meetings WHERE id = %s", (meeting_id,))
         conn.commit()
 
@@ -210,6 +240,7 @@ def list_meetings(user_id: str | None = None) -> list[dict]:
                     """
                     SELECT * FROM meetings
                     WHERE user_id = %s
+                        OR id IN (SELECT meeting_id FROM meeting_viewers WHERE user_id = %s)
                         OR (shared_with_team AND user_id IN (
                             SELECT id FROM users
                             WHERE team_id IS NOT NULL
@@ -217,7 +248,7 @@ def list_meetings(user_id: str | None = None) -> list[dict]:
                         ))
                     ORDER BY created_at DESC
                     """,
-                    (user_id, user_id),
+                    (user_id, user_id, user_id),
                 )
             return [dict(row) for row in cur.fetchall()]
 

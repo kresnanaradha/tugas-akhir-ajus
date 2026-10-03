@@ -170,6 +170,9 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Names this worker's Redis processing list, so it can recover its own
+      # unfinished job after a crash (pipeline/job_queue.py). Must not change.
+      TRANSCRIBER_ID: transcriber-1
       OMP_NUM_THREADS: "2"
     depends_on: [redis]
     restart: unless-stopped
@@ -188,6 +191,9 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Names this worker's Redis processing list, so it can recover its own
+      # unfinished job after a crash (pipeline/job_queue.py). Must not change.
+      TRANSCRIBER_ID: transcriber-2
       OMP_NUM_THREADS: "2"
     depends_on: [redis]
     restart: unless-stopped

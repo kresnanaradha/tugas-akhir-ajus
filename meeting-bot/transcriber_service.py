@@ -15,7 +15,9 @@ No Flask app here -- just a loop. Run directly:
 """
 
 import os
+import socket
 import tempfile
+import time
 
 from dotenv import load_dotenv
 
@@ -27,6 +29,11 @@ from pipeline.summarize import fix_transcript, summarize  # noqa: E402
 from pipeline.transcribe import transcribe  # noqa: E402
 
 LOCAL_FRONTEND_URL = os.getenv("LOCAL_FRONTEND_URL", "http://localhost:8081")
+# Must stay the same across restarts of this container (docker-compose sets it
+# per service) -- it names the Redis list holding this worker's unfinished
+# job, see pipeline/job_queue.py. The hostname fallback only suits a
+# single bare-metal run.
+CONSUMER_ID = os.getenv("TRANSCRIBER_ID", socket.gethostname())
 
 
 def _notify_meeting_ready(meeting_id: str, summary: dict) -> None:
@@ -91,23 +98,45 @@ def _process_job(job: dict) -> None:
 
 
 def main():
-    print("[transcriber] waiting for jobs...")
+    # Whatever this worker was running when it last died (OOM kill, host
+    # reboot, docker kill) is still in its processing list -- retry it, or
+    # give up and mark the meeting failed once it has crashed MAX_ATTEMPTS
+    # times (otherwise a job that always kills the worker would loop forever).
+    requeued, exhausted = job_queue.requeue_unfinished(CONSUMER_ID)
+    for job in requeued:
+        print(f"[transcriber] re-queued unfinished job {job['meeting_id']} (attempt {job['attempts'] + 1})")
+    for job in exhausted:
+        update_meeting(job["meeting_id"], status="failed")
+        print(f"[transcriber] giving up on {job['meeting_id']} after {job['attempts']} crashed attempts")
+
+    print(f"[transcriber] {CONSUMER_ID} waiting for jobs...")
     while True:
         try:
-            job = job_queue.dequeue_transcription(timeout=5)
+            claimed = job_queue.claim(CONSUMER_ID, timeout=5)
         except Exception as e:
-            # A blocking Redis read timing out at the socket level (seen
-            # live: redis.exceptions.TimeoutError) or a transient network
-            # blip must not kill this long-running worker -- log and keep
-            # looping, same as a per-job failure below.
+            # A transient Redis hiccup must never kill a long-running worker.
             print(f"[transcriber] queue read failed, retrying: {e}")
+            time.sleep(2)
             continue
-        if job is None:
+        if claimed is None:
             continue
+        job, raw = claimed
         try:
             _process_job(job)
         except Exception as e:
+            # Not a crash, so a retry would most likely fail the same way
+            # (e.g. the recording is missing from R2): fail the meeting and
+            # move on instead of leaving it "processing" forever.
             print(f"[transcriber] unhandled error on {job.get('meeting_id')}: {e}")
+            try:
+                update_meeting(job["meeting_id"], status="failed")
+            except Exception as inner:
+                print(f"[transcriber] could not mark {job.get('meeting_id')} failed: {inner}")
+        finally:
+            try:
+                job_queue.ack(CONSUMER_ID, raw)
+            except Exception as e:
+                print(f"[transcriber] ack failed for {job.get('meeting_id')}: {e}")
 
 
 if __name__ == "__main__":

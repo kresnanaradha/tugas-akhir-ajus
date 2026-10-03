@@ -23,6 +23,22 @@ def _web_client_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
+# Zoom's bot check and the web client's join form are both flaky (see the
+# Stealth note in _attempt_join); Google Meet already retries up to 3 times.
+_MAX_JOIN_ATTEMPTS = 3
+# Lowercased phrases Zoom's web client shows once the host ends the meeting or
+# removes the bot. Taken from Zoom's own wording, not yet confirmed against a
+# live end-of-meeting screen -- a miss just means the recording runs to its
+# normal time limit like before, so verify and extend this list on first use.
+_ENDED_PHRASES = (
+    "meeting has been ended by host",
+    "host has ended this meeting",
+    "this meeting has ended",
+    "you have been removed from the meeting",
+    "removed by the host",
+)
+
+
 class ZoomBot(MeetBotBase):
     def join(self) -> str:
         with sync_playwright() as p:
@@ -74,103 +90,19 @@ class ZoomBot(MeetBotBase):
                     "--enable-unsafe-swiftshader",
                 ],
             )
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 720},
-                ignore_https_errors=True,
-                permissions=["camera", "microphone"],
-            )
-            # Zoom's web client flags navigator.webdriver etc. and refuses the
-            # join ("Automated bots aren't allowed to join this meeting")
-            # without this. Reference project (puppeteer-extra-plugin-stealth
-            # via playwright-extra) only disables iframe.contentWindow and
-            # media.codecs, leaving chrome.runtime patched — but this Python
-            # port defaults chrome_runtime to OFF, unlike every other evasion
-            # (all default True). That gap is likely why Zoom's bot check
-            # passes some runs and not others.
-            Stealth(iframe_content_window=False, media_codecs=False, chrome_runtime=True).apply_stealth_sync(context)
-            self.page = context.new_page()
-            # Diagnostics: kept around since they're free — if "Target page,
-            # context or browser has been closed" happens again, one of these
-            # should say why.
-            self.page.on("crash", lambda: print("[ZoomBot] page CRASHED"))
-            self.page.on("close", lambda: print("[ZoomBot] page closed"))
-            self.page.on("pageerror", lambda exc: print(f"[ZoomBot] page error: {exc}"))
-            self.page.on("console", lambda msg: print(f"[ZoomBot] console.{msg.type}: {msg.text}"))
-            context.on("close", lambda: print("[ZoomBot] context closed"))
-            browser.on("disconnected", lambda: print("[ZoomBot] browser disconnected"))
-
-            self.page.goto(_web_client_url(self.url), wait_until="domcontentloaded")
-
-            try:
-                accept = self.page.locator("button", has_text="Accept Cookies").first
-                if accept.is_visible(timeout=2500):
-                    accept.click(force=True)
-            except Exception:
-                pass
-
-            try:
-                self.page.wait_for_selector('input[type="text"]', timeout=30000)
-                self.page.fill('input[type="text"]', self.name)
-
-                # meetingbot/meetingbot (MIT) found the mute/video toggles
-                # aren't reliably clickable right after the input field shows
-                # up — a shorter wait made the click miss randomly and the
-                # bot would join with sound/video still on. They wait 6s
-                # before clicking; matching that, plus their ID selectors
-                # (sturdier than text, which Zoom has changed before) with a
-                # text-based fallback.
-                self.page.wait_for_timeout(6000)
-
-                def click_toggle(selector: str, label: str) -> bool:
-                    try:
-                        self.page.locator(selector).click(timeout=3000)
-                        return True
-                    except Exception:
-                        try:
-                            self.page.locator("button", has_text=label).first.click(timeout=3000)
-                            return True
-                        except Exception:
-                            return False
-
-                # The mic/camera's getUserMedia device can take longer to come
-                # up than the button itself — the click lands but the toggle
-                # isn't wired to it yet, so nothing happens. Verify via
-                # aria-label (flips to "Unmute"/"Start Video" once off) and
-                # retry once after a bit more time. Printed instead of
-                # silently swallowed so a join that ends up on camera anyway
-                # shows up in the server log instead of just this docstring.
-                def toggle_off(selector: str, click_label: str, off_label: str, name: str) -> None:
-                    click_toggle(selector, click_label)
-                    try:
-                        label = self.page.locator(selector).get_attribute("aria-label", timeout=2000) or ""
-                        if off_label not in label.lower():
-                            self.page.wait_for_timeout(2000)
-                            click_toggle(selector, click_label)
-                            label = self.page.locator(selector).get_attribute("aria-label", timeout=2000) or ""
-                        if off_label not in label.lower():
-                            print(f"[ZoomBot] could not confirm {name} is off (aria-label: {label!r})")
-                    except Exception as e:
-                        print(f"[ZoomBot] {name} toggle check failed: {e}")
-
-                toggle_off("#preview-audio-control-button", "Mute", "unmute", "mic")
-                toggle_off("#preview-video-control-button", "Stop Video", "start video", "camera")
-
-                self.page.locator("button", has_text="Join").first.click()
-            except Exception:
-                browser.close()
-                raise RuntimeError("Could not find the Zoom web client join form")
-
-            deadline = time.time() + 60
-            admitted = False
-            while time.time() < deadline:
-                body_text = self.page.locator("body").inner_text()
-                if "participants" in body_text.lower():
-                    admitted = True
+            last_error = None
+            for attempt in range(1, _MAX_JOIN_ATTEMPTS + 1):
+                try:
+                    self._attempt_join(browser)
                     break
-                time.sleep(2)
-            if not admitted:
+                except Exception as e:
+                    last_error = e
+                    print(f"[ZoomBot] join attempt {attempt}/{_MAX_JOIN_ATTEMPTS} failed: {e}")
+                    if attempt < _MAX_JOIN_ATTEMPTS:
+                        time.sleep(5)
+            else:
                 browser.close()
-                raise RuntimeError("Not admitted to the Zoom meeting within timeout")
+                raise last_error
 
             # Zoom's web client usually asks how to join audio on entry.
             try:
@@ -198,3 +130,111 @@ class ZoomBot(MeetBotBase):
                     pass
                 browser.close()
             return out_path
+
+    def meeting_state(self) -> str:
+        text = self.page.locator("body").inner_text(timeout=2000).lower()
+        if any(phrase in text for phrase in _ENDED_PHRASES):
+            return "ended"
+        return "active"
+
+    def _attempt_join(self, browser) -> None:
+        """One try at getting into the meeting on a fresh context/page. On
+        failure the context is closed (so a retry starts clean) and a
+        RuntimeError is raised; on success self.page is the joined page."""
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            ignore_https_errors=True,
+            permissions=["camera", "microphone"],
+        )
+        # Zoom's web client flags navigator.webdriver etc. and refuses the
+        # join ("Automated bots aren't allowed to join this meeting")
+        # without this. Reference project (puppeteer-extra-plugin-stealth
+        # via playwright-extra) only disables iframe.contentWindow and
+        # media.codecs, leaving chrome.runtime patched — but this Python
+        # port defaults chrome_runtime to OFF, unlike every other evasion
+        # (all default True). That gap is likely why Zoom's bot check
+        # passes some runs and not others.
+        Stealth(iframe_content_window=False, media_codecs=False, chrome_runtime=True).apply_stealth_sync(context)
+        self.page = context.new_page()
+        # Diagnostics: kept around since they're free — if "Target page,
+        # context or browser has been closed" happens again, one of these
+        # should say why.
+        self.page.on("crash", lambda: print("[ZoomBot] page CRASHED"))
+        self.page.on("close", lambda: print("[ZoomBot] page closed"))
+        self.page.on("pageerror", lambda exc: print(f"[ZoomBot] page error: {exc}"))
+        self.page.on("console", lambda msg: print(f"[ZoomBot] console.{msg.type}: {msg.text}"))
+        context.on("close", lambda: print("[ZoomBot] context closed"))
+        browser.on("disconnected", lambda: print("[ZoomBot] browser disconnected"))
+
+        self.page.goto(_web_client_url(self.url), wait_until="domcontentloaded")
+
+        try:
+            accept = self.page.locator("button", has_text="Accept Cookies").first
+            if accept.is_visible(timeout=2500):
+                accept.click(force=True)
+        except Exception:
+            pass
+
+        try:
+            self.page.wait_for_selector('input[type="text"]', timeout=30000)
+            self.page.fill('input[type="text"]', self.name)
+
+            # meetingbot/meetingbot (MIT) found the mute/video toggles
+            # aren't reliably clickable right after the input field shows
+            # up — a shorter wait made the click miss randomly and the
+            # bot would join with sound/video still on. They wait 6s
+            # before clicking; matching that, plus their ID selectors
+            # (sturdier than text, which Zoom has changed before) with a
+            # text-based fallback.
+            self.page.wait_for_timeout(6000)
+
+            def click_toggle(selector: str, label: str) -> bool:
+                try:
+                    self.page.locator(selector).click(timeout=3000)
+                    return True
+                except Exception:
+                    try:
+                        self.page.locator("button", has_text=label).first.click(timeout=3000)
+                        return True
+                    except Exception:
+                        return False
+
+            # The mic/camera's getUserMedia device can take longer to come
+            # up than the button itself — the click lands but the toggle
+            # isn't wired to it yet, so nothing happens. Verify via
+            # aria-label (flips to "Unmute"/"Start Video" once off) and
+            # retry once after a bit more time. Printed instead of
+            # silently swallowed so a join that ends up on camera anyway
+            # shows up in the server log instead of just this docstring.
+            def toggle_off(selector: str, click_label: str, off_label: str, name: str) -> None:
+                click_toggle(selector, click_label)
+                try:
+                    label = self.page.locator(selector).get_attribute("aria-label", timeout=2000) or ""
+                    if off_label not in label.lower():
+                        self.page.wait_for_timeout(2000)
+                        click_toggle(selector, click_label)
+                        label = self.page.locator(selector).get_attribute("aria-label", timeout=2000) or ""
+                    if off_label not in label.lower():
+                        print(f"[ZoomBot] could not confirm {name} is off (aria-label: {label!r})")
+                except Exception as e:
+                    print(f"[ZoomBot] {name} toggle check failed: {e}")
+
+            toggle_off("#preview-audio-control-button", "Mute", "unmute", "mic")
+            toggle_off("#preview-video-control-button", "Stop Video", "start video", "camera")
+
+            self.page.locator("button", has_text="Join").first.click()
+        except Exception:
+            context.close()
+            raise RuntimeError("Could not find the Zoom web client join form")
+
+        deadline = time.time() + 60
+        admitted = False
+        while time.time() < deadline:
+            body_text = self.page.locator("body").inner_text()
+            if "participants" in body_text.lower():
+                admitted = True
+                break
+            time.sleep(2)
+        if not admitted:
+            context.close()
+            raise RuntimeError("Not admitted to the Zoom meeting within timeout")

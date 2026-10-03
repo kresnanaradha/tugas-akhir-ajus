@@ -27,6 +27,12 @@ _CANT_JOIN_TEXT = "You can't join this video call"
 # screen, never actually joining.
 _WAITING_TEXT = "Please wait until a meeting host brings you into the call"
 _MAX_JOIN_ATTEMPTS = 3
+# Lowercased page text for "the call is over for the bot" and "bot is the only
+# one left". From Meet's wording, not yet confirmed against live screens (see
+# the same note in bots/zoom.py) -- a miss only means the recording runs to its
+# normal time limit.
+_ENDED_PHRASES = ("return to home screen", "you've been removed", "you left the meeting", "call has ended", "meeting has ended")
+_ALONE_PHRASE = "you're the only one here"
 _ADMIT_WAIT_SECONDS = 60
 
 
@@ -105,6 +111,14 @@ class GoogleMeetBot(MeetBotBase):
             finally:
                 browser.close()
             return out_path
+
+    def meeting_state(self) -> str:
+        text = self.page.locator("body").inner_text(timeout=2000).lower()
+        if any(phrase in text for phrase in _ENDED_PHRASES):
+            return "ended"
+        if _ALONE_PHRASE in text:
+            return "alone"
+        return "active"
 
     def _attempt_join(self) -> bool:
         self.page.goto(self.url, wait_until="domcontentloaded")

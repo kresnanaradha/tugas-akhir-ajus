@@ -26,10 +26,12 @@ from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
 from pipeline import admin_stats, artifacts, auth_store, billing_store, job_queue, knowledge_base, mailer, report_pdf, report_stats, storage, team_store
 from pipeline.meetings_store import (
+    add_viewer,
     count_own_this_month,
     delete_meeting,
     find_meeting_by_url,
     get_meeting,
+    is_viewer,
     list_meetings,
     start_meeting,
     update_meeting,
@@ -103,6 +105,30 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def _can_view_meeting(record: dict) -> bool:
+    """Owner, super admin, someone handed this meeting through the same-link
+    sharing (meeting_viewers), or a teammate of the owner when the owner
+    toggled "Bagikan ke Team". Rows from before login existed have no owner,
+    so only a super admin sees those."""
+    uid = session["user_id"]
+    if session.get("role") == "super_admin" or record.get("user_id") == uid:
+        return True
+    if is_viewer(record["id"], uid):
+        return True
+    if record.get("shared_with_team") and record.get("user_id"):
+        owner, me = auth_store.get_user(record["user_id"]), auth_store.get_user(uid)
+        return bool(owner and me and owner["team_id"] and owner["team_id"] == me["team_id"])
+    return False
+
+
+def _can_edit_meeting(record: dict) -> bool:
+    return session.get("role") == "super_admin" or record.get("user_id") == session["user_id"]
+
+
+_NOT_FOUND = ({"error": "Meeting not found"}, 404)
+_NOT_OWNER = ({"error": "Hanya pemilik rapat yang bisa mengubahnya"}, 403)
 
 
 def super_admin_required(view):
@@ -419,6 +445,8 @@ def _join(bot_cls, platform: str, title: str):
     # needed on that end.
     existing = find_meeting_by_url(url)
     if existing:
+        if existing.get("user_id") != session["user_id"]:
+            add_viewer(existing["id"], session["user_id"])
         return jsonify({"job_id": existing["id"], "shared": True})
 
     quota_error = _check_meeting_quota(session["user_id"])
@@ -465,6 +493,9 @@ def _join(bot_cls, platform: str, title: str):
 @app.get("/jobs/<job_id>")
 @login_required
 def job_status(job_id):
+    record = get_meeting(job_id)
+    if record is not None and not _can_view_meeting(record):
+        return jsonify({"error": "Job not found"}), 404
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None:
@@ -491,6 +522,9 @@ def job_stop(job_id):
     """Ends the recording early (still runs the full transcribe/summarize
     pipeline afterward on whatever got recorded) — sets the same stop_event
     record()'s wait loop already checks every second."""
+    record = get_meeting(job_id)
+    if record is not None and not _can_edit_meeting(record):
+        return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None or job["phase"] != "starting":
@@ -569,6 +603,8 @@ def meeting_detail(meeting_id):
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
+    if not _can_view_meeting(record):
+        return jsonify(_NOT_FOUND[0]), _NOT_FOUND[1]
 
     recording_key = record["recording"]
     # No recording yet for a still-in-progress meeting (start_meeting()
@@ -610,6 +646,8 @@ def update_transcript(meeting_id):
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
+    if not _can_edit_meeting(record):
+        return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
     if not record["recording"]:
         return jsonify({"error": "Recording not available yet"}), 404
 
@@ -659,6 +697,8 @@ def meeting_knowledge_base(meeting_id):
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
+    if not _can_edit_meeting(record):
+        return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
     enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
     if enabled:
         # Opting IN needs Pro/Team; opting a meeting back OUT is always
@@ -686,6 +726,8 @@ def toggle_action_item(meeting_id, index):
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
+    if not _can_edit_meeting(record):
+        return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
     if not record["recording"]:
         return jsonify({"error": "Recording not available yet"}), 404
 
@@ -719,6 +761,8 @@ def replace_action_items(meeting_id):
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
+    if not _can_edit_meeting(record):
+        return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
     raw = (request.get_json(silent=True) or {}).get("items")
     if not isinstance(raw, list):
         return jsonify({"error": "items must be a list"}), 400
@@ -786,6 +830,8 @@ def meeting_recording(meeting_id):
     record = get_meeting(meeting_id)
     if record is None:
         return jsonify({"error": "Meeting not found"}), 404
+    if not _can_view_meeting(record):
+        return jsonify(_NOT_FOUND[0]), _NOT_FOUND[1]
     if not record["recording"]:
         return jsonify({"error": "Recording not available yet"}), 404
     if storage.head(record["recording"]) is None:
@@ -976,7 +1022,7 @@ def perbandingan_export():
         return jsonify({"error": "Parameter a dan b (id rapat) wajib diisi"}), 400
 
     meeting_a, meeting_b = get_meeting(a_id), get_meeting(b_id)
-    if meeting_a is None or meeting_b is None:
+    if meeting_a is None or meeting_b is None or not (_can_view_meeting(meeting_a) and _can_view_meeting(meeting_b)):
         return jsonify({"error": "Salah satu rapat tidak ditemukan"}), 404
     for m in (meeting_a, meeting_b):
         m["summary"] = artifacts.load_summary(m["id"]) if m["recording"] else None

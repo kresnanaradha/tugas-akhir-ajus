@@ -104,9 +104,10 @@ is now split into two kinds of container connected by a Redis queue:
   `redis` service) — defense in depth against a future port-mapping mistake,
   especially once this runs on a real VPS.
 
-**Meetings** — `GET /meetings` (this user's own, plus any pre-auth row with
-`user_id IS NULL`, plus any teammate's meeting explicitly opted into team
-sharing — see "Team" below), `GET /meetings/<id>` (full detail: transcript, summary,
+**Meetings** — `GET /meetings` (this user's own, plus meetings handed to them
+through same-link sharing, plus any teammate's meeting explicitly opted into
+team sharing — see "Team" below; pre-auth rows with `user_id IS NULL` are
+visible to nobody but a super admin), `GET /meetings/<id>` (full detail: transcript, summary,
 segments, all read back from R2 — the DB row only stores the R2 key), `GET
 /meetings/<id>/recording` (302 to a presigned R2 URL, so the browser
 streams straight from R2 — Range requests still work for `<video>`
@@ -116,10 +117,18 @@ re-runs `summarize()`. `DELETE /meetings/<id>` — owner or `super_admin`
 only (a pre-auth row with no owner needs `super_admin`), refused while
 still recording/processing (`409`); deletes the R2 folder, the Knowledge
 Base chunks, then the DB row, in that order so a failure never leaves an
-orphaned reference. `GET /meetings/<id>` itself has **no** per-meeting
-ownership check (any logged-in user can open any meeting by id) —
-deliberate, so a shared meeting link still works; only *delete* is
-owner-gated.
+orphaned reference.
+
+**Meeting access** (`_can_view_meeting` / `_can_edit_meeting` in `app.py`) —
+*view* (detail, recording, `GET /jobs/<id>`, comparison PDF): owner, super
+admin, a user in `meeting_viewers` (see below), or a teammate of the owner when
+the owner turned on "Bagikan ke Team"; anyone else gets a `404` (not `403`,
+so ids can't be probed). *Edit* (transcript, action items, KB toggle, stop
+recording, delete, share-team): owner or super admin only — teammates and
+link viewers are read-only. `meeting_viewers` is filled by `_join()` when a
+second user submits a link that already has a live/recent meeting
+(`find_meeting_by_url`): that user is handed the existing meeting instead of
+a second bot, and may then view it.
 
 **Speaker naming** — the transcript editor (`rapat/[id].jsx`) lets you
 rename a diarization label (`SPEAKER_00`) to a real name, move a
@@ -400,21 +409,18 @@ spending hours re-debugging it.
 
 ## Known gaps
 
-- **`GET /meetings/<id>` has no per-meeting ownership/team check** (see
-  "Meetings" above — deliberate so a shared link works), but this predates
-  and is now slightly inconsistent with the Team feature's opt-in model:
-  a non-teammate who knows/guesses a meeting id can still open its full
-  detail even without `shared_with_team`. Only `GET /meetings` (the list)
-  and the `share-team`/delete actions are actually access-controlled today.
-  Worth tightening if this ever goes beyond a thesis demo.
 - **`worker-2` through `worker-10` aren't actually usable yet** — the
   compose services exist, but each needs its own Google account logged in
   once via `bots/google_login.py`, and nothing routes a join to a free
   worker automatically (see "Docker multi-worker" above).
-- **No automatic inactivity detection.** A human can cut a recording short
-  via "Stop Rekam", but nothing detects on its own that everyone already
-  left a meeting — it runs the full `MAX_RECORDING_DURATION_MINUTES`
-  otherwise.
+- **Early-stop detection is untested against real screens.** `record()` now
+  polls each bot's `meeting_state()` every 3s and stops on "ended" (twice in
+  a row) or after `EMPTY_MEETING_MINUTES` (default 10, 0 = off) alone, but
+  the Zoom/Meet phrases it looks for (`_ENDED_PHRASES` in `bots/zoom.py`/
+  `bots/google_meet.py`) come from the platforms' wording, not a captured
+  end-of-meeting screen. The loop logic itself is tested with a fake page;
+  a miss only means the recording runs to its normal time limit. Confirm on
+  the first real meeting that the host ends.
 - **`_jobs` is in-memory, per-process** — lost on restart, not shared
   across the 10 worker processes. Only tracks the live join/record phase
   now (see "Recorder/transcriber split"); it was never meant to survive a
@@ -427,10 +433,15 @@ spending hours re-debugging it.
   button, no OOM risk from Chrome+whisper sharing a container since
   uploads never launch Chrome at all), so it was left alone rather than
   queued for its own sake.
-- **Job queue has no dead-letter/retry handling** (`pipeline/job_queue.py`)
-  — a transcriber that crashes mid-job silently drops it; the meeting stays
-  `"processing"` forever. Fine at this job volume, would need an ack/requeue
-  scheme (e.g. `BRPOPLPUSH` into a processing list) to survive that.
+- **Job queue only retries crashes, not failures.** `pipeline/job_queue.py`
+  moves a claimed job into a per-transcriber processing list (`BLMOVE`) and
+  `ack()`s it when done; a transcriber that dies mid-job (OOM kill, `docker
+  kill`) re-queues its own unfinished job on next start, up to 3 attempts,
+  then dead-letters it and marks the meeting failed (verified live by killing
+  `transcriber-2` mid-job — `transcriber-1` finished it). A job that fails
+  *without* crashing (recording missing, transcription error) is marked
+  failed once, not retried. Nothing reads the dead-letter list yet
+  (`notulis:transcription_dead`).
 
 ## To resume on another machine
 

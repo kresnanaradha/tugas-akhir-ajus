@@ -74,6 +74,12 @@ _STOP_JS = """
 """
 
 
+_STATE_CHECK_EVERY_S = 3
+# Stop after this long as the only participant (EMPTY_MEETING_MINUTES in .env;
+# 0 turns the alone check off). Ended-meeting detection is separate and always on.
+_ALONE_STOP_S = float(os.getenv("EMPTY_MEETING_MINUTES", "10")) * 60 or float("inf")
+
+
 class MeetBotBase:
     """Base bot. join-flow patterns adapted from screenappai/meeting-bot (MIT)."""
 
@@ -116,6 +122,20 @@ class MeetBotBase:
     def join(self) -> str:
         raise NotImplementedError
 
+    def meeting_state(self) -> str:
+        """"active", "ended" (host ended it / bot was removed) or "alone" (the
+        bot is the only participant left). Subclasses read the platform's own
+        page text; the default never ends a recording early, same as before
+        this hook existed."""
+        return "active"
+
+    def _safe_meeting_state(self) -> str:
+        # A flaky page read must never end (or crash) a recording by itself.
+        try:
+            return self.meeting_state()
+        except Exception:
+            return "active"
+
     def record(self) -> str:
         out_dir = Path(os.getenv("RECORDINGS_DIR", "recordings")) / "videos"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -145,8 +165,29 @@ class MeetBotBase:
             # request (app.py's POST /jobs/<id>/stop, setting stop_event from
             # a different thread) actually cuts the recording short instead
             # of only taking effect after the full max duration anyway.
+            last_check = 0.0
+            ended_hits = 0
+            alone_since = None
             while time.time() < deadline and not self.stop_event.is_set():
                 time.sleep(1)
+                now = time.time()
+                if now - last_check < _STATE_CHECK_EVERY_S:
+                    continue
+                last_check = now
+                state = self._safe_meeting_state()
+                # "ended" must show up twice in a row before it counts, so one
+                # transient screen (a reconnect banner) can't cut a recording.
+                ended_hits = ended_hits + 1 if state == "ended" else 0
+                if ended_hits >= 2:
+                    print("[record] meeting ended, stopping early")
+                    break
+                # Alone only counts after a long stretch: the bot normally
+                # joins before the people do, so "alone" is the expected
+                # state at the start of most meetings.
+                alone_since = (alone_since or now) if state == "alone" else None
+                if alone_since and now - alone_since >= _ALONE_STOP_S:
+                    print(f"[record] alone in the meeting for {int(now - alone_since)}s, stopping early")
+                    break
 
             self.record_ended_at = time.time()
             self._set_status("stopping")

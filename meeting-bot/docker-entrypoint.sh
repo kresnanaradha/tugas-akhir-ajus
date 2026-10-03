@@ -7,13 +7,34 @@
 # plainer, more debuggable way to know the display is actually ready.
 set -e
 
+# A restart of the SAME container (restart: unless-stopped after a crash/OOM,
+# `docker restart`) reuses its filesystem, so the previous run's X lock and
+# socket are still in /tmp -- Xvfb then refuses to start ("Server is already
+# active for display 99", confirmed live) while the entrypoint's socket wait
+# below passes on the stale socket file, so Flask came up looking healthy
+# but every browser launch failed with "Missing X server or $DISPLAY".
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+# Same story for PulseAudio's system-mode state: its pid file survives the
+# restart, and the old PID can be reused by an unrelated live process in the
+# fresh PID namespace, so `pulseaudio -D` below fails with "Daemon startup
+# failed" and `set -e` turns that into a restart loop (confirmed live).
+rm -f /var/run/pulse/pid /var/run/pulse/native
+rm -rf /tmp/pulse-*
+
 Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
+XVFB_PID=$!
 export DISPLAY=:99
 
 for i in $(seq 1 30); do
   [ -e /tmp/.X11-unix/X99 ] && break
   sleep 0.5
 done
+# Fail loudly here (container restarts, logs show why) instead of serving a
+# Flask app whose bots can never open a browser.
+if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+  echo "Xvfb exited during startup" >&2
+  exit 1
+fi
 
 # The container has no real audio hardware (no /dev/snd) at all, but Chrome
 # still needs a working PulseAudio server to route through for the "audio"

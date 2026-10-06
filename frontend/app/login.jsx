@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
-import { login, register } from "@/lib/api";
+import { forgotPassword, login, register } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
 const PITCH_POINTS = [
@@ -25,6 +25,8 @@ export default function LoginScreen() {
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [forgot, setForgot] = useState(false);
+  const [sent, setSent] = useState(false);
 
   async function handleSubmit() {
     setError("");
@@ -46,6 +48,29 @@ export default function LoginScreen() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function handleForgot() {
+    setError("");
+    if (!email.trim()) {
+      setError("Email wajib diisi.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await forgotPassword(email.trim());
+      setSent(true);
+    } catch (e) {
+      setError(e.message || "Terjadi kesalahan");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function backToLogin() {
+    setForgot(false);
+    setSent(false);
+    setError("");
   }
 
   return (
@@ -89,6 +114,38 @@ export default function LoginScreen() {
       )}
 
       <View style={styles.formSide}>
+        {forgot ? (
+          <View style={styles.formCard}>
+            <Text style={styles.formTitle}>Lupa password?</Text>
+            <Text style={styles.formSubtitle}>
+              {sent
+                ? "Jika email terdaftar, tautan untuk mengatur ulang password sudah dikirim. Cek kotak masuk Anda (berlaku 1 jam)."
+                : "Masukkan email akun Anda, kami kirim tautan untuk mengatur ulang password."}
+            </Text>
+            {!sent && (
+              <>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>EMAIL</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="admin@ptmajubersama.co.id"
+                    placeholderTextColor={colors.inkFaint}
+                    autoCapitalize="none"
+                    value={email}
+                    onChangeText={setEmail}
+                  />
+                </View>
+                {!!error && <Text style={styles.errorText}>{error}</Text>}
+                <Pressable style={[styles.submit, submitting && styles.submitDisabled]} onPress={handleForgot} disabled={submitting}>
+                  {submitting ? <ActivityIndicator color={colors.ink} size="small" /> : <Text style={styles.submitLabel}>Kirim Tautan Reset</Text>}
+                </Pressable>
+              </>
+            )}
+            <Pressable onPress={backToLogin} style={{ marginTop: spacing.lg, alignItems: "center" }}>
+              <Text style={styles.forgotLink}>Kembali ke Masuk</Text>
+            </Pressable>
+          </View>
+        ) : (
         <View style={styles.formCard}>
           <View style={styles.tabRow}>
             <Pressable style={[styles.tabButton, tab === "masuk" && styles.tabButtonActive]} onPress={() => setTab("masuk")}>
@@ -133,7 +190,7 @@ export default function LoginScreen() {
             <View style={styles.fieldLabelRow}>
               <Text style={styles.fieldLabel}>PASSWORD</Text>
               {tab === "masuk" && (
-                <Pressable>
+                <Pressable onPress={() => setForgot(true)}>
                   <Text style={styles.forgotLink}>Lupa password?</Text>
                 </Pressable>
               )}
@@ -158,6 +215,7 @@ export default function LoginScreen() {
             )}
           </Pressable>
         </View>
+        )}
       </View>
     </View>
   );

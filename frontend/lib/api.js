@@ -40,6 +40,24 @@ export async function login(email, password) {
   return handleResponse(res);
 }
 
+export async function forgotPassword(email) {
+  const res = await apiFetch("/auth/forgot", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  return handleResponse(res);
+}
+
+export async function resetPassword(token, password) {
+  const res = await apiFetch("/auth/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password }),
+  });
+  return handleResponse(res);
+}
+
 export async function logout() {
   const res = await apiFetch("/auth/logout", { method: "POST" });
   return handleResponse(res);
@@ -207,6 +225,11 @@ export async function getBillingStatus() {
 // changes once the user finishes linking a payment method on that page and
 // Xendit's webhook confirms it (see POST /billing/webhook in app.py) — this
 // call alone doesn't upgrade anything.
+export async function cancelPendingCheckout() {
+  const res = await apiFetch("/billing/checkout/cancel", { method: "POST" });
+  return handleResponse(res);
+}
+
 export async function startCheckout(plan) {
   const res = await apiFetch("/billing/checkout", {
     method: "POST",

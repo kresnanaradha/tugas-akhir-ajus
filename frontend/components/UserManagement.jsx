@@ -9,6 +9,8 @@ import { createUser, listUsers, resetUserPassword, updateUser } from "@/lib/api"
 // (instead of deleting, since meetings point at the user's id) and reset a
 // password. The backend enforces all of it (super_admin only, and no
 // self-lockout); this just drives it.
+const PLAN_LABEL = { free: "Free", pro: "Pro", team: "Team" };
+
 export function UserManagement({ currentUserId }) {
   const [users, setUsers] = useState(null);
   const [error, setError] = useState("");
@@ -119,6 +121,9 @@ export function UserManagement({ currentUserId }) {
                 <View style={[styles.badge, u.role === "super_admin" && styles.badgeAdmin]}>
                   <Text style={styles.badgeLabel}>{u.role === "super_admin" ? "Super Admin" : "User"}</Text>
                 </View>
+                <View style={[styles.badge, u.plan !== "free" && styles.badgePaid]}>
+                  <Text style={styles.badgeLabel}>{PLAN_LABEL[u.plan] || "Free"}</Text>
+                </View>
                 {!u.active && (
                   <View style={[styles.badge, styles.badgeOff]}>
                     <Text style={[styles.badgeLabel, { color: colors.danger }]}>Nonaktif</Text>
@@ -132,12 +137,11 @@ export function UserManagement({ currentUserId }) {
 
             {!isSelf && (
               <View style={styles.actions}>
-                <Pressable
-                  disabled={busy}
-                  onPress={() => change(u.id, { role: u.role === "user" ? "super_admin" : "user" })}
-                >
-                  <Text style={styles.link}>{u.role === "user" ? "Jadikan Admin" : "Jadikan User"}</Text>
-                </Pressable>
+                {u.role === "user" && (
+                  <Pressable disabled={busy} onPress={() => change(u.id, { role: "super_admin" })}>
+                    <Text style={styles.link}>Jadikan Admin</Text>
+                  </Pressable>
+                )}
                 <Pressable
                   disabled={busy}
                   onPress={() => {
@@ -253,6 +257,7 @@ const styles = StyleSheet.create({
   meta: { ...type.small, color: colors.inkFaint },
   badge: { borderRadius: radius.pill, paddingVertical: 1, paddingHorizontal: 8, backgroundColor: colors.bg },
   badgeAdmin: { backgroundColor: colors.goldSoft },
+  badgePaid: { backgroundColor: colors.successSoft || colors.goldSoft },
   badgeOff: { backgroundColor: "#FBE9E7" },
   badgeLabel: { ...type.small, fontWeight: "700", color: colors.inkSoft },
   actions: { flexDirection: "row", gap: spacing.lg },

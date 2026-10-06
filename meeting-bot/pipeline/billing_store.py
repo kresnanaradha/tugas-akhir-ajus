@@ -32,9 +32,9 @@ DEFAULT_ACCOUNT_ID = "default"
 # _check_meeting_quota()/_join(); a plan not in this dict (shouldn't happen)
 # falls back to Free's limits, the safe default.
 PLAN_LIMITS = {
-    "free": {"meetings_per_month": 5, "max_duration_minutes": 60},
-    "pro": {"meetings_per_month": None, "max_duration_minutes": None},
-    "team": {"meetings_per_month": None, "max_duration_minutes": None},
+    "free": {"meetings_per_month": 5, "max_duration_minutes": None, "minutes_per_week": 60},
+    "pro": {"meetings_per_month": None, "max_duration_minutes": None, "minutes_per_week": None},
+    "team": {"meetings_per_month": None, "max_duration_minutes": None, "minutes_per_week": None},
 }
 
 # In IDR — matches the pricing shown on the frontend's Pengaturan page. Free
@@ -65,6 +65,18 @@ def count_active_by_plan() -> dict:
     return {row["plan"]: row["n"] for row in rows}
 
 
+def _apply_effective_state(row: dict) -> None:
+    """What the plan really is right now: a scheduled cancellation takes effect
+    once the paid period is over (computed on read, no cron job), and an unpaid
+    checkout ('pending') gets no paid entitlements yet."""
+    period_end = row.get("current_period_end")
+    if row["cancel_at_period_end"] and period_end and period_end < datetime.now():
+        row["plan"] = "free"
+        row["status"] = "canceled"
+    if row["status"] == "pending":
+        row["plan"] = "free"
+
+
 def get_subscription(account_id: str = DEFAULT_ACCOUNT_ID) -> dict:
     def _do(conn):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -76,20 +88,26 @@ def get_subscription(account_id: str = DEFAULT_ACCOUNT_ID) -> dict:
     if row is None:
         # No row yet = never subscribed to anything paid — Free, not an error.
         return {"id": account_id, "plan": "free", "status": "active", "current_period_end": None, "cancel_at_period_end": False}
-    # A scheduled cancellation only actually takes effect once the paid
-    # period is over — computed here on read rather than needing a cron job
-    # to flip it at the right moment. Billing itself already stopped the
-    # moment cancel_at_period_end was set (see cancel_subscription): Xendit's
-    # recurring plan was deactivated right away, so no further charge was
-    # ever going to land — this is just the local record catching up once
-    # that already-paid-for period genuinely runs out.
+    _apply_effective_state(row)
     period_end = row.get("current_period_end")
-    if row["cancel_at_period_end"] and period_end and period_end < datetime.now():
-        row["plan"] = "free"
-        row["status"] = "canceled"
     if period_end:
         row["current_period_end"] = period_end.strftime("%Y-%m-%dT%H:%M:%S")
     return row
+
+
+def plans_by_user() -> dict[str, str]:
+    """{user_id: effective plan} for every user with a subscription row, in one
+    query -- users without a row are Free."""
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT id, plan, status, cancel_at_period_end, current_period_end FROM subscriptions")
+            return [dict(r) for r in cur.fetchall()]
+
+    rows = with_conn(_do)
+    for r in rows:
+        _apply_effective_state(r)
+    return {r["id"]: r["plan"] for r in rows}
 
 
 def start_checkout(plan: str, session_id: str, account_id: str = DEFAULT_ACCOUNT_ID) -> None:
@@ -109,6 +127,17 @@ def start_checkout(plan: str, session_id: str, account_id: str = DEFAULT_ACCOUNT
                 """,
                 (account_id, plan, session_id, datetime.now()),
             )
+        conn.commit()
+
+    with_conn(_do)
+
+
+def clear_pending(account_id: str) -> None:
+    """Drops an unpaid checkout (status 'pending') -- back to plain Free."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM subscriptions WHERE id = %s AND status = 'pending'", (account_id,))
         conn.commit()
 
     with_conn(_do)

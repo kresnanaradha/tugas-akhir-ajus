@@ -72,7 +72,7 @@ function MeetingPreview({ meeting }) {
         {state.status === "error" && <Text style={styles.stateText}>Gagal memuat ringkasan.</Text>}
         {state.status === "idle" && (
           <Text style={styles.stateText}>
-            {meeting.status === "failed" ? "Rapat ini gagal diproses." : "Rapat masih berjalan, ringkasan belum tersedia."}
+            {IDLE_MESSAGE[meeting.status] || "Ringkasan belum tersedia."}
           </Text>
         )}
         {state.status === "done" && !summary && <Text style={styles.stateText}>Belum ada ringkasan untuk rapat ini.</Text>}
@@ -128,6 +128,14 @@ function MeetingPreview({ meeting }) {
     </View>
   );
 }
+
+const IDLE_MESSAGE = {
+  joining: "Bot sedang bergabung ke rapat. Ringkasan akan tersedia setelah rapat selesai.",
+  recording: "Rapat sedang direkam. Ringkasan akan tersedia setelah rapat selesai.",
+  stopping: "Rekaman sedang diselesaikan. Ringkasan akan tersedia setelah diproses.",
+  processing: "Transkrip dan ringkasan sedang diproses. Ini bisa memakan waktu, terutama untuk rapat yang panjang.",
+  failed: "Rapat ini gagal diproses.",
+};
 
 export default function RapatScreen() {
   const { q } = useLocalSearchParams();

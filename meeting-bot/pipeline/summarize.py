@@ -110,18 +110,54 @@ def _log_usage(meeting_id: str | None, call_type: str, response) -> None:
         print(f"[usage_store] failed to log usage for {meeting_id} ({call_type}): {e}")
 
 
-def fix_transcript(transcript: str, meeting_id: str) -> str:
-    client = OpenAI()
+# gpt-4o-mini can return at most ~16k tokens, and fix_transcript has to hand
+# back the WHOLE text it was given. A 1-2 hour meeting is 12k-30k tokens of
+# Indonesian, so one call silently cut the second half off (and summarize()
+# then summarized the truncated version). Work in blocks of whole lines that
+# stay far below that limit instead.
+_FIX_CHUNK_WORDS = 2000
+
+
+def _split_for_fix(transcript: str, max_words: int = _FIX_CHUNK_WORDS) -> list[str]:
+    chunks, current, count = [], [], 0
+    for line in transcript.split("\n"):
+        words = len(line.split())
+        if current and count + words > max_words:
+            chunks.append("\n".join(current))
+            current, count = [], 0
+        current.append(line)
+        count += words
+    chunks.append("\n".join(current))
+    return chunks
+
+
+def _fix_chunk(client: OpenAI, text: str, meeting_id: str, part: int, parts: int) -> str:
+    system = _FIX_SYSTEM_PROMPT + _FIX_NAMES_PROMPT.format(terms=_known_terms())
+    if parts > 1:
+        # The "collapse a repeated ending" rule is about the end of the whole
+        # meeting; without this every block would be treated as the ending.
+        system += f" This text is part {part} of {parts} of one longer transcript."
+        if part < parts:
+            system += " It is NOT the end of the meeting: do not remove or collapse anything at its end."
     response = client.chat.completions.create(
         model=_MODEL,
         temperature=0.2,
-        messages=[
-            {"role": "system", "content": _FIX_SYSTEM_PROMPT + _FIX_NAMES_PROMPT.format(terms=_known_terms())},
-            {"role": "user", "content": transcript},
-        ],
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": text}],
     )
     _log_usage(meeting_id, "fix_transcript", response)
-    fixed = response.choices[0].message.content
+    choice = response.choices[0]
+    # A cut-off or empty answer must never replace the original text: keep the
+    # raw block instead of losing the rest of it.
+    if choice.finish_reason == "length" or not (choice.message.content or "").strip():
+        print(f"[fix_transcript] part {part}/{parts} of {meeting_id} unusable (finish_reason={choice.finish_reason}), keeping the raw text")
+        return text
+    return choice.message.content
+
+
+def fix_transcript(transcript: str, meeting_id: str) -> str:
+    client = OpenAI()
+    chunks = _split_for_fix(transcript)
+    fixed = "\n".join(_fix_chunk(client, c, meeting_id, i, len(chunks)) for i, c in enumerate(chunks, start=1))
 
     artifacts.save_fixed_transcript(meeting_id, fixed)
 

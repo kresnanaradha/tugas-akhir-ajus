@@ -153,6 +153,28 @@ def update_user(
     return get_user(user_id)
 
 
+def get_row_by_email(email: str) -> dict | None:
+    """Raw row (includes password_hash) -- internal use only, e.g. password-reset tokens."""
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE email = %s", (email.strip().lower(),))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    return with_conn(_do)
+
+
+def get_row(user_id: str) -> dict | None:
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    return with_conn(_do)
+
+
 def set_password(user_id: str, password: str) -> None:
     def _do(conn):
         with conn.cursor() as cur:

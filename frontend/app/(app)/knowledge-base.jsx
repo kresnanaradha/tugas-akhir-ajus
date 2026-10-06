@@ -1,10 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Link, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { listMeetings, searchKnowledgeBase, setKnowledgeBase } from "@/lib/api";
+import { getBillingStatus, listMeetings, searchKnowledgeBase, setKnowledgeBase } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 
 // Search-only, deliberately no chat/conversation UI — the advisor's explicit
@@ -98,6 +98,10 @@ function KbMeetingRow({ meeting, onRemove }) {
 
 export default function KnowledgeBaseScreen() {
   const [kbMeetings, setKbMeetings] = useState(null); // null = loading
+  const [plan, setPlan] = useState(null); // null = loading; Free has no Knowledge Base (backend 402s too)
+  useEffect(() => {
+    getBillingStatus().then((s) => setPlan(s.plan)).catch(() => setPlan("unknown"));
+  }, []);
 
   // Refetch on every focus so a meeting added from its own page shows up here.
   useFocusEffect(
@@ -149,6 +153,28 @@ export default function KnowledgeBaseScreen() {
   }
 
   const showHero = status === "idle";
+
+  if (plan === null) {
+    return <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.gold} />;
+  }
+  if (plan === "free") {
+    return (
+      <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+        <View style={[styles.content, { maxWidth: 560, alignItems: "center", paddingVertical: spacing.xxl }]}>
+          <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.goldSoft || colors.surface, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="lock" size={24} color={colors.goldDeep} />
+          </View>
+          <Text style={[styles.title, { textAlign: "center" }]}>Knowledge Base adalah fitur Pro</Text>
+          <Text style={[styles.heroSubtitle, { textAlign: "center" }]}>
+            Cari keputusan, topik, dan action item dari semua rapat lama dengan bahasa biasa, lengkap dengan sumber rapatnya. Upgrade ke Pro (Rp99rb / bulan) untuk membukanya, plus rapat dan durasi rekaman tanpa batas.
+          </Text>
+          <Pressable style={styles.searchButton} onPress={() => router.push("/pengaturan")}>
+            <Text style={styles.searchButtonLabel}>Upgrade ke Pro</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  }
 
   const kbCard = (
             <View style={styles.sideCard}>

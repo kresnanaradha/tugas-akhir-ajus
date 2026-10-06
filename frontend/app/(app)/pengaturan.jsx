@@ -5,6 +5,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Te
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import {
+  cancelPendingCheckout,
   cancelSubscription,
   changePassword,
   deactivateAccount,
@@ -19,7 +20,7 @@ import { initialsOf } from "@/lib/format";
 // Illustrative pricing/quotas — not backed by a real business decision, just
 // what the checkout call actually charges (PLAN_PRICES in app.py) so the
 // numbers shown here and what Xendit charges don't drift apart. Limits
-// (meetings/month, minutes/meeting) mirror billing_store.PLAN_LIMITS, the
+// (meetings/month, recording minutes/week) mirror billing_store.PLAN_LIMITS, the
 // actual enforced source of truth — keep the two in sync if either changes.
 const PLANS = [
   {
@@ -31,7 +32,7 @@ const PLANS = [
     tagline: "Untuk eksplorasi sendiri.",
     features: [
       "Maks. 5 rapat / bulan",
-      "Maks. 60 menit / rapat",
+      "60 menit rekaman / minggu",
       "Transkripsi & ringkasan AI otomatis",
       "1 pengguna",
     ],
@@ -372,6 +373,28 @@ function ProfileCard() {
   );
 }
 
+function WeeklyQuota({ quota }) {
+  const left = Math.round(quota.remaining);
+  const percent = Math.min(100, (quota.used / quota.limit) * 100);
+  const exhausted = quota.remaining < 0.5;
+  const resetLabel = new Intl.DateTimeFormat("id-ID", { weekday: "long", hour: "2-digit", minute: "2-digit" }).format(
+    new Date(quota.resets_at)
+  );
+  return (
+    <View style={[styles.noticeBox, exhausted && styles.noticeBoxWarning, { flexDirection: "column", alignItems: "stretch", gap: spacing.sm }]}>
+      <Text style={styles.noticeText}>
+        <Text style={{ fontWeight: "700" }}>
+          {exhausted ? "Kuota rekaman minggu ini habis." : `Sisa kuota rekaman minggu ini: ${left} dari ${quota.limit} menit.`}
+        </Text>{" "}
+        Diperbarui {resetLabel.replace(".", ":")} WITA.
+      </Text>
+      <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: "hidden" }}>
+        <View style={{ width: `${percent}%`, height: 6, backgroundColor: exhausted ? colors.danger : colors.gold }} />
+      </View>
+    </View>
+  );
+}
+
 export default function PengaturanScreen() {
   const { checkout } = useLocalSearchParams();
   const [subscription, setSubscription] = useState(null);
@@ -386,8 +409,19 @@ export default function PengaturanScreen() {
       .catch((e) => setLoadError(e.message || "Gagal memuat status langganan"));
   }
 
+  // Back from Xendit without paying (?checkout=cancel), or a pending checkout
+  // left over from earlier: drop it right away instead of "waiting" forever.
+  async function dropPendingCheckout() {
+    try {
+      setSubscription(await cancelPendingCheckout());
+    } catch (e) {
+      setActionError(e.message || "Gagal membatalkan checkout");
+    }
+  }
+
   useEffect(() => {
-    loadStatus();
+    if (checkout === "cancel") dropPendingCheckout();
+    else loadStatus();
   }, []);
 
   async function handleUpgrade(plan) {
@@ -459,6 +493,11 @@ export default function PengaturanScreen() {
               color={subscription.status === "past_due" ? colors.danger : colors.inkFaint}
             />
             <Text style={styles.noticeText}>{statusNote}</Text>
+            {subscription.status === "pending" && (
+              <Pressable onPress={dropPendingCheckout}>
+                <Text style={{ ...type.small, color: colors.goldDeep, fontWeight: "700" }}>Batalkan</Text>
+              </Pressable>
+            )}
           </View>
         )}
         {scheduledCancel && (
@@ -470,6 +509,8 @@ export default function PengaturanScreen() {
             </Text>
           </View>
         )}
+
+        {!!subscription?.weekly_quota && <WeeklyQuota quota={subscription.weekly_quota} />}
 
         <View style={styles.planRow}>
           {PLANS.map((plan) => {

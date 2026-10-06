@@ -276,6 +276,21 @@ def count_own_this_month(user_id: str) -> int:
     return with_conn(_do)
 
 
+def recorded_minutes_since(user_id: str, since: datetime) -> float:
+    """Minutes this user's bot recorded since `since` -- joins only (an upload
+    has no url), for the Free plan's weekly recording quota."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(SUM(duration_minutes), 0) FROM meetings WHERE user_id = %s AND url IS NOT NULL AND created_at >= %s",
+                (user_id, since),
+            )
+            return float(cur.fetchone()[0])
+
+    return with_conn(_do)
+
+
 def counts_by_period(user_id: str | None = None) -> dict:
     """{"today", "this_week", "this_month", "total", "completed", "failed"} —
     for the super admin dashboard (unscoped) and /reports (scoped to one

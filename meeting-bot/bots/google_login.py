@@ -66,7 +66,7 @@ def main():
     try:
         input("Log in to the bot's Google account in the Chrome window that just opened, then press Enter here to save the session... ")
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(f"http://localhost:{_CDP_PORT}")
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
             context = browser.contexts[0]
             context.storage_state(path=AUTH_STATE_PATH)
             browser.close()

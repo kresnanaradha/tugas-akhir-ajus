@@ -176,12 +176,9 @@ services:
       OMP_NUM_THREADS: "2"
     depends_on: [redis]
     restart: unless-stopped
-    # 4g, not 3g like the recorders -- this is exactly the OOM'd number
-    # from testing (mem_limit=3g wasn't enough for recording+transcription
-    # together), with the recording overhead gone since transcription is
-    # now all this container ever does. Measured single-job peak was
-    # ~2.6-2.75GB; 4g leaves real headroom instead of matching it exactly.
-    mem_limit: "4g"
+    # 6g: a 60-minute meeting measured ~4.0GB peak (a 2.5-minute clip only ~2.7GB), so
+    # memory grows with meeting length. Recorders stay at 3g.
+    mem_limit: "6g"  # a 60-minute meeting peaked at ~4.0 GB, so 4g would have OOM-killed it
     cpus: "2.0"
     volumes: ["hf-cache:/root/.cache/huggingface"]
   transcriber-2:
@@ -197,7 +194,7 @@ services:
       OMP_NUM_THREADS: "2"
     depends_on: [redis]
     restart: unless-stopped
-    mem_limit: "4g"
+    mem_limit: "6g"  # a 60-minute meeting peaked at ~4.0 GB, so 4g would have OOM-killed it
     cpus: "2.0"
     volumes: ["hf-cache:/root/.cache/huggingface"]
 

@@ -3,6 +3,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -20,6 +21,7 @@ load_dotenv()
 import psycopg2.errors
 import requests
 from flask import Flask, Response, jsonify, redirect, request, session
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from bots.google_meet import GoogleMeetBot
@@ -33,6 +35,7 @@ from pipeline.meetings_store import (
     get_meeting,
     is_viewer,
     list_meetings,
+    recorded_minutes_since,
     start_meeting,
     update_meeting,
 )
@@ -47,7 +50,9 @@ app = Flask(__name__)
 # not defaulted, so a real deployment can't accidentally run with a
 # well-known/empty key.
 app.secret_key = os.environ["SECRET_KEY"]
-MAX_DURATION_MIN = float(os.getenv("MAX_RECORDING_DURATION_MINUTES", "5"))
+# Empty or 0 = no cap (the default). A recording then ends when the host ends the
+# meeting, the bot is alone for EMPTY_MEETING_MINUTES, or someone presses Stop Rekam.
+MAX_DURATION_MIN = float(os.getenv("MAX_RECORDING_DURATION_MINUTES") or 0) or None
 # Safety cap on /upload request bodies, not a meaningful product limit — just
 # guards against an accidental huge upload hanging the (single-threaded dev)
 # server. Flask's default 413 response is HTML; the errorhandler below makes
@@ -244,6 +249,44 @@ def deactivate_own_account():
     return jsonify({"ok": True})
 
 
+_RESET_TTL_S = 3600
+_reset_serializer = lambda: URLSafeTimedSerializer(app.secret_key, salt="password-reset")
+
+
+@app.post("/auth/forgot")
+def forgot_password():
+    """Always answers ok, whether or not the email exists, so it can't be used
+    to find out who is registered. The token is signed (no table) and carries a
+    slice of the current password hash, so it stops working once the password
+    changes (single use)."""
+    email = ((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+    row = auth_store.get_row_by_email(email) if email else None
+    if row and row["active"]:
+        token = _reset_serializer().dumps({"u": row["id"], "h": row["password_hash"][-16:]})
+        try:
+            mailer.send_password_reset_email(row["email"], row["name"], f"{LOCAL_FRONTEND_URL}/reset-password/{token}")
+        except Exception as e:
+            print(f"[auth] reset email to {row['email']} failed: {e}")
+    return jsonify({"ok": True})
+
+
+@app.post("/auth/reset")
+def reset_password():
+    data = request.get_json(silent=True) or {}
+    password = data.get("password") or ""
+    if len(password) < 8:
+        return jsonify({"error": "Password baru minimal 8 karakter"}), 400
+    try:
+        payload = _reset_serializer().loads(data.get("token") or "", max_age=_RESET_TTL_S)
+    except (BadSignature, SignatureExpired):
+        return jsonify({"error": "Tautan tidak valid atau sudah kedaluwarsa. Minta tautan baru."}), 400
+    row = auth_store.get_row(payload["u"])
+    if not row or not row["active"] or row["password_hash"][-16:] != payload["h"]:
+        return jsonify({"error": "Tautan tidak valid atau sudah kedaluwarsa. Minta tautan baru."}), 400
+    auth_store.set_password(row["id"], password)
+    return jsonify({"ok": True})
+
+
 @app.post("/auth/me/password")
 @login_required
 def change_own_password():
@@ -383,6 +426,8 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
     recording_key = storage.upload_recording(local_recording_path, job_id)
     update_meeting(job_id, status="processing", recording=recording_key, duration_minutes=duration_minutes)
     job_queue.enqueue_transcription(job_id, recording_key, num_speakers)
+    if not getattr(bot, "quota_notified", False):  # the live notice already went out when the cap hit
+        _notify_if_quota_exhausted(job_id, duration_minutes)
 
     # Drop this job from _jobs (rather than marking it "done") so a later
     # GET /jobs/<id> 404s -- the frontend already falls back to polling
@@ -395,9 +440,57 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
         _jobs.pop(job_id, None)
 
 
+def _send_quota_exhausted(owner_id: str, limit: float, cut_off: bool) -> None:
+    owner = auth_store.get_user(owner_id)
+    mailer.send_quota_exhausted_email(owner['email'], owner['name'], limit, f"{LOCAL_FRONTEND_URL}/pengaturan", cut_off)
+
+
+def _notify_if_quota_exhausted(meeting_id: str, duration_minutes: float) -> None:
+    """Email the owner once, on the recording that used up the week's quota."""
+    try:
+        owner_id = (get_meeting(meeting_id) or {}).get("user_id")
+        weekly = _weekly_quota(owner_id) if owner_id else None
+        if not weekly or weekly["remaining"] >= _QUOTA_EXHAUSTED_BELOW_MIN:
+            return
+        if weekly["limit"] - (weekly["used"] - duration_minutes) < _QUOTA_EXHAUSTED_BELOW_MIN:
+            return  # was already used up before this recording
+        _send_quota_exhausted(owner_id, weekly["limit"], cut_off=False)
+    except Exception as e:
+        print(f"[quota] exhausted email failed: {e}")
+
+
 def _plan_limits(user_id: str) -> dict:
     plan = billing_store.get_subscription(user_id)["plan"]
     return billing_store.PLAN_LIMITS.get(plan, billing_store.PLAN_LIMITS["free"])
+
+
+def _week_start() -> datetime:
+    """Most recent Sunday 08:00 (server local time, WITA) -- when the weekly
+    recording quota last reset."""
+    now = datetime.now()
+    start = (now - timedelta(days=(now.weekday() + 1) % 7)).replace(hour=8, minute=0, second=0, microsecond=0)
+    return start if start <= now else start - timedelta(days=7)
+
+
+def _weekly_quota(user_id: str) -> dict | None:
+    """None if this plan has no weekly recording cap, else
+    {limit, used, remaining (minutes), resets_at}."""
+    limit = _plan_limits(user_id)["minutes_per_week"]
+    if limit is None:
+        return None
+    start = _week_start()
+    used = recorded_minutes_since(user_id, start)
+    return {
+        "limit": limit,
+        "used": round(used, 1),
+        "remaining": round(max(limit - used, 0), 1),
+        "resets_at": (start + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+
+# Counts as used up once less than this is left -- a recording cut at the cap
+# lands a rounding hair short of the limit.
+_QUOTA_EXHAUSTED_BELOW_MIN = 0.5
 
 
 def _kb_allowed(user_id: str) -> bool:
@@ -457,7 +550,11 @@ def _join(bot_cls, platform: str, title: str):
     # tighter ceiling on top of MAX_DURATION_MIN, not a replacement for it —
     # a Pro/Team user is still bounded by that env var, just not by a plan.
     plan_cap = _plan_limits(session["user_id"])["max_duration_minutes"]
-    max_duration = min(MAX_DURATION_MIN, plan_cap) if plan_cap is not None else MAX_DURATION_MIN
+    weekly = _weekly_quota(session["user_id"])
+    if weekly and weekly["remaining"] < _QUOTA_EXHAUSTED_BELOW_MIN:
+        return jsonify({"error": f"Kuota rekaman Free minggu ini ({weekly['limit']} menit) sudah habis. Reset Minggu pukul 08.00, atau upgrade ke Pro."}), 402
+    caps = [c for c in (MAX_DURATION_MIN, plan_cap, weekly["remaining"] if weekly else None) if c is not None]
+    max_duration = min(caps) if caps else None
 
     job_id = uuid.uuid4().hex
     # bot.status transitions (joining -> recording -> stopping) get persisted
@@ -465,6 +562,19 @@ def _join(bot_cls, platform: str, title: str):
     # that's what lets the Rapat list show "Sedang Merekam" instead of the
     # row only appearing once the whole pipeline is done.
     bot = bot_cls(url, name, max_duration, on_status_change=lambda status: update_meeting(job_id, status=status))
+    if weekly and max_duration == weekly["remaining"]:
+        # The weekly quota is what will stop this recording: tell the owner the
+        # moment it does, not after the upload finishes.
+        owner_id, limit = session["user_id"], weekly["limit"]
+
+        def _on_limit_reached():
+            bot.quota_notified = True
+            try:
+                _send_quota_exhausted(owner_id, limit, cut_off=True)
+            except Exception as e:
+                print(f"[quota] live exhausted email failed: {e}")
+
+        bot.on_limit_reached = _on_limit_reached
     with _jobs_lock:
         # Recording relies on capturing the whole (virtual) display, not just
         # the meeting tab (see CLAUDE.md's "Known accepted limitation") — that
@@ -903,7 +1013,8 @@ def admin_stats_route():
 @app.get("/admin/users")
 @super_admin_required
 def admin_users_list():
-    return jsonify(auth_store.list_users())
+    plans = billing_store.plans_by_user()
+    return jsonify([{**u, "plan": plans.get(u["id"], "free")} for u in auth_store.list_users()])
 
 
 @app.post("/admin/users")
@@ -938,8 +1049,11 @@ def admin_users_update(user_id):
         return jsonify({"error": "Peran tidak dikenal"}), 400
     if user_id == session["user_id"] and (active is False or (role is not None and role != "super_admin")):
         return jsonify({"error": "Kamu tidak bisa menonaktifkan atau menurunkan akunmu sendiri"}), 400
-    if auth_store.get_user(user_id) is None:
+    target = auth_store.get_user(user_id)
+    if target is None:
         return jsonify({"error": "Pengguna tidak ditemukan"}), 404
+    if role is not None and target["role"] == "super_admin" and role != "super_admin":
+        return jsonify({"error": "Super Admin tidak bisa diturunkan menjadi User"}), 400
     user = auth_store.update_user(user_id, name=str(name).strip() if name is not None else None, role=role, active=active)
     _active_cache.pop(user_id, None)
     return jsonify(user)
@@ -1058,7 +1172,7 @@ def billing_return():
 @app.get("/billing/status")
 @login_required
 def billing_status():
-    return jsonify(billing_store.get_subscription(session["user_id"]))
+    return jsonify({**billing_store.get_subscription(session["user_id"]), "weekly_quota": _weekly_quota(session["user_id"])})
 
 
 @app.post("/billing/checkout")
@@ -1093,6 +1207,15 @@ def billing_checkout():
 
     billing_store.start_checkout(plan, checkout_session["payment_session_id"], account_id=user_id)
     return jsonify({"checkout_url": checkout_session["payment_link_url"]})
+
+
+@app.post("/billing/checkout/cancel")
+@login_required
+def billing_checkout_cancel():
+    """The user backed out of Xendit's page (or abandoned it): forget the
+    unpaid checkout instead of leaving "waiting for payment" on screen."""
+    billing_store.clear_pending(session["user_id"])
+    return jsonify(billing_store.get_subscription(session["user_id"]))
 
 
 @app.post("/billing/cancel")

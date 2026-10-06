@@ -95,7 +95,7 @@ curl -X POST http://localhost:5050/zoom/join \
 ```
 
 The request blocks until the bot leaves the meeting (after
-`MAX_RECORDING_DURATION_MINUTES`, default 5), transcribes, cleans up the
+`MAX_RECORDING_DURATION_MINUTES`, empty/0 = no cap), transcribes, cleans up the
 transcript, and summarizes — that whole chain, not just the recording, so
 expect it to take a while longer than the meeting itself. The response has
 everything from whichever steps succeeded:

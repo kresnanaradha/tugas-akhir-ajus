@@ -197,7 +197,7 @@ server-to-server callback respectively); everything else under `/billing/*`
 is `login_required` and scoped to `session["user_id"]` (every call site
 passes it explicitly — `billing_store`'s `DEFAULT_ACCOUNT_ID` is now just an
 unused fallback for a caller that doesn't pass its own id). `PLAN_LIMITS`
-(meetings/month, max recording minutes) is enforced in `app.py`'s
+(meetings/month, recording minutes/week) is enforced in `app.py`'s
 `_check_meeting_quota()`/`_join()`; Knowledge Base access is gated the same
 way via `_kb_allowed()`.
 
@@ -406,6 +406,46 @@ which is exactly what `base.py`'s `_STOP_JS` does on every recording. If a
 recording ever dies again with "Target page, context or browser has been
 closed" and no diagnostic output, check this hasn't regressed before
 spending hours re-debugging it.
+
+## Long meetings (1-2 hours)
+
+What changed so a long recording doesn't silently break (checked individually,
+but no full-length run has been done yet -- do a 15-minute one first):
+- `MAX_RECORDING_DURATION_MINUTES` in `.env` is empty = no global cap (0 works
+  too). A recording then ends on host-ended / alone for
+  `EMPTY_MEETING_MINUTES` / no sound for `SILENCE_MINUTES` (default 30, 0 = off;
+  an AudioContext analyser in the recorded page, RMS > 0.003, checked in
+  `bots/base.py`) / Stop Rekam, so a stuck bot records until one of those fires
+  (~270 MB per hour in R2). Free is capped by a weekly pool instead: 60 recorded
+  minutes per week (bot joins only, not uploads, `_weekly_quota()` in `app.py`),
+  reset every Sunday 08:00 server time (WITA); the join is refused when it is
+  used up, the recording is cut at what is left, and the owner gets one email
+  (`mailer.send_quota_exhausted_email`) on the recording that used the last
+  minutes. Plus 5 meetings per month (`billing_store.PLAN_LIMITS`). Pengaturan
+  shows the remaining minutes. Use a Team/Pro account to test beyond 60 minutes.
+  The env var is read when the container
+  is created, so recreate `worker-*` after changing it.
+- `bots/base.py` `record()` writes each chunk to disk as it arrives instead of
+  holding the whole recording in memory until the end (about 4.5 MB per minute,
+  so ~550 MB for 2 hours): a crash mid-meeting keeps what was captured so far.
+  The partial file lives inside the container (`recordings/videos/`), so it
+  survives a `docker restart` but not a container re-create.
+- `summarize.fix_transcript()` works in blocks of ~2000 words
+  (`_split_for_fix`). gpt-4o-mini returns at most ~16k tokens, and the old
+  single call had to return the whole transcript, so anything past roughly an
+  hour was cut off without an error and `summarize()` then summarized the cut
+  version. A block whose answer is cut off or empty falls back to its raw text.
+  Checked against the real model on an 11,196-word transcript: 99% of the
+  words and 715 of 720 lines came back.
+- Measured on a real 60-minute Google Meet (6 speakers, whisper `medium` int8, CPU,
+  2 cores): transcribe+fix+summarize took 4 h 33 min (4.5x the recording), peak
+  transcriber RAM 4.0 GB (the old `mem_limit` of 4 GB would have OOM-killed it;
+  now 6g). Result: 4,704 words, 511 lines, 6 speakers, 601-word summary. Whisper
+  hallucinated a repeated word ("Kami mencoba mencoba ...") at the start and end,
+  where there was silence. Ideas to cut the time (smaller model, parallel chunks,
+  transcribe while recording, hosted API, GPU) were discussed but not built.
+- Free Zoom/Meet accounts cap group calls (Zoom Basic about 40 min, Meet about
+  60 min with 3+ people; from memory, may have changed) -- check the host account.
 
 ## Known gaps
 

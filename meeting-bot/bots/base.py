@@ -53,6 +53,24 @@ async ({ secretId, mimeType }) => {
       }
     });
   };
+  // Silence watch: remember when the meeting audio was last audible, so the
+  // bot can stop after a long quiet stretch. A suspended AudioContext counts as
+  // "heard something" so a failure here can never cut a recording short.
+  window.__notulisLastSound = Date.now();
+  const track = stream.getAudioTracks()[0];
+  if (track) {
+    const ctx = new AudioContext();
+    const analyser = ctx.createAnalyser();
+    ctx.createMediaStreamSource(new MediaStream([track])).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    setInterval(() => {
+      if (ctx.state !== 'running') { ctx.resume(); window.__notulisLastSound = Date.now(); return; }
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      if (Math.sqrt(sum / buf.length) > 0.003) window.__notulisLastSound = Date.now();
+    }, 1000);
+  }
   recorder.start(2000);
   window.__notulisRecorder = { recorder, stream, getChunkChain: () => chunkChain };
 }
@@ -78,6 +96,9 @@ _STATE_CHECK_EVERY_S = 3
 # Stop after this long as the only participant (EMPTY_MEETING_MINUTES in .env;
 # 0 turns the alone check off). Ended-meeting detection is separate and always on.
 _ALONE_STOP_S = float(os.getenv("EMPTY_MEETING_MINUTES", "10")) * 60 or float("inf")
+# Stop after this long with no audible sound in the meeting (SILENCE_MINUTES in
+# .env; 0 turns it off).
+_SILENCE_STOP_S = float(os.getenv("SILENCE_MINUTES", "30")) * 60 or float("inf")
 
 
 class MeetBotBase:
@@ -90,13 +111,16 @@ class MeetBotBase:
     # ffmpeg re-encode pass after recording — not worth it for a POC.
     MIME_TYPE = "video/webm;codecs=vp8,opus"
 
-    def __init__(self, url: str, name: str, max_duration_min: float, on_status_change=None):
+    def __init__(self, url: str, name: str, max_duration_min: float | None, on_status_change=None):
         self.url = url
         self.name = name
         self.max_duration_min = max_duration_min
+        # Called (in its own thread) the moment the time cap stops a recording, so a
+        # "limit reached" notice goes out right then, not after the upload.
+        self.on_limit_reached = None
         self.secret_id = uuid.uuid4().hex
         self.page = None
-        self._chunks = []
+        self._chunk_count = 0
         # Exposed so app.py's job endpoints can report live progress and let
         # the frontend stop a recording early — see record() below.
         self.status = "joining"  # joining -> recording -> stopping
@@ -122,6 +146,14 @@ class MeetBotBase:
     def join(self) -> str:
         raise NotImplementedError
 
+    def _silent_for(self) -> float:
+        # Seconds since the page last heard audio; 0 if it can't be read.
+        try:
+            v = self.page.evaluate("() => (Date.now() - window.__notulisLastSound) / 1000")
+            return v if isinstance(v, (int, float)) else 0.0
+        except Exception:
+            return 0.0
+
     def meeting_state(self) -> str:
         """"active", "ended" (host ended it / bot was removed) or "alone" (the
         bot is the only participant left). Subclasses read the platform's own
@@ -141,10 +173,18 @@ class MeetBotBase:
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{self.__class__.__name__}_{int(time.time())}.webm"
 
+        # Chunks go straight to disk as they arrive instead of piling up in
+        # memory until the end: a 2-hour recording is ~550 MB (about 4.5 MB per
+        # minute), and a crash or kill mid-meeting used to lose all of it --
+        # now whatever was captured so far is already in the file.
+        out_file = open(out_path, "wb")
+
         def on_chunk(secret_id: str, b64data: str):
-            if secret_id != self.secret_id:
+            if secret_id != self.secret_id or out_file.closed:
                 return
-            self._chunks.append(base64.b64decode(b64data))
+            out_file.write(base64.b64decode(b64data))
+            out_file.flush()
+            self._chunk_count += 1
 
         try:
             self.page.expose_function("sendChunk", on_chunk)
@@ -160,7 +200,7 @@ class MeetBotBase:
 
             self._set_status("recording")
             self.record_started_at = time.time()
-            deadline = self.record_started_at + self.max_duration_min * 60
+            deadline = self.record_started_at + self.max_duration_min * 60 if self.max_duration_min else float("inf")
             # Sleep in small steps instead of one blind sleep() so a stop
             # request (app.py's POST /jobs/<id>/stop, setting stop_event from
             # a different thread) actually cuts the recording short instead
@@ -188,16 +228,21 @@ class MeetBotBase:
                 if alone_since and now - alone_since >= _ALONE_STOP_S:
                     print(f"[record] alone in the meeting for {int(now - alone_since)}s, stopping early")
                     break
+                silent_for = self._silent_for()
+                if silent_for >= _SILENCE_STOP_S:
+                    print(f"[record] no sound for {int(silent_for)}s, stopping early")
+                    break
+            else:
+                if not self.stop_event.is_set():
+                    print(f"[record] time cap of {self.max_duration_min} min reached, stopping")
+                    if self.on_limit_reached:
+                        threading.Thread(target=self.on_limit_reached, daemon=True).start()
 
             self.record_ended_at = time.time()
             self._set_status("stopping")
             self.page.evaluate(_STOP_JS)
         finally:
-            print(f"[record] {len(self._chunks)} chunks received")
-            # Save whatever chunks made it through even if the page/browser
-            # crashes mid-recording, instead of losing the whole clip.
-            with open(out_path, "wb") as f:
-                for chunk in self._chunks:
-                    f.write(chunk)
+            print(f"[record] {self._chunk_count} chunks received")
+            out_file.close()
 
         return str(out_path)

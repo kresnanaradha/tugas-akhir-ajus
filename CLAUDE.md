@@ -437,13 +437,54 @@ but no full-length run has been done yet -- do a 15-minute one first):
   version. A block whose answer is cut off or empty falls back to its raw text.
   Checked against the real model on an 11,196-word transcript: 99% of the
   words and 715 of 720 lines came back.
-- Measured on a real 60-minute Google Meet (6 speakers, whisper `medium` int8, CPU,
-  2 cores): transcribe+fix+summarize took 4 h 33 min (4.5x the recording), peak
-  transcriber RAM 4.0 GB (the old `mem_limit` of 4 GB would have OOM-killed it;
-  now 6g). Result: 4,704 words, 511 lines, 6 speakers, 601-word summary. Whisper
-  hallucinated a repeated word ("Kami mencoba mencoba ...") at the start and end,
-  where there was silence. Ideas to cut the time (smaller model, parallel chunks,
-  transcribe while recording, hosted API, GPU) were discussed but not built.
+- Measured on a real 60-minute Google Meet (6 speakers, CPU only):
+  - First run, whisper `medium` int8, 2 cores, stages one after another: 4 h 33 min
+    (4.5x the recording), peak RAM 4.0 GB, and `medium` MISSED about a third of the
+    speech (174 vs 272 words on a 3-minute clip; whole meetings looked complete).
+  - Now, `large-v3-turbo` (default, also in `.env`), speaker diarization running in a
+    thread next to speech-to-text, 6 cores, `WHISPER_THREADS`/`OMP_NUM_THREADS` = 3:
+    2 h 04 min (2.0x), peak RAM 4.9 GB. On the 3-minute clip diarization was ~half of
+    the old total (556 of 1149 s). Peak RAM of a 3-minute clip already touched 6.1 GB,
+    so transcribers have `mem_limit` 7g and only ONE long job should run at a time
+    (`docker compose stop transcriber-2`).
+  - Per-stage `[timing]` lines are printed by `pipeline/transcribe_worker.py`; they only
+    reach the container log since `transcribe.py` stopped capturing stdout.
+- Quality fixes from that meeting: the Whisper `initial_prompt` and the fix prompt used to
+  name this thesis project (Docker, RAM, Notulis...), which biases every other meeting --
+  both are generic now (add names via `EXTRA_VOCAB`). Segments are re-cut from word
+  timestamps (<= 12 s, at sentence ends, speaker flicker smoothed) so the playback
+  highlight follows the speech; repeated-word hallucinations ("mencoba mencoba ...") are
+  dropped; a recording with fewer than 15 words skips the LLM (it used to apologize and
+  invent a summary). `fix_transcript()` now asks the model only for the lines to change
+  (JSON, by line number), each validated against its raw line, so fixed.txt always has
+  exactly the raw lines -- the editor pairs line N with line N, and the old full rewrite
+  dropped 61 of 632 lines.
+- Why the highlight drifted from the video: a browser (MediaRecorder) recording stamps its
+  60 ms audio packets 66 ms apart, so a 60-minute file holds only 54.5 minutes of audio.
+  Whisper counts decoded samples, the video player counts container time, and the gap grew
+  linearly to 5.5 minutes. `transcribe_worker._to_container_time()` maps every segment time
+  through the audio packet table (ffprobe) before saving; the audio itself is untouched.
+  Meetings transcribed before that fix have segment times in audio time (their last segment
+  ends ~9% too early) and were remapped by hand once; do not remap one twice.
+- Robot / "broken radio" audio, root cause and fix: Chrome's tab-capture audio drops samples
+  when the browser is starved of CPU. Measured on all recordings: 100% complete = 0-2
+  clicks/s, 96-99% = 2.5-4.4 clicks/s, the 60-minute meeting 90.9% = 14-24 clicks/s
+  (and a 15 Hz robotic buzz). The missing share is also audio/video drift (0.8% missing =
+  0.7 s after 100 s). `bots/audio_backup.py` therefore records the PulseAudio sink
+  (`DummyOutput.monitor`) with ffmpeg next to Chrome (about 5x cleaner under CPU stress);
+  when Chrome's audio is under 99.9% complete after the recording, the backup replaces the
+  audio track (video copied, offset found by cross-correlation of waveform, then volume
+  envelope). A healthy recording is never touched; any failure keeps the original. The
+  entrypoint unloads `module-suspend-on-idle` so the sink does not sleep in silence.
+  Tested with a flashing/beeping page: repaired audio 100% complete and within 0.05 s of the
+  video, with and without CPU stress. NOT yet seen on a real Meet/Zoom call. The
+  silence-watch AudioContext was cleared as a cause (both versions measured the same).
+- Hallucination loops: a phrase repeated 3+ lines in a row (e.g. "atau bisnisnya ya?" x31) is
+  collapsed to one line by `_repeat_run_keep()` in `transcribe_worker.py`; the 60-minute
+  meeting had 62 such lines, removed once from its transcript, fixed transcript and segments.
+- Known gap: the transcriber image has no chromadb, so re-processing a meeting that is in
+  the Knowledge Base leaves its KB entry stale (logged as `No module named 'chromadb'`);
+  re-index it from a worker: `knowledge_base.index_meeting(id, load_summary(id))`.
 - Free Zoom/Meet accounts cap group calls (Zoom Basic about 40 min, Meet about
   60 min with 3+ people; from memory, may have changed) -- check the host account.
 

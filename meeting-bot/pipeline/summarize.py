@@ -1,5 +1,6 @@
 import json
 import os
+import difflib
 import re
 
 from openai import OpenAI
@@ -23,22 +24,14 @@ def _known_terms() -> str:
 
 
 _FIX_SYSTEM_PROMPT = (
-    "Fix obvious speech-to-text errors in this meeting transcript (misheard "
-    "words, typos) without changing its meaning, removing real content, or "
-    "adding anything. This is a meeting about Notulis, a Zoom/Google Meet "
-    "recording bot with automatic transcription (transkripsi) via Whisper, "
-    "AI summarization (ringkasan), a job queue (antrian pekerjaan), and a "
-    "backend — watch for phonetically-similar mishearings of those specific "
-    "terms (e.g. 'taun skripsi' should be 'transkripsi' when it means speech-to-text, "
-    "but 'skripsi pengukuran' meaning a measurement script should be 'skrip "
-    "pengukuran'; and in task assignments 'mengajarkan' or 'mengadakan' is often "
-    "a misheard 'mengerjakan'). The only thing to "
-    "remove is an exact phrase mechanically repeated 2+ times in a row at "
-    "the very end (e.g. 'Terima kasih. Terima kasih. Terima kasih.') — collapse "
-    "that to one occurrence. Never remove a closing sentence that isn't a "
-    "literal repeat, even if it sounds like a sign-off. When in doubt, keep "
-    "the text as-is. Keep the same language. Return only the corrected "
-    "transcript text, nothing else — no preamble, no quotes."
+    "You correct obvious speech-to-text errors in a meeting transcript (mostly "
+    "Indonesian with some English terms): misheard or misspelled words, wrong "
+    "spellings of names, garbled technical terms. Never change the meaning or "
+    "the style, and never remove or add content. Every input line starts with "
+    "its number, then a tab. Return ONLY the lines that need a correction, as "
+    'JSON: {"fixes": [{"n": <line number>, "text": <the whole corrected line, '
+    "keeping its [SPEAKER_xx] label>}]}. A line that is fine must not appear. "
+    "When in doubt, leave the line out. Keep the same language."
 )
 
 # Appended at call time (not baked into the string above) so EXTRA_VOCAB is
@@ -115,7 +108,7 @@ def _log_usage(meeting_id: str | None, call_type: str, response) -> None:
 # Indonesian, so one call silently cut the second half off (and summarize()
 # then summarized the truncated version). Work in blocks of whole lines that
 # stay far below that limit instead.
-_FIX_CHUNK_WORDS = 2000
+_FIX_CHUNK_WORDS = 700
 
 
 def _split_for_fix(transcript: str, max_words: int = _FIX_CHUNK_WORDS) -> list[str]:
@@ -131,30 +124,79 @@ def _split_for_fix(transcript: str, max_words: int = _FIX_CHUNK_WORDS) -> list[s
     return chunks
 
 
+def _same_line(raw: str, fixed: str) -> bool:
+    """Is `fixed` really a correction of `raw`? Guards against a wrong line number:
+    such a line has another speaker or unrelated words."""
+    if raw.split("]")[0] != fixed.split("]")[0]:
+        return False
+    # A real correction changes a word or two: about the same length and nearly the
+    # same text. Anything else is text from a neighbouring line or a rewrite.
+    if not 0.75 <= len(fixed) / max(len(raw), 1) <= 1.3:
+        return False
+    return difflib.SequenceMatcher(None, raw.lower(), fixed.lower()).ratio() >= 0.75
+
+
 def _fix_chunk(client: OpenAI, text: str, meeting_id: str, part: int, parts: int) -> str:
+    """Returns `text` with the model's corrections applied, always with exactly
+    the same lines. The editor pairs raw line N with fixed line N, and asking a
+    model to rewrite the whole text made it merge or drop lines (61 of 632 in a
+    60-minute meeting), shifting every suggestion after that. So it only returns
+    the lines to change, by number, and each one is checked against the line it
+    claims to correct."""
+    lines = text.split(chr(10))
+    numbered = chr(10).join(f"{i}{chr(9)}{ln}" for i, ln in enumerate(lines, start=1))
     system = _FIX_SYSTEM_PROMPT + _FIX_NAMES_PROMPT.format(terms=_known_terms())
-    if parts > 1:
-        # The "collapse a repeated ending" rule is about the end of the whole
-        # meeting; without this every block would be treated as the ending.
-        system += f" This text is part {part} of {parts} of one longer transcript."
-        if part < parts:
-            system += " It is NOT the end of the meeting: do not remove or collapse anything at its end."
     response = client.chat.completions.create(
         model=_MODEL,
         temperature=0.2,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": text}],
+        response_format={"type": "json_object"},
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": numbered}],
     )
     _log_usage(meeting_id, "fix_transcript", response)
     choice = response.choices[0]
-    # A cut-off or empty answer must never replace the original text: keep the
-    # raw block instead of losing the rest of it.
-    if choice.finish_reason == "length" or not (choice.message.content or "").strip():
-        print(f"[fix_transcript] part {part}/{parts} of {meeting_id} unusable (finish_reason={choice.finish_reason}), keeping the raw text")
+    if choice.finish_reason == "length":
+        print(f"[fix_transcript] part {part}/{parts} of {meeting_id} was cut off, keeping the raw text")
         return text
-    return choice.message.content
+    try:
+        fixes = json.loads(choice.message.content or "{}").get("fixes", [])
+    except (ValueError, AttributeError):
+        print(f"[fix_transcript] part {part}/{parts} of {meeting_id} was not valid JSON, keeping the raw text")
+        return text
+    out, rejected = list(lines), 0
+    for f in fixes:
+        try:
+            n, new = int(f["n"]), str(f["text"]).strip()
+        except (KeyError, TypeError, ValueError):
+            rejected += 1
+            continue
+        if 1 <= n <= len(lines) and _same_line(lines[n - 1], new):
+            out[n - 1] = new
+        else:
+            rejected += 1
+    if rejected:
+        print(f"[fix_transcript] part {part}/{parts} of {meeting_id}: {rejected} corrections did not match their line, ignored")
+    return chr(10).join(out)
+
+
+# A recording with (almost) no speech must not reach the model: asked to fix or
+# summarize an empty transcript it apologizes or invents a plausible meeting.
+_MIN_WORDS = 15
+NO_SPEECH_SUMMARY = {
+    "executive_summary": "Tidak ada percakapan yang terdeteksi dalam rekaman ini.",
+    "key_decisions": [],
+    "topics_discussed": [],
+    "action_items": [],
+}
+
+
+def _has_speech(transcript: str) -> bool:
+    return len(transcript.split()) >= _MIN_WORDS
 
 
 def fix_transcript(transcript: str, meeting_id: str) -> str:
+    if not _has_speech(transcript):
+        artifacts.save_fixed_transcript(meeting_id, transcript)
+        return transcript
     client = OpenAI()
     chunks = _split_for_fix(transcript)
     fixed = "\n".join(_fix_chunk(client, c, meeting_id, i, len(chunks)) for i, c in enumerate(chunks, start=1))
@@ -192,6 +234,8 @@ def _build_summary(transcript: str, meeting_id: str | None) -> dict:
     """Builds the summary dict without saving or indexing anything, so it can
     be tested against stored transcripts. meeting_id None skips usage logging
     (test calls)."""
+    if not _has_speech(transcript):
+        return {**NO_SPEECH_SUMMARY, "key_decisions": [], "topics_discussed": [], "action_items": []}
     client = OpenAI()
     narrative = client.chat.completions.create(
         model=_MODEL,

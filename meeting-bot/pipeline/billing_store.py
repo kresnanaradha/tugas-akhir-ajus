@@ -95,6 +95,40 @@ def get_subscription(account_id: str = DEFAULT_ACCOUNT_ID) -> dict:
     return row
 
 
+def team_plans(user_id: str | None = None) -> dict[str, str]:
+    """{user_id: plan} for users whose team's owner has a live paid plan -- team
+    members share the owner's plan. One query; pass user_id for just one user."""
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT u.id AS user_id, s.plan, s.status, s.cancel_at_period_end, s.current_period_end
+                FROM users u JOIN teams t ON t.id = u.team_id JOIN subscriptions s ON s.id = t.owner_id
+                WHERE %s::text IS NULL OR u.id = %s
+                """,
+                (user_id, user_id),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    rows = with_conn(_do)
+    out = {}
+    for r in rows:
+        _apply_effective_state(r)
+        if r["plan"] == "team":
+            out[r["user_id"]] = "team"
+    return out
+
+
+def effective_plan(user_id: str) -> tuple[str, bool]:
+    """(plan, inherited_from_team): the user's own paid plan, else the Team plan
+    shared by their team's owner."""
+    own = get_subscription(user_id)["plan"]
+    if own != "free":
+        return own, False
+    return ("team", True) if user_id in team_plans(user_id) else ("free", False)
+
+
 def plans_by_user() -> dict[str, str]:
     """{user_id: effective plan} for every user with a subscription row, in one
     query -- users without a row are Free."""

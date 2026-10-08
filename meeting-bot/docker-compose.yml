@@ -173,13 +173,17 @@ services:
       # Names this worker's Redis processing list, so it can recover its own
       # unfinished job after a crash (pipeline/job_queue.py). Must not change.
       TRANSCRIBER_ID: transcriber-1
-      OMP_NUM_THREADS: "2"
+      # torch (diarization) and faster-whisper each get 3 threads: they run side by side
+      OMP_NUM_THREADS: "3"
+      WHISPER_THREADS: "3"
     depends_on: [redis]
     restart: unless-stopped
-    # 6g: a 60-minute meeting measured ~4.0GB peak (a 2.5-minute clip only ~2.7GB), so
-    # memory grows with meeting length. Recorders stay at 3g.
-    mem_limit: "6g"  # a 60-minute meeting peaked at ~4.0 GB, so 4g would have OOM-killed it
-    cpus: "2.0"
+    # One long job (turbo model + parallel diarization) hit ~6.1GB on a 3-minute
+    # clip and grows with meeting length, so two long jobs at once do not fit on a
+    # 7.7GB laptop or a 12GB VPS: run ONE transcriber for long meetings
+    # (`docker compose stop transcriber-2`). Recorders stay at 3g.
+    mem_limit: "7g"
+    cpus: "6.0"
     volumes: ["hf-cache:/root/.cache/huggingface"]
   transcriber-2:
     build:
@@ -191,11 +195,13 @@ services:
       # Names this worker's Redis processing list, so it can recover its own
       # unfinished job after a crash (pipeline/job_queue.py). Must not change.
       TRANSCRIBER_ID: transcriber-2
-      OMP_NUM_THREADS: "2"
+      # torch (diarization) and faster-whisper each get 3 threads: they run side by side
+      OMP_NUM_THREADS: "3"
+      WHISPER_THREADS: "3"
     depends_on: [redis]
     restart: unless-stopped
-    mem_limit: "6g"  # a 60-minute meeting peaked at ~4.0 GB, so 4g would have OOM-killed it
-    cpus: "2.0"
+    mem_limit: "7g"
+    cpus: "6.0"
     volumes: ["hf-cache:/root/.cache/huggingface"]
 
 # Model downloads (whisper, alignment, pyannote) live here so they survive

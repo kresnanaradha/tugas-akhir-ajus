@@ -8,10 +8,16 @@ import { forgotPassword, login, register } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
 const PITCH_POINTS = [
-  "Rekam rapat Google Meet & Zoom secara otomatis",
-  "Transkripsi & ringkasan berbasis AI",
-  "Knowledge Base semantik dari seluruh rapat",
-  "Laporan & analitik penggunaan organisasi",
+  "Bot masuk otomatis ke Google Meet dan Zoom",
+  "Transkrip lengkap dengan label pembicara",
+  "Ringkasan, keputusan, dan action item dari AI",
+  "Knowledge Base untuk mencari isi semua rapat",
+];
+
+const STEPS = [
+  { icon: "link", title: "Tempel link", text: "Rapat Meet atau Zoom" },
+  { icon: "mic", title: "Bot merekam", text: "Join dan rekam" },
+  { icon: "file-text", title: "Terima hasil", text: "Transkrip dan ringkasan" },
 ];
 
 export default function LoginScreen() {
@@ -80,40 +86,53 @@ export default function LoginScreen() {
           <View style={styles.ring1} />
           <View style={styles.ring2} />
 
-          <View style={styles.brand}>
-            <Image source={require("@/assets/images/logo.png")} style={styles.logo} resizeMode="contain" />
-            <Text style={styles.brandLabel}>Notulis</Text>
+          <View>
+            <View style={styles.chip}>
+              <Text style={styles.chipLabel}>ASISTEN RAPAT BERBASIS AI</Text>
+            </View>
+            <View style={styles.headlineBox}>
+              <Text style={styles.headline}>Rapat selesai,</Text>
+              <Text style={styles.headline}>
+                catatan langsung jadi.
+              </Text>
+            </View>
+            <Text style={styles.subheadline}>
+              Notulis masuk ke rapat Anda, merekam, lalu menyusun transkrip dan ringkasan, tanpa perlu mencatat sendiri.
+            </Text>
+
+            <View style={styles.pointList}>
+              {PITCH_POINTS.map((point) => (
+                <View key={point} style={styles.pointRow}>
+                  <View style={styles.pointCheck}>
+                    <Feather name="check" size={11} color={colors.gold} />
+                  </View>
+                  <Text style={styles.pointLabel}>{point}</Text>
+                </View>
+              ))}
+            </View>
           </View>
 
-          <Text style={styles.headline}>Asisten Rapat{"\n"}Berbasis AI</Text>
-          <Text style={styles.subheadline}>
-            Rekam, transkripsi, dan ringkas rapat daring Anda secara otomatis.
-          </Text>
-
-          <View style={styles.pointList}>
-            {PITCH_POINTS.map((point) => (
-              <View key={point} style={styles.pointRow}>
-                <View style={styles.pointCheck}>
-                  <Feather name="check" size={11} color={colors.gold} />
+          <View style={styles.steps}>
+            {STEPS.map((step, i) => (
+              <View key={step.title} style={styles.step}>
+                <View style={styles.stepIcon}>
+                  <Feather name={step.icon} size={15} color={colors.gold} />
                 </View>
-                <Text style={styles.pointLabel}>{point}</Text>
+                <Text style={styles.stepTitle}>
+                  {i + 1}. {step.title}
+                </Text>
+                <Text style={styles.stepText}>{step.text}</Text>
               </View>
             ))}
-          </View>
-
-          <View style={styles.quote}>
-            <View style={styles.quoteAvatar}>
-              <Text style={styles.quoteAvatarLabel}>DK</Text>
-            </View>
-            <View style={styles.quoteBody}>
-              <Text style={styles.quoteText}>"Notulis menghemat 2 jam per minggu untuk tim kami."</Text>
-              <Text style={styles.quoteAttribution}>Dewi Kartika · Head of Operations, PT Inovasi Digital</Text>
-            </View>
           </View>
         </View>
       )}
 
       <View style={styles.formSide}>
+        <View style={[styles.brand, { marginBottom: spacing.xl }]} accessibilityLabel="Notulis" accessible>
+          <Image source={require("@/assets/images/logo.png")} style={styles.logo} resizeMode="contain" />
+          <Text style={[styles.brandLabel, { color: colors.ink }]}>otulis</Text>
+        </View>
         {forgot ? (
           <View style={styles.formCard}>
             <Text style={styles.formTitle}>Lupa password?</Text>
@@ -128,7 +147,7 @@ export default function LoginScreen() {
                   <Text style={styles.fieldLabel}>EMAIL</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="admin@ptmajubersama.co.id"
+                    placeholder="nama@perusahaan.com"
                     placeholderTextColor={colors.inkFaint}
                     autoCapitalize="none"
                     value={email}
@@ -156,9 +175,9 @@ export default function LoginScreen() {
             </Pressable>
           </View>
 
-          <Text style={styles.formTitle}>{tab === "masuk" ? "Selamat datang kembali" : "Buat akun tim"}</Text>
+          <Text style={styles.formTitle}>{tab === "masuk" ? "Selamat datang kembali" : "Buat akun Notulis"}</Text>
           <Text style={styles.formSubtitle}>
-            {tab === "masuk" ? "Masuk ke akun Notulis Anda" : "Mulai kelola rapat tim Anda"}
+            {tab === "masuk" ? "Masuk untuk melihat rapat dan ringkasan Anda" : "Mulai rekam dan ringkas rapat Anda"}
           </Text>
 
           {tab === "daftar" && (
@@ -178,7 +197,7 @@ export default function LoginScreen() {
             <Text style={styles.fieldLabel}>EMAIL</Text>
             <TextInput
               style={styles.input}
-              placeholder="admin@ptmajubersama.co.id"
+              placeholder="nama@perusahaan.com"
               placeholderTextColor={colors.inkFaint}
               autoCapitalize="none"
               value={email}
@@ -229,38 +248,48 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.gold,
     padding: spacing.xxxl,
-    justifyContent: "space-between",
+    justifyContent: "center",
     overflow: "hidden",
     position: "relative",
   },
   ring1: {
     position: "absolute",
-    right: -60,
-    top: -60,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
+    right: -80,
+    top: -80,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
     borderWidth: 1,
     borderColor: "rgba(27,31,43,0.15)",
   },
   ring2: {
     position: "absolute",
-    right: 40,
-    top: 90,
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    right: 50,
+    top: 110,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     backgroundColor: "rgba(27,31,43,0.08)",
   },
-  brand: { flexDirection: "row", alignItems: "center", gap: 10 },
-  logo: { width: 30, height: 30 },
-  brandLabel: { ...type.h1, color: colors.ink },
+  brand: { flexDirection: "row", alignItems: "center", gap: 2 },
+  logo: { width: 44, height: 44 },
+  brandLabel: { ...type.h1, fontSize: 22, color: colors.ink },
 
-  headline: { ...type.display, fontSize: 40, color: colors.ink, marginTop: spacing.xxl, lineHeight: 46 },
-  subheadline: { ...type.body, fontSize: 16, color: colors.inkSoft, marginTop: spacing.md, maxWidth: 360 },
+  chip: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "rgba(27,31,43,0.35)",
+    borderRadius: radius.pill,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+  },
+  chipLabel: { ...type.small, fontSize: 11, fontWeight: "700", letterSpacing: 1.2, color: colors.ink },
+  headlineBox: { marginTop: spacing.lg },
+  headline: { ...type.display, fontSize: 52, lineHeight: 60, color: colors.ink },
+  subheadline: { ...type.body, fontSize: 17, lineHeight: 26, color: colors.inkSoft, marginTop: spacing.lg, maxWidth: 480 },
 
-  pointList: { gap: spacing.md, marginTop: spacing.xxl },
-  pointRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  pointList: { gap: spacing.md, marginTop: spacing.xl + 4 },
+  pointRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   pointCheck: {
     width: 20,
     height: 20,
@@ -271,27 +300,27 @@ const styles = StyleSheet.create({
   },
   pointLabel: { ...type.body, color: colors.ink },
 
-  quote: {
-    flexDirection: "row",
-    gap: spacing.md,
-    backgroundColor: "rgba(255,255,255,0.35)",
+  steps: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xxxl, maxWidth: 560 },
+  step: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.4)",
+    borderWidth: 1,
+    borderColor: "rgba(27,31,43,0.1)",
     borderRadius: radius.md,
-    padding: spacing.lg,
-    marginTop: spacing.xxl,
-    maxWidth: 420,
+    padding: spacing.md,
+    gap: 4,
   },
-  quoteAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  stepIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     backgroundColor: colors.ink,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 4,
   },
-  quoteAvatarLabel: { color: colors.white, fontWeight: "700", fontSize: 12 },
-  quoteBody: { flex: 1, gap: 4 },
-  quoteText: { ...type.body, color: colors.ink, fontStyle: "italic" },
-  quoteAttribution: { ...type.small, color: colors.goldDeep },
+  stepTitle: { ...type.small, fontWeight: "700", color: colors.ink },
+  stepText: { ...type.small, color: colors.inkSoft },
 
   formSide: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xxl },
   formCard: { width: "100%", maxWidth: 340 },

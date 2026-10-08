@@ -1,20 +1,91 @@
 import { Feather } from "@expo/vector-icons";
 import { Link, router, usePathname } from "expo-router";
+import { useEffect, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
-import { logout as apiLogout } from "@/lib/api";
+import { getBillingStatus, logout as apiLogout } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { initialsOf } from "@/lib/format";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: "home" },
-  { href: "/rapat", label: "Rapat", icon: "mic" },
-  { href: "/knowledge-base", label: "Knowledge Base", icon: "search" },
-  { href: "/perbandingan", label: "Perbandingan", icon: "shuffle" },
-  { href: "/laporan", label: "Laporan", icon: "bar-chart-2" },
-  { href: "/team", label: "Team", icon: "users" },
+const NAV_GROUPS = [
+  {
+    label: "Utama",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: "home" },
+      { href: "/rapat", label: "Rapat", icon: "mic" },
+    ],
+  },
+  {
+    label: "Analisis",
+    items: [
+      { href: "/knowledge-base", label: "Knowledge Base", icon: "search" },
+      { href: "/perbandingan", label: "Perbandingan", icon: "shuffle" },
+      { href: "/laporan", label: "Laporan", icon: "bar-chart-2" },
+    ],
+  },
+  { label: "Kolaborasi", items: [{ href: "/team", label: "Team", icon: "users" }] },
 ];
+const ADMIN_GROUP = { label: "Administrasi", items: [{ href: "/admin", label: "Admin", icon: "shield" }] };
+
+// A page counts as its menu item's page too when it is nested under it
+// (/rapat/baru, /rapat/<id>, /team/gabung/<token> ...).
+const isActive = (pathname, href) => pathname === href || pathname.startsWith(href + "/");
+
+const PLAN_LABEL = { free: "Free", pro: "Pro", team: "Team" };
+
+// Plan + this week's recording quota (Free only; Pro/Team have no cap).
+// Re-read on every page change so it updates after a recording or an upgrade.
+function PlanCard({ pathname }) {
+  const [sub, setSub] = useState(null);
+  useEffect(() => {
+    const load = () => getBillingStatus().then(setSub).catch(() => {});
+    load();
+    // also after a plan-changing action (api.js) and when the tab regains focus
+    window.addEventListener("notulis:plan-changed", load);
+    window.addEventListener("focus", load);
+    return () => {
+      window.removeEventListener("notulis:plan-changed", load);
+      window.removeEventListener("focus", load);
+    };
+  }, [pathname]);
+  if (!sub) return null;
+
+  const quota = sub.weekly_quota;
+  const exhausted = quota && quota.remaining < 0.5;
+  return (
+    <View style={styles.planCard}>
+      <Text style={styles.planEyebrow}>Plan Anda</Text>
+      <Text style={styles.planName}>{(PLAN_LABEL[sub.plan] || sub.plan).toUpperCase()}</Text>
+      {quota ? (
+        <>
+          <View style={styles.planRow}>
+            <Text style={styles.planMeta}>Rekaman/minggu</Text>
+            <Text style={[styles.planMeta, exhausted && { color: colors.danger, fontWeight: "700" }]}>
+              {Math.round(quota.used)}/{quota.limit} mnt
+            </Text>
+          </View>
+          <View style={styles.planTrack}>
+            <View
+              style={{
+                width: `${Math.min(100, (quota.used / quota.limit) * 100)}%`,
+                height: 5,
+                backgroundColor: exhausted ? colors.danger : colors.gold,
+              }}
+            />
+          </View>
+        </>
+      ) : (
+        <Text style={styles.planMeta}>Rekaman tanpa batas</Text>
+      )}
+      <Link href="/pengaturan" asChild>
+        <Pressable>
+          <Text style={styles.planLink}>Lihat paket</Text>
+        </Pressable>
+      </Link>
+    </View>
+  );
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -22,7 +93,7 @@ export function Sidebar() {
   // Only super_admin sees this — the backend independently enforces it too
   // (403 on /admin/stats for anyone else), this just keeps the link itself
   // from showing to someone who'd hit a wall clicking it.
-  const navItems = user?.role === "super_admin" ? [...NAV_ITEMS, { href: "/admin", label: "Admin", icon: "shield" }] : NAV_ITEMS;
+  const groups = user?.role === "super_admin" ? [...NAV_GROUPS, ADMIN_GROUP] : NAV_GROUPS;
 
   function handleLogout() {
     // Fire-and-forget on the server call — clear local auth state either
@@ -37,33 +108,38 @@ export function Sidebar() {
   return (
     <View style={styles.sidebar}>
       <View>
-        <View style={styles.brand}>
+        <View style={styles.brand} accessibilityLabel="Notulis" accessible>
           <Image source={require("@/assets/images/logo.png")} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.brandLabel}>Notulis</Text>
+          <Text style={styles.brandLabel}>otulis</Text>
         </View>
 
-        <Text style={styles.sectionLabel}>Menu</Text>
-        <View style={styles.navList}>
-          {navItems.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link key={item.href} href={item.href} asChild>
-                <Pressable style={StyleSheet.flatten([styles.navItem, active && styles.navItemActive])}>
-                  <Feather name={item.icon} size={17} color={active ? colors.ink : colors.inkSoft} />
-                  <Text style={StyleSheet.flatten([styles.navLabel, active && styles.navLabelActive])}>{item.label}</Text>
-                </Pressable>
-              </Link>
-            );
-          })}
-        </View>
+        {groups.map((group) => (
+          <View key={group.label} style={styles.group}>
+            <Text style={styles.sectionLabel}>{group.label}</Text>
+            <View style={styles.navList}>
+              {group.items.map((item) => {
+                const active = isActive(pathname, item.href);
+                return (
+                  <Link key={item.href} href={item.href} asChild>
+                    <Pressable style={StyleSheet.flatten([styles.navItem, active && styles.navItemActive])}>
+                      <Feather name={item.icon} size={17} color={active ? colors.ink : colors.inkSoft} />
+                      <Text style={StyleSheet.flatten([styles.navLabel, active && styles.navLabelActive])}>{item.label}</Text>
+                    </Pressable>
+                  </Link>
+                );
+              })}
+            </View>
+          </View>
+        ))}
       </View>
 
       <View style={styles.footer}>
+        <PlanCard pathname={pathname} />
         <Link href="/pengaturan" asChild>
-          <Pressable style={StyleSheet.flatten([styles.navItem, pathname === "/pengaturan" && styles.navItemActive])}>
-            <Feather name="settings" size={17} color={pathname === "/pengaturan" ? colors.ink : colors.inkSoft} />
+          <Pressable style={StyleSheet.flatten([styles.navItem, isActive(pathname, "/pengaturan") && styles.navItemActive])}>
+            <Feather name="settings" size={17} color={isActive(pathname, "/pengaturan") ? colors.ink : colors.inkSoft} />
             <Text
-              style={StyleSheet.flatten([styles.navLabel, pathname === "/pengaturan" && styles.navLabelActive])}
+              style={StyleSheet.flatten([styles.navLabel, isActive(pathname, "/pengaturan") && styles.navLabelActive])}
             >
               Pengaturan
             </Text>
@@ -96,7 +172,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     justifyContent: "space-between",
   },
-  brand: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: spacing.xl, paddingHorizontal: spacing.xs },
+  brand: { flexDirection: "row", alignItems: "center", gap: 2, marginBottom: spacing.xl, paddingHorizontal: spacing.xs },
   logo: { width: 26, height: 26 },
   brandLabel: { ...type.h1, color: colors.ink },
   sectionLabel: {
@@ -106,6 +182,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     paddingHorizontal: spacing.xs,
   },
+  group: { marginBottom: spacing.md },
   navList: { gap: 2 },
   navItem: {
     flexDirection: "row",
@@ -119,6 +196,19 @@ const styles = StyleSheet.create({
   navLabel: { ...type.bodyMedium, color: colors.inkSoft },
   navLabelActive: { color: colors.ink, fontWeight: "700" },
   footer: { gap: spacing.md },
+  planCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 6,
+  },
+  planEyebrow: { ...type.small, color: colors.inkFaint },
+  planName: { ...type.h2, color: colors.ink },
+  planRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  planMeta: { ...type.small, fontSize: 11.5, color: colors.inkSoft },
+  planTrack: { height: 5, borderRadius: 3, backgroundColor: colors.border, overflow: "hidden" },
+  planLink: { ...type.small, color: colors.goldDeep, fontWeight: "700", marginTop: 2 },
   userRow: {
     flexDirection: "row",
     alignItems: "center",

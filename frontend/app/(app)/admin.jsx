@@ -166,8 +166,8 @@ export default function AdminScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.lg },
-  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
+  scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
+  content: { gap: spacing.md, width: "100%" },
 
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.lg },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },

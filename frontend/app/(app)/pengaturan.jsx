@@ -373,28 +373,6 @@ function ProfileCard() {
   );
 }
 
-function WeeklyQuota({ quota }) {
-  const left = Math.round(quota.remaining);
-  const percent = Math.min(100, (quota.used / quota.limit) * 100);
-  const exhausted = quota.remaining < 0.5;
-  const resetLabel = new Intl.DateTimeFormat("id-ID", { weekday: "long", hour: "2-digit", minute: "2-digit" }).format(
-    new Date(quota.resets_at)
-  );
-  return (
-    <View style={[styles.noticeBox, exhausted && styles.noticeBoxWarning, { flexDirection: "column", alignItems: "stretch", gap: spacing.sm }]}>
-      <Text style={styles.noticeText}>
-        <Text style={{ fontWeight: "700" }}>
-          {exhausted ? "Kuota rekaman minggu ini habis." : `Sisa kuota rekaman minggu ini: ${left} dari ${quota.limit} menit.`}
-        </Text>{" "}
-        Diperbarui {resetLabel.replace(".", ":")} WITA.
-      </Text>
-      <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: "hidden" }}>
-        <View style={{ width: `${percent}%`, height: 6, backgroundColor: exhausted ? colors.danger : colors.gold }} />
-      </View>
-    </View>
-  );
-}
-
 export default function PengaturanScreen() {
   const { checkout } = useLocalSearchParams();
   const [subscription, setSubscription] = useState(null);
@@ -455,6 +433,7 @@ export default function PengaturanScreen() {
   // yet, so it shouldn't show as upgraded (or block re-clicking Upgrade)
   // until the payment genuinely goes through.
   const currentPlan = subscription?.status === "active" ? subscription.plan : "free";
+  const inherited = !!subscription?.inherited_from_team;
   const statusNote = subscription ? STATUS_LABEL[subscription.status] : null;
   // Billing already stopped (Xendit's recurring plan was deactivated the
   // moment this was scheduled) — this is purely "you keep access until...".
@@ -500,6 +479,15 @@ export default function PengaturanScreen() {
             )}
           </View>
         )}
+        {inherited && (
+          <View style={styles.noticeBox}>
+            <Feather name="users" size={14} color={colors.inkFaint} />
+            <Text style={styles.noticeText}>
+              Anda memakai paket <Text style={{ fontWeight: "700" }}>Team</Text> lewat team Anda. Paket ini berlaku selama
+              langganan Team milik pemilik team masih aktif dan Anda masih menjadi anggota.
+            </Text>
+          </View>
+        )}
         {scheduledCancel && (
           <View style={styles.noticeBox}>
             <Feather name="calendar" size={14} color={colors.inkFaint} />
@@ -509,8 +497,6 @@ export default function PengaturanScreen() {
             </Text>
           </View>
         )}
-
-        {!!subscription?.weekly_quota && <WeeklyQuota quota={subscription.weekly_quota} />}
 
         <View style={styles.planRow}>
           {PLANS.map((plan) => {
@@ -548,14 +534,14 @@ export default function PengaturanScreen() {
                 {plan.key === "free" ? (
                   <Pressable
                     style={[styles.planButton, (isCurrent || scheduledCancel) && styles.planButtonCurrent]}
-                    disabled={isCurrent || scheduledCancel || pendingPlan === "cancel"}
+                    disabled={isCurrent || scheduledCancel || inherited || pendingPlan === "cancel"}
                     onPress={() => setConfirmDowngradeOpen(true)}
                   >
                     {pendingPlan === "cancel" ? (
                       <ActivityIndicator size="small" color={colors.inkFaint} />
                     ) : (
                       <Text style={[styles.planButtonLabel, (isCurrent || scheduledCancel) && styles.planButtonLabelCurrent]}>
-                        {isCurrent ? "Paket Saat Ini" : scheduledCancel ? "Dijadwalkan Turun" : "Turunkan ke Free"}
+                        {isCurrent ? "Paket Saat Ini" : scheduledCancel ? "Dijadwalkan Turun" : inherited ? "Tidak berlaku" : "Turunkan ke Free"}
                       </Text>
                     )}
                   </Pressable>
@@ -635,8 +621,8 @@ export default function PengaturanScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.lg },
-  content: { gap: spacing.sm, maxWidth: 960, width: "100%" },
+  scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
+  content: { gap: spacing.sm, width: "100%" },
   eyebrow: { ...type.eyebrow, color: colors.inkFaint },
   title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, marginBottom: spacing.md },

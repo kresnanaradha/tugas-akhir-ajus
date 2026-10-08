@@ -275,8 +275,8 @@ export default function PerbandinganScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.lg },
-  content: { gap: spacing.md, maxWidth: 1400, width: "100%" },
+  scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
+  content: { gap: spacing.md, width: "100%" },
 
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.lg },
   title: { ...type.h1, fontSize: 24, color: colors.ink },

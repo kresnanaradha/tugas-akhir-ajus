@@ -16,6 +16,7 @@ import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, replaceActionItems, setKnowledgeBase, shareMeetingWithTeam, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { BackLink } from "@/components/BackLink";
+import { StatCard } from "@/components/StatCard";
 import { StatusPill } from "@/components/StatusPill";
 import { useAuth } from "@/lib/auth-context";
 
@@ -213,6 +214,29 @@ const STEPS = [
   { key: "processing", label: "Memproses" },
 ];
 const STEP_INDEX = { joining: 0, recording: 1, stopping: 1, processing: 2 };
+
+// Numbers shown above the tabs, and per-speaker talk time for the "Waktu Bicara"
+// card -- all derived from data the page already has, no extra request.
+function meetingStats(meeting) {
+  const text = meeting.fixed_transcript || meeting.transcript || "";
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const items = meeting.summary?.action_items || [];
+  const talk = {};
+  (meeting.segments || []).forEach((seg) => {
+    if (seg.start != null && seg.end != null && seg.speaker) talk[seg.speaker] = (talk[seg.speaker] || 0) + (seg.end - seg.start);
+  });
+  const speakers = Object.entries(talk)
+    .map(([name, seconds]) => ({ name, seconds }))
+    .sort((a, b) => b.seconds - a.seconds);
+  return {
+    words,
+    speakers,
+    speakerCount: speakers.length || new Set((text.match(/^\[(.+?)\]/gm) || [])).size,
+    actionTotal: items.length,
+    actionDone: items.filter((i) => i.done).length,
+    decisions: meeting.summary?.key_decisions?.length || 0,
+  };
+}
 
 const TABS = [
   { key: "ringkasan", label: "Ringkasan AI", icon: "zap" },
@@ -588,6 +612,7 @@ export default function MeetingDetailScreen() {
       .finally(() => setSharingTeam(false));
   }
 
+  const stats = meetingStats(meeting || {});
   const isLive = liveStatus && liveStatus !== "failed";
   const isLiveFailed = liveStatus === "failed";
   const stepIndex = STEP_INDEX[liveStatus] ?? 0;
@@ -739,6 +764,14 @@ export default function MeetingDetailScreen() {
             {/* Finished — tabbed Ringkasan AI / Transkrip / Rekaman */}
             {!isLive && !isLiveFailed && (
               <>
+                <View style={styles.statRow}>
+                  <StatCard value={meeting.duration_minutes != null ? `${meeting.duration_minutes} mnt` : "-"} label="Durasi rekaman" />
+                  <StatCard value={String(stats.speakerCount)} label="Pembicara terdeteksi" />
+                  <StatCard value={stats.words.toLocaleString("id-ID")} label="Kata ditranskripsi" />
+                  <StatCard value={`${stats.actionDone}/${stats.actionTotal}`} label="Action item selesai" />
+                  <StatCard value={String(stats.decisions)} label="Keputusan utama" />
+                </View>
+
                 <View style={styles.tabBar}>
                   {TABS.map((tab) => {
                     const active = activeTab === tab.key;
@@ -798,6 +831,27 @@ export default function MeetingDetailScreen() {
                             </View>
                           ))}
                         </View>
+                        {stats.speakers.length > 0 && (
+                          <View style={styles.colCard}>
+                            <Text style={styles.colTitle}>Waktu Bicara</Text>
+                            {stats.speakers.map((sp) => {
+                              const total = stats.speakers.reduce((n, x) => n + x.seconds, 0) || 1;
+                              const pct = Math.round((sp.seconds / total) * 100);
+                              const color = speakerColor(sp.name);
+                              return (
+                                <View key={sp.name} style={{ gap: 4 }}>
+                                  <View style={styles.talkRow}>
+                                    <Text style={styles.talkName} numberOfLines={1}>{sp.name}</Text>
+                                    <Text style={styles.talkMeta}>{formatElapsed(Math.round(sp.seconds))} ({pct}%)</Text>
+                                  </View>
+                                  <View style={styles.talkTrack}>
+                                    <View style={{ width: `${pct}%`, height: 6, backgroundColor: color }} />
+                                  </View>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
                       </View>
 
                       <View style={styles.actionItemsCard}>
@@ -913,11 +967,11 @@ export default function MeetingDetailScreen() {
                             <Text style={styles.plainTranscript}>{meeting.fixed_transcript || meeting.transcript}</Text>
                           </ScrollView>
                         ) : (
-                          <Text style={styles.errorText}>Transkrip gagal: {meeting.transcript_error || "tidak diketahui"}.</Text>
+                          <Text style={styles.errorText}>{meeting.transcript_error ? `Transkrip gagal: ${meeting.transcript_error}.` : "Tidak ada percakapan yang terdeteksi dalam rekaman ini."}</Text>
                         )}
                       </View>
                     </View>
-                    {!meeting.segments && meeting.transcript && (
+                    {!meeting.segments && !!meeting.transcript && (
                       <Text style={styles.syncNote}>
                         Rapat ini direkam sebelum fitur sinkronisasi waktu ada, jadi transkrip tampil apa adanya tanpa
                         highlight per baris.
@@ -931,7 +985,7 @@ export default function MeetingDetailScreen() {
                     <View style={styles.editorGrid}>
                       <View style={styles.editorCol}>
                         <Text style={styles.editorColTitle}>Transkrip Mentah</Text>
-                        {meeting.transcript && (
+                        {!!meeting.transcript && (
                           <View style={styles.namesPanel}>
                             <View style={styles.namesHeader}>
                               <Feather name="users" size={14} color={colors.goldDeep} />
@@ -1030,14 +1084,14 @@ export default function MeetingDetailScreen() {
                         ) : (
                           <View style={styles.editorRawBox}>
                             <Text style={styles.errorText}>
-                              Transkrip gagal: {meeting.transcript_error || "tidak diketahui"}.
+                              {meeting.transcript_error ? `Transkrip gagal: ${meeting.transcript_error}.` : "Tidak ada percakapan yang terdeteksi dalam rekaman ini."}
                             </Text>
                           </View>
                         )}
                       </View>
 
                       <View style={styles.editorCol}>
-                        {meeting.recording && (
+                        {!!meeting.recording && (
                           <video
                             ref={videoRef}
                             controls
@@ -1128,8 +1182,8 @@ export default function MeetingDetailScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.lg },
-  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
+  scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
+  content: { gap: spacing.md, width: "100%" },
 
   backLink: { ...type.small, color: colors.inkSoft },
 
@@ -1264,9 +1318,15 @@ const styles = StyleSheet.create({
   kbButtonLabel: { ...type.small, fontWeight: "600", color: colors.ink },
   summaryText: { ...type.body, color: colors.inkSoft, lineHeight: 21 },
 
-  twoCol: { flexDirection: "row", gap: spacing.lg },
+  statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+  talkRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
+  talkName: { ...type.small, fontWeight: "600", color: colors.ink, flex: 1 },
+  talkMeta: { ...type.small, color: colors.inkSoft, fontVariant: ["tabular-nums"] },
+  talkTrack: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: "hidden" },
+  twoCol: { flexDirection: "row", flexWrap: "wrap", gap: spacing.lg },
   colCard: {
     flex: 1,
+    minWidth: 260,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,

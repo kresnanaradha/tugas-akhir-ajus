@@ -225,9 +225,18 @@ export async function getBillingStatus() {
 // changes once the user finishes linking a payment method on that page and
 // Xendit's webhook confirms it (see POST /billing/webhook in app.py) — this
 // call alone doesn't upgrade anything.
+// The sidebar's plan card listens for this, so it refreshes right after
+// anything that can change the plan (join/leave a team, cancel...) instead of
+// waiting for the next page change.
+const changesPlan = async (promise) => {
+  const result = await promise;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("notulis:plan-changed"));
+  return result;
+};
+
 export async function cancelPendingCheckout() {
   const res = await apiFetch("/billing/checkout/cancel", { method: "POST" });
-  return handleResponse(res);
+  return changesPlan(handleResponse(res));
 }
 
 export async function startCheckout(plan) {
@@ -242,7 +251,7 @@ export async function startCheckout(plan) {
 // Cancels the current paid subscription (downgrades to Free immediately).
 export async function cancelSubscription() {
   const res = await apiFetch("/billing/cancel", { method: "POST" });
-  return handleResponse(res);
+  return changesPlan(handleResponse(res));
 }
 
 // URL for a meeting's recording file — for <video>/<audio> playback or a
@@ -370,13 +379,13 @@ export async function joinTeam(token) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token }),
   });
-  return handleResponse(res);
+  return changesPlan(handleResponse(res));
 }
 
 // Self-service leave (any role) — same server-side effect as an admin
 // removing this same user via removeTeamMember().
 export async function leaveTeam() {
-  return handleResponse(await apiFetch("/teams/leave", { method: "POST" }));
+  return changesPlan(handleResponse(await apiFetch("/teams/leave", { method: "POST" })));
 }
 
 export async function removeTeamMember(userId) {

@@ -5,6 +5,8 @@ import time
 import uuid
 from pathlib import Path
 
+from . import audio_backup
+
 # Recording pattern (getDisplayMedia + MediaRecorder + exposed function chunk
 # relay) adapted from screenappai/meeting-bot (MIT license), src/tasks/RecordingTask.ts.
 _RECORD_JS = """
@@ -59,7 +61,9 @@ async ({ secretId, mimeType }) => {
   window.__notulisLastSound = Date.now();
   const track = stream.getAudioTracks()[0];
   if (track) {
-    const ctx = new AudioContext();
+    // Only loudness matters here: a low sample rate and big buffers keep this watch from
+    // competing with the recorder for CPU (dropped audio samples sound like crackling).
+    const ctx = new AudioContext({ sampleRate: 8000, latencyHint: 'playback' });
     const analyser = ctx.createAnalyser();
     ctx.createMediaStreamSource(new MediaStream([track])).connect(analyser);
     const buf = new Float32Array(analyser.fftSize);
@@ -178,6 +182,7 @@ class MeetBotBase:
         # minute), and a crash or kill mid-meeting used to lose all of it --
         # now whatever was captured so far is already in the file.
         out_file = open(out_path, "wb")
+        backup = None  # PulseAudio side capture, see bots/audio_backup.py
 
         def on_chunk(secret_id: str, b64data: str):
             if secret_id != self.secret_id or out_file.closed:
@@ -196,6 +201,7 @@ class MeetBotBase:
             self.page.bring_to_front()
             self.page.mouse.click(5, 5)
             self.page.wait_for_timeout(300)
+            backup = audio_backup.start(out_path.with_suffix(".backup.ogg"))
             self.page.evaluate(_RECORD_JS, {"secretId": self.secret_id, "mimeType": self.MIME_TYPE})
 
             self._set_status("recording")
@@ -244,5 +250,9 @@ class MeetBotBase:
         finally:
             print(f"[record] {self._chunk_count} chunks received")
             out_file.close()
+            try:
+                audio_backup.finish(backup, out_path, self.record_started_at)
+            except Exception as e:  # never let the repair take a finished recording down
+                print(f"[audio_backup] unexpected error, original kept: {e}")
 
         return str(out_path)

@@ -460,7 +460,7 @@ def _notify_if_quota_exhausted(meeting_id: str, duration_minutes: float) -> None
 
 
 def _plan_limits(user_id: str) -> dict:
-    plan = billing_store.get_subscription(user_id)["plan"]
+    plan = billing_store.effective_plan(user_id)[0]
     return billing_store.PLAN_LIMITS.get(plan, billing_store.PLAN_LIMITS["free"])
 
 
@@ -497,7 +497,7 @@ def _kb_allowed(user_id: str) -> bool:
     """Knowledge Base (opt-in + search) is a Pro/Team feature — see the
     "Knowledge Base pencarian semantik" bullet on the Pengaturan page's
     Pro/Team plans, absent from Free's."""
-    return billing_store.get_subscription(user_id)["plan"] != "free"
+    return billing_store.effective_plan(user_id)[0] != "free"
 
 
 def _check_meeting_quota(user_id: str) -> str | None:
@@ -1014,7 +1014,13 @@ def admin_stats_route():
 @super_admin_required
 def admin_users_list():
     plans = billing_store.plans_by_user()
-    return jsonify([{**u, "plan": plans.get(u["id"], "free")} for u in auth_store.list_users()])
+    team_plans = billing_store.team_plans()
+
+    def plan_of(uid):
+        own = plans.get(uid, "free")
+        return own if own != "free" else team_plans.get(uid, "free")
+
+    return jsonify([{**u, "plan": plan_of(u["id"])} for u in auth_store.list_users()])
 
 
 @app.post("/admin/users")
@@ -1172,7 +1178,15 @@ def billing_return():
 @app.get("/billing/status")
 @login_required
 def billing_status():
-    return jsonify({**billing_store.get_subscription(session["user_id"]), "weekly_quota": _weekly_quota(session["user_id"])})
+    plan, inherited = billing_store.effective_plan(session["user_id"])
+    return jsonify(
+        {
+            **billing_store.get_subscription(session["user_id"]),
+            "plan": plan,
+            "inherited_from_team": inherited,
+            "weekly_quota": _weekly_quota(session["user_id"]),
+        }
+    )
 
 
 @app.post("/billing/checkout")

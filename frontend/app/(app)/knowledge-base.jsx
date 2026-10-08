@@ -302,8 +302,8 @@ export default function KnowledgeBaseScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  scrollContent: { alignItems: "center", padding: spacing.lg },
-  content: { gap: spacing.md, maxWidth: 1200, width: "100%" },
+  scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
+  content: { gap: spacing.md, width: "100%" },
 
   split: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
   mainCol: { flex: 1.6, minWidth: 420, gap: spacing.md },

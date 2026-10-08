@@ -21,7 +21,9 @@ def transcribe(local_recording_path: str, meeting_id: str, num_speakers: int | N
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pipeline.transcribe_worker", local_recording_path, meeting_id, str(num_speakers or ""), out_file],
-            capture_output=True,
+            # stdout is inherited so the worker's [timing] lines show up live in the
+            # container log; only stderr is kept, for the error message below.
+            stderr=subprocess.PIPE,
             text=True,
         )
         if proc.returncode != 0:

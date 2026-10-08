@@ -56,5 +56,8 @@ for i in $(seq 1 30); do
 done
 pactl load-module module-null-sink sink_name=DummyOutput
 pactl set-default-sink DummyOutput
+# Without this the sink goes to sleep after 5 s of silence and its monitor stops delivering
+# data, which would leave holes in the backup audio capture (bots/audio_backup.py).
+pactl unload-module module-suspend-on-idle || true
 
 exec "$@"

@@ -6,7 +6,10 @@ app.py's GET /reports/stats.
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import artifacts
+import psycopg2.extras
+
+from . import artifacts, auth_store, team_store
+from .db import with_conn
 from .meetings_store import counts_by_period, daily_counts, list_meetings, platform_counts, total_duration_minutes
 
 # user_id -> (computed_at, rollup). Reading every meeting's summary.json from
@@ -79,6 +82,49 @@ def invalidate_action_item_cache(user_id: str) -> None:
     """Called after a toggle/edit changes a meeting's action items, so the
     Laporan rollup doesn't keep serving stale done/open counts for up to 60s."""
     _rollup_cache.pop(user_id, None)
+
+
+def team_usage(user_id: str) -> dict | None:
+    """How much this user's team has been used: meetings, this month's meetings,
+    meetings shared with the team and recorded minutes, in total and per member.
+    None when the user is not on a team. Counts come straight from the meetings
+    table (failed joins excluded), so only current members appear: someone who
+    left takes their past meetings out of the figures."""
+    user = auth_store.get_user(user_id)
+    team = team_store.get_team(user["team_id"]) if user and user.get("team_id") else None
+    if team is None:
+        return None
+
+    def _do(conn):
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT u.id, u.name, u.team_role AS role,
+                       COUNT(m.id) AS meetings,
+                       COUNT(m.id) FILTER (WHERE m.created_at >= date_trunc('month', CURRENT_DATE)) AS this_month,
+                       COUNT(m.id) FILTER (WHERE m.shared_with_team) AS shared,
+                       COALESCE(SUM(m.duration_minutes), 0) AS minutes
+                FROM users u
+                LEFT JOIN meetings m ON m.user_id = u.id AND m.status <> 'failed'
+                WHERE u.team_id = %s
+                GROUP BY u.id, u.name, u.team_role
+                ORDER BY meetings DESC, u.name
+                """,
+                (team["id"],),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    members = [{**r, "minutes": round(float(r["minutes"]), 1)} for r in with_conn(_do)]
+    return {
+        "team": {"id": team["id"], "name": team["name"]},
+        "totals": {
+            "meetings": sum(m["meetings"] for m in members),
+            "this_month": sum(m["this_month"] for m in members),
+            "shared": sum(m["shared"] for m in members),
+            "minutes": round(sum(m["minutes"] for m in members), 1),
+        },
+        "members": members,
+    }
 
 
 def get_stats(user_id: str, with_action_items: bool = False) -> dict:

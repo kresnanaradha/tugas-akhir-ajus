@@ -27,7 +27,7 @@ function MeetingPreview({ meeting }) {
 
   useEffect(() => {
     if (!meeting) return;
-    if (meeting.status === "failed" || LIVE.includes(meeting.status)) {
+    if (meeting.status === "failed" || meeting.status === "limited" || LIVE.includes(meeting.status)) {
       setState({ status: "idle", data: null });
       return;
     }
@@ -79,8 +79,14 @@ function MeetingPreview({ meeting }) {
 
         {summary && (
           <>
+            {!!summary.short_summary && (
+              <View style={styles.block}>
+                <Text style={styles.blockLabel}>RINGKASAN</Text>
+                <Text style={styles.blockText}>{summary.short_summary}</Text>
+              </View>
+            )}
             <View style={styles.block}>
-              <Text style={styles.blockLabel}>RINGKASAN</Text>
+              <Text style={styles.blockLabel}>POKOK PEMBAHASAN RAPAT</Text>
               <Text style={styles.blockText}>{summary.executive_summary}</Text>
             </View>
             {summary.key_decisions?.length > 0 && (
@@ -135,6 +141,7 @@ const IDLE_MESSAGE = {
   stopping: "Rekaman sedang diselesaikan. Ringkasan akan tersedia setelah diproses.",
   processing: "Transkrip dan ringkasan sedang diproses. Ini bisa memakan waktu, terutama untuk rapat yang panjang.",
   failed: "Rapat ini gagal diproses.",
+  limited: "Rekaman tersimpan, tetapi belum diproses AI karena melewati sisa kuota Free minggu ini. Buka detail untuk memprosesnya.",
 };
 
 export default function RapatScreen() {

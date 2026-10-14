@@ -174,6 +174,18 @@ export async function updateTranscript(id, transcript, lineSpeakers, lineTexts) 
 // /meetings/<id>/action-items/<index>/toggle in app.py. Sends the wanted
 // value (not a blind flip) so quick successive clicks can't cancel each
 // other. Returns the updated summary object.
+// Adds the short summary to a meeting summarized before it existed; returns the new summary.
+// Hands a recording kept without AI processing (status "limited") to a transcriber.
+export async function processMeeting(id) {
+  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/process`, { method: "POST" });
+  return handleResponse(res);
+}
+
+export async function generateShortSummary(id) {
+  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/short-summary`, { method: "POST" });
+  return handleResponse(res);
+}
+
 export async function toggleActionItem(id, index, done) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items/${index}/toggle`, {
     method: "POST",
@@ -319,6 +331,12 @@ export async function getReportStats() {
 // Rekap of every action item across this user's meetings — totals, per
 // assignee, and the still-open items. Separate call because it's slow on a
 // cold cache (see GET /reports/action-items).
+// Usage of the caller's own team, or null when they are not on one. See GET /reports/team.
+export async function getReportTeam() {
+  const res = await apiFetch("/reports/team");
+  return handleResponse(res);
+}
+
 export async function getReportActionItems() {
   return handleResponse(await apiFetch("/reports/action-items"));
 }
@@ -330,6 +348,11 @@ export function getReportExportUrl() {
 }
 
 // URL for the Perbandingan Rapat page's PDF export — see GET /perbandingan/export.
+export async function getComparisonAnalysis(a, b) {
+  const res = await apiFetch(`/perbandingan/analisis?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+  return handleResponse(res);
+}
+
 export function getComparisonExportUrl(meetingIdA, meetingIdB) {
   return `${API_BASE_URL}/perbandingan/export?a=${encodeURIComponent(meetingIdA)}&b=${encodeURIComponent(meetingIdB)}`;
 }

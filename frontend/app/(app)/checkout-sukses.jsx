@@ -79,9 +79,9 @@ export default function CheckoutSuksesScreen() {
           </>
         )}
 
-        <Link href="/pengaturan" asChild>
+        <Link href="/billing" asChild>
           <View style={styles.button}>
-            <Text style={styles.buttonLabel}>Kembali ke Pengaturan</Text>
+            <Text style={styles.buttonLabel}>Kembali ke Billing</Text>
           </View>
         </Link>
       </View>

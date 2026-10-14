@@ -2,9 +2,9 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 
-export function StatCard({ value, label, delta, deltaColor = colors.inkFaint }) {
+export function StatCard({ value, label, delta, deltaColor = colors.inkFaint, style }) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, style]}>
       <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
         {value}
       </Text>
@@ -26,12 +26,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.lg,
     paddingHorizontal: spacing.lg,
-    gap: 2,
+    gap: 4,
+    justifyContent: "center", // a card stretched to a taller neighbour keeps its text in the middle
     ...shadow.card,
   },
-  value: { ...type.stat, fontSize: 24, color: colors.ink, fontVariant: ["tabular-nums"] },
+  value: { ...type.stat, fontSize: 34, lineHeight: 40, color: colors.ink, fontVariant: ["tabular-nums"] },
   label: { ...type.small, color: colors.inkSoft },
   delta: { ...type.small, fontWeight: "600", marginTop: 2 },
 });

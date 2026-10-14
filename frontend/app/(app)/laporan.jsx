@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getReportActionItems, getReportExportUrl, getReportStats, toggleActionItem } from "@/lib/api";
+import { getReportActionItems, getReportExportUrl, getReportStats, getReportTeam, toggleActionItem } from "@/lib/api";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
@@ -15,11 +15,30 @@ import { StatCard } from "@/components/StatCard";
 const PLATFORM_COLORS = { google_meet: colors.info, zoom: colors.success, upload: colors.goldDeep };
 const PLATFORM_LABELS = { google_meet: "Google Meet", zoom: "Zoom", upload: "Upload" };
 
+// Date shown under each Volume Rapat figure. The week runs Monday to Sunday, the
+// same as the server's date_trunc('week') that produces the count.
+function volumeDates() {
+  const fmt = (d, o) => new Intl.DateTimeFormat("id-ID", o).format(d);
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const short = { day: "numeric", month: "short" };
+  return {
+    today: fmt(now, { weekday: "long", day: "numeric", month: "short", year: "numeric" }),
+    week: `${fmt(monday, short)} sampai ${fmt(sunday, short)}`,
+    month: fmt(now, { month: "long", year: "numeric" }),
+  };
+}
+
 export default function LaporanScreen() {
+  const dates = volumeDates();
   const [status, setStatus] = useState("loading"); // loading | error | done
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
   const [actions, setActions] = useState(null); // null = loading, false = failed
+  const [team, setTeam] = useState(null); // null = not on a team (or failed): the section just stays hidden
 
   useEffect(() => {
     getReportStats()
@@ -31,6 +50,12 @@ export default function LaporanScreen() {
         setError(e.message || "Gagal memuat laporan");
         setStatus("error");
       });
+  }, []);
+
+  useEffect(() => {
+    getReportTeam()
+      .then(setTeam)
+      .catch(() => setTeam(null));
   }, []);
 
   useEffect(() => {
@@ -103,10 +128,10 @@ export default function LaporanScreen() {
             <View style={styles.column}>
               <Text style={styles.sectionLabel}>Volume Rapat</Text>
               <View style={styles.statRow}>
-                <StatCard value={stats.meetings.today} label="Hari Ini" />
-                <StatCard value={stats.meetings.this_week} label="Minggu Ini" />
-                <StatCard value={stats.meetings.this_month} label="Bulan Ini" />
-                <StatCard value={stats.meetings.total} label="Total" />
+                <StatCard value={stats.meetings.today} label="Hari Ini" delta={dates.today} />
+                <StatCard value={stats.meetings.this_week} label="Minggu Ini" delta={dates.week} />
+                <StatCard value={stats.meetings.this_month} label="Bulan Ini" delta={dates.month} />
+                <StatCard value={stats.meetings.total} label="Total" delta="Semua waktu" />
               </View>
               <View style={styles.chartCard}>
                 <Text style={styles.chartTitle}>Rapat per Hari (14 Hari Terakhir)</Text>
@@ -127,16 +152,63 @@ export default function LaporanScreen() {
               </View>
               <View style={styles.chartCard}>
                 <Text style={styles.chartTitle}>Distribusi Platform</Text>
-                <HorizontalBarChart
-                  data={Object.entries(stats.platform_counts).map(([platform, n]) => ({
-                    label: PLATFORM_LABELS[platform] || platform,
-                    value: n,
-                    color: PLATFORM_COLORS[platform] || colors.inkFaint,
-                  }))}
-                />
+                <View style={styles.chartBody}>
+                  {/* every platform, even at 0, so the card is never one lonely bar */}
+                  <HorizontalBarChart
+                    labelWidth={90}
+                    fill
+                    data={Object.keys(PLATFORM_LABELS).map((platform) => ({
+                      label: PLATFORM_LABELS[platform],
+                      value: stats.platform_counts[platform] || 0,
+                      color: PLATFORM_COLORS[platform],
+                    }))}
+                  />
+                </View>
               </View>
             </View>
           </View>
+        )}
+
+        {team && (
+          <>
+            <Text style={styles.sectionLabel}>Pemakaian Team ({team.team.name})</Text>
+            <View style={styles.columns}>
+              <View style={styles.column}>
+                <View style={[styles.statRow, { flexGrow: 1 }]}>
+                  <StatCard value={team.totals.meetings} label="Rapat Team" delta="Semua anggota" />
+                  <StatCard value={team.totals.this_month} label="Bulan Ini" delta={dates.month} />
+                  <StatCard value={team.totals.shared} label="Dibagikan ke Team" />
+                  <StatCard value={`${(team.totals.minutes / 60).toFixed(1)} jam`} label="Total Durasi Rekaman" />
+                </View>
+              </View>
+              <View style={styles.column}>
+                <View style={styles.chartCard}>
+                  <Text style={styles.chartTitle}>Pemakaian per Anggota</Text>
+                  <View style={styles.chartBody}>
+                  {team.members.map((m) => {
+                    const max = Math.max(1, ...team.members.map((x) => x.meetings));
+                    return (
+                      <View key={m.id} style={{ gap: 4 }}>
+                        <View style={styles.memberRow}>
+                          <Text style={styles.memberName} numberOfLines={1}>
+                            {m.name}
+                            {m.role === "admin" ? " (Admin)" : ""}
+                          </Text>
+                          <Text style={styles.memberMeta}>
+                            {m.meetings} rapat, {m.this_month} bulan ini
+                          </Text>
+                        </View>
+                        <View style={styles.memberTrack}>
+                          <View style={{ width: `${Math.max(2, (m.meetings / max) * 100)}%`, height: 6, backgroundColor: colors.gold }} />
+                        </View>
+                      </View>
+                    );
+                  })}
+                  </View>
+                </View>
+              </View>
+            </View>
+          </>
         )}
 
         <Text style={styles.sectionLabel}>Tindak Lanjut (Action Item)</Text>
@@ -160,13 +232,15 @@ export default function LaporanScreen() {
                 {actions.by_assignee.length === 0 ? (
                   <Text style={styles.stateText}>Belum ada action item.</Text>
                 ) : (
-                  <HorizontalBarChart
-                    data={actions.by_assignee.slice(0, 8).map((r) => ({
-                      label: r.assignee,
-                      value: r.open + r.done,
-                      color: r.open > 0 ? colors.goldDeep : colors.success,
-                    }))}
-                  />
+                  <View style={styles.chartBody}>
+                    <HorizontalBarChart
+                      data={actions.by_assignee.slice(0, 8).map((r) => ({
+                        label: r.assignee,
+                        value: r.open + r.done,
+                        color: r.open > 0 ? colors.goldDeep : colors.success,
+                      }))}
+                    />
+                  </View>
                 )}
               </View>
             </View>
@@ -226,15 +300,17 @@ const styles = StyleSheet.create({
   },
   exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  // stretch + a growing last card: both columns end on the same line, no empty gap under the shorter one
+  columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "stretch" },
   column: { flex: 1, minWidth: 380, gap: spacing.md },
   openRow: { flexDirection: "row", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
   openTask: { ...type.small, fontSize: 13.5, color: colors.ink, lineHeight: 18 },
   openMeta: { ...type.small, color: colors.inkFaint },
   sectionLabel: { ...type.eyebrow, color: colors.inkFaint, marginTop: spacing.md },
-  statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+  statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignContent: "stretch" },
 
   chartCard: {
+    flexGrow: 1,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -243,8 +319,14 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     ...shadow.card,
   },
+  // The chart sits in the middle of a card that was stretched to its neighbour's height.
+  chartBody: { flex: 1, justifyContent: "space-evenly", gap: spacing.md },
   chartTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
   stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xl },
+  memberRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
+  memberName: { ...type.small, fontWeight: "600", color: colors.ink, flex: 1 },
+  memberMeta: { ...type.small, color: colors.inkSoft, fontVariant: ["tabular-nums"], flexShrink: 1, textAlign: "right" },
+  memberTrack: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: "hidden" },
   stateText: { ...type.body, color: colors.inkSoft, textAlign: "center" },
 });

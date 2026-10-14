@@ -277,13 +277,14 @@ def count_own_this_month(user_id: str) -> int:
 
 
 def recorded_minutes_since(user_id: str, since: datetime) -> float:
-    """Minutes this user's bot recorded since `since` -- joins only (an upload
-    has no url), for the Free plan's weekly recording quota."""
+    """Minutes of this user's bot recordings that were handed to AI since `since` --
+    joins only (an upload has no url), and not the ones kept unprocessed
+    (status "limited"), for the Free plan's weekly quota."""
 
     def _do(conn):
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT COALESCE(SUM(duration_minutes), 0) FROM meetings WHERE user_id = %s AND url IS NOT NULL AND created_at >= %s",
+                "SELECT COALESCE(SUM(duration_minutes), 0) FROM meetings WHERE user_id = %s AND url IS NOT NULL AND status <> 'limited' AND created_at >= %s",
                 (user_id, since),
             )
             return float(cur.fetchone()[0])

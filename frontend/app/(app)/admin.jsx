@@ -69,7 +69,7 @@ export default function AdminScreen() {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.eyebrow}>SUPER ADMIN</Text>
-            <Text style={styles.title}>Dashboard</Text>
+            <Text style={styles.title}>Statistik</Text>
             <Text style={styles.description}>Statistik penggunaan, biaya, dan pendapatan seluruh sistem Notulis.</Text>
           </View>
           <Pressable style={styles.exportButton} onPress={() => window.open(getAdminExportUrl(), "_blank")}>
@@ -129,7 +129,9 @@ export default function AdminScreen() {
             </View>
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Distribusi Plan Pengguna</Text>
+              <View style={styles.chartBody}>
               <HorizontalBarChart
+                fill
                 data={["free", "pro", "team"].map((plan) => ({
                   label: PLAN_LABELS[plan],
                   value:
@@ -139,6 +141,7 @@ export default function AdminScreen() {
                   color: PLAN_COLORS[plan],
                 }))}
               />
+              </View>
             </View>
 
             </View>
@@ -153,6 +156,31 @@ export default function AdminScreen() {
               />
               <StatCard value={stats.openai_cost.call_count} label="Jumlah Panggilan API" />
               <StatCard value={formatBytes(stats.storage_bytes)} label="Penyimpanan R2 Terpakai" />
+            </View>
+          </>
+        )}
+
+        {stats && (
+          <>
+            <Text style={styles.sectionLabel}>Pemakaian Team</Text>
+            <View style={styles.chartCard}>
+              <Text style={styles.chartTitle}>Total Rapat per Team</Text>
+              {stats.teams.length === 0 ? (
+                <Text style={styles.description}>Belum ada team.</Text>
+              ) : (
+                <>
+                  <HorizontalBarChart
+                    labelWidth={150}
+                    unit="rapat"
+                    data={stats.teams.map((t) => ({ label: t.name, value: t.meetings, color: colors.success }))}
+                  />
+                  {stats.teams.map((t) => (
+                    <Text key={t.id} style={styles.teamMeta}>
+                      {t.name}: {t.members} anggota · {t.this_month} rapat bulan ini · {t.shared} dibagikan · {t.minutes} menit · pemilik {t.owner_name || "-"}
+                    </Text>
+                  ))}
+                </>
+              )}
             </View>
           </>
         )}
@@ -186,12 +214,18 @@ const styles = StyleSheet.create({
   },
   exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  // stretch + a growing last card: both columns end on the same line, no empty gap under the shorter one
+  columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "stretch" },
   column: { flex: 1, minWidth: 380, gap: spacing.md },
   sectionLabel: { ...type.eyebrow, color: colors.inkFaint, marginTop: spacing.md },
-  statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+  statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignContent: "stretch" },
+  teamRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  teamName: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
+  teamMeta: { ...type.small, color: colors.inkSoft },
+  teamNumbers: { ...type.small, color: colors.ink, fontVariant: ["tabular-nums"] },
 
   chartCard: {
+    flexGrow: 1,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -200,6 +234,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     ...shadow.card,
   },
+  chartBody: { flex: 1, justifyContent: "space-evenly", gap: spacing.md },
   chartTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
   stateBox: { alignItems: "center", gap: spacing.sm, padding: spacing.xl },

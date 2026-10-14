@@ -26,7 +26,7 @@ const NAV_GROUPS = [
   },
   { label: "Kolaborasi", items: [{ href: "/team", label: "Team", icon: "users" }] },
 ];
-const ADMIN_GROUP = { label: "Administrasi", items: [{ href: "/admin", label: "Admin", icon: "shield" }] };
+const ADMIN_GROUP = { label: "Sistem", items: [{ href: "/admin", label: "Statistik", icon: "shield" }] };
 
 // A page counts as its menu item's page too when it is nested under it
 // (/rapat/baru, /rapat/<id>, /team/gabung/<token> ...).
@@ -60,7 +60,7 @@ function PlanCard({ pathname }) {
       {quota ? (
         <>
           <View style={styles.planRow}>
-            <Text style={styles.planMeta}>Rekaman/minggu</Text>
+            <Text style={styles.planMeta}>Diproses AI/minggu</Text>
             <Text style={[styles.planMeta, exhausted && { color: colors.danger, fontWeight: "700" }]}>
               {Math.round(quota.used)}/{quota.limit} mnt
             </Text>
@@ -78,7 +78,7 @@ function PlanCard({ pathname }) {
       ) : (
         <Text style={styles.planMeta}>Rekaman tanpa batas</Text>
       )}
-      <Link href="/pengaturan" asChild>
+      <Link href="/billing" asChild>
         <Pressable>
           <Text style={styles.planLink}>Lihat paket</Text>
         </Pressable>
@@ -143,6 +143,12 @@ export function Sidebar() {
             >
               Pengaturan
             </Text>
+          </Pressable>
+        </Link>
+        <Link href="/billing" asChild>
+          <Pressable style={StyleSheet.flatten([styles.navItem, isActive(pathname, "/billing") && styles.navItemActive])}>
+            <Feather name="credit-card" size={17} color={isActive(pathname, "/billing") ? colors.ink : colors.inkSoft} />
+            <Text style={StyleSheet.flatten([styles.navLabel, isActive(pathname, "/billing") && styles.navLabelActive])}>Billing</Text>
           </Pressable>
         </Link>
         <View style={styles.userRow}>

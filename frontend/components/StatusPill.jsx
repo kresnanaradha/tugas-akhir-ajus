@@ -9,6 +9,7 @@ const CONFIG = {
   recording: { label: "Sedang Merekam", fg: colors.danger, bg: colors.dangerSoft },
   stopping: { label: "Menghentikan...", fg: colors.info, bg: colors.infoSoft },
   processing: { label: "Memproses...", fg: colors.info, bg: colors.infoSoft },
+  limited: { label: "Belum Diproses", fg: colors.goldDeep, bg: colors.goldSoft },
 };
 
 export function StatusPill({ status }) {

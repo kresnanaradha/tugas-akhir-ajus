@@ -1,7 +1,5 @@
-// Design tokens for Notulis. Palette is grounded in the product's own
-// identity: navy ink from the logo mark, warm gold as the single accent
-// (the "highlighter" color — used for the one thing on a screen that should
-// draw the eye), and a soft paper background instead of pure white.
+// token desain: tinta navy dari logo, emas hangat sebagai satu-satunya aksen (untuk yang harus menarik mata) dan latar
+// kertas lembut, bukan putih murni
 
 export const colors = {
   ink: "#1B1F2B",
@@ -27,8 +25,8 @@ export const colors = {
   white: "#FFFFFF",
 };
 
-// More air than the first version (md 12, lg 16, xl 24): every gap and padding
-// that uses a token grows with it, which is most of the app.
+// Lebih lega dari versi pertama (md 12, lg 16, xl 24): setiap jarak dan padding
+// yang memakai token ikut membesar, yaitu sebagian besar aplikasi.
 export const spacing = {
   xs: 4,
   sm: 8,
@@ -46,7 +44,7 @@ export const radius = {
   pill: 999,
 };
 
-// Loaded in app/_layout.jsx; the rest is the usual system fallback.
+// Dimuat di app/_layout.jsx; sisanya fallback sistem biasa.
 export const FONT_FAMILY = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
 export const type = {
@@ -60,7 +58,7 @@ export const type = {
   stat: { fontFamily: FONT_FAMILY, fontSize: 28, fontWeight: "700", letterSpacing: -0.6 },
 };
 
-// Soft and wide instead of a tight dark edge: cards float a little off the page.
+// Lembut dan lebar, bukan tepi gelap yang rapat: kartu terlihat sedikit melayang dari halaman.
 export const shadow = {
   card: {
     shadowColor: "#1B1F2B",

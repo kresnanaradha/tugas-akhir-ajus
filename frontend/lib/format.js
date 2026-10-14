@@ -1,5 +1,5 @@
-// Formats an ISO timestamp (from the backend's meetings.json records) into
-// the {date, time} display shape MeetingRow expects.
+// Mengubah timestamp ISO (dari data rapat backend) menjadi
+// bentuk tampilan {date, time} yang dibutuhkan MeetingRow.
 export function formatMeetingDate(isoString) {
   const d = new Date(isoString);
   const now = new Date();
@@ -15,16 +15,14 @@ export function formatMeetingDate(isoString) {
   return { date, time };
 }
 
-// Shared across MeetingRow and the meeting detail page.
+// Dipakai bersama oleh MeetingRow dan halaman detail rapat.
 export const PLATFORM_LABEL = {
   google_meet: "Google Meet",
   zoom: "Zoom",
   upload: "Upload Audio",
 };
 
-// Up to 2 initials from a display name, for the avatar circles in
-// Sidebar/TopBar/Pengaturan — one shared implementation instead of three
-// copies drifting apart.
+// sampai 2 inisial dari nama, untuk lingkaran avatar
 export function initialsOf(name) {
   return (name || "")
     .split(" ")

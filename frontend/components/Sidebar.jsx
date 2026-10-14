@@ -28,20 +28,20 @@ const NAV_GROUPS = [
 ];
 const ADMIN_GROUP = { label: "Sistem", items: [{ href: "/admin", label: "Statistik", icon: "shield" }] };
 
-// A page counts as its menu item's page too when it is nested under it
+// Sebuah halaman juga dihitung sebagai halaman item menunya kalau bersarang di bawahnya
 // (/rapat/baru, /rapat/<id>, /team/gabung/<token> ...).
 const isActive = (pathname, href) => pathname === href || pathname.startsWith(href + "/");
 
 const PLAN_LABEL = { free: "Free", pro: "Pro", team: "Team" };
 
-// Plan + this week's recording quota (Free only; Pro/Team have no cap).
-// Re-read on every page change so it updates after a recording or an upgrade.
+// Paket + kuota rekaman minggu ini (hanya Free; Pro/Team tanpa batas).
+// Dibaca ulang tiap pindah halaman supaya diperbarui setelah rekaman atau upgrade.
 function PlanCard({ pathname }) {
   const [sub, setSub] = useState(null);
   useEffect(() => {
     const load = () => getBillingStatus().then(setSub).catch(() => {});
     load();
-    // also after a plan-changing action (api.js) and when the tab regains focus
+    // juga setelah aksi yang mengubah paket (api.js) dan saat tab kembali fokus
     window.addEventListener("notulis:plan-changed", load);
     window.addEventListener("focus", load);
     return () => {
@@ -90,16 +90,11 @@ function PlanCard({ pathname }) {
 export function Sidebar() {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
-  // Only super_admin sees this — the backend independently enforces it too
-  // (403 on /admin/stats for anyone else), this just keeps the link itself
-  // from showing to someone who'd hit a wall clicking it.
+  // hanya super admin yang melihat tautan Statistik, backend menolak yang lain juga
   const groups = user?.role === "super_admin" ? [...NAV_GROUPS, ADMIN_GROUP] : NAV_GROUPS;
 
   function handleLogout() {
-    // Fire-and-forget on the server call — clear local auth state either
-    // way so the UI can't get stuck showing a logged-in shell if the
-    // request itself fails (e.g. backend already restarted, cookie's dead
-    // anyway).
+    // kirim dan lupakan, dan bersihkan auth lokal bagaimanapun supaya kerangka tidak tersangkut login kalau permintaannya gagal
     apiLogout().catch(() => {});
     signOut();
     router.replace("/login");

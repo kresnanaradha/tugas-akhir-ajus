@@ -2,12 +2,8 @@ import { createContext, useContext, useEffect, useState } from "react";
 
 import { getMe } from "./api";
 
-// Single source of truth for "who's logged in" across the app — Sidebar/
-// TopBar read the user from here instead of the old mock-data.js stand-in,
-// and (app)/_layout.jsx uses `status` to redirect to /login when there's no
-// session. Checks GET /auth/me once on mount (the session cookie, if any,
-// rides along automatically — see lib/api.js's apiFetch) rather than each
-// screen re-checking independently.
+// siapa yang login, untuk seluruh aplikasi. Mengecek GET /auth/me sekali saat mount (cookie sesi ikut, lihat apiFetch) dan
+// (app)/_layout.jsx memakai `status` untuk mengalihkan ke /login
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -33,8 +29,8 @@ export function AuthProvider({ children }) {
     setStatus("anonymous");
   }
 
-  // Refreshes the cached user after a self-service profile edit (Pengaturan's
-  // "Nama" field) — same setter as signIn, just named for what it's for here.
+  // Menyegarkan user yang di-cache setelah edit profil sendiri (kolom "Nama"
+  // di Pengaturan) - setter yang sama dengan signIn, hanya dinamai sesuai kegunaannya di sini.
   function updateUser(u) {
     setUser(u);
   }

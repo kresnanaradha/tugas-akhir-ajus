@@ -3,15 +3,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 
-// Vertical bar chart for a single time series (magnitude over time) — built
-// on plain Views (height % of a fixed chart area), not a charting library:
-// this is a straightforward "bars grow from a baseline" case, not worth a
-// new dependency for. Follows the dataviz skill's mark spec: bars capped at
-// 24px thick with rounded tops, one sequential hue (a single series doesn't
-// need a legend), a hairline baseline — and a per-bar hover tooltip instead
-// of a value printed under every bar, so the chart stays quiet until you
-// actually point at a day (onHoverIn/Out are react-native-web's mouse
-// enter/leave, no extra library needed).
+// grafik batang untuk satu deret waktu, View biasa bukan library grafik. Batang maksimal 24px dengan ujung membulat, satu
+// warna, dan tooltip saat hover bukan angka di bawah setiap batang
 export function BarChart({ data, color = colors.gold, height = 120 }) {
   const [hovered, setHovered] = useState(null);
   const max = Math.max(1, ...data.map((d) => d.value));

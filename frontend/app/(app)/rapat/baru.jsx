@@ -31,7 +31,7 @@ export default function BuatRapatScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const [recent, setRecent] = useState(null); // null = loading
+  const [recent, setRecent] = useState(null); // null = memuat
   useEffect(() => {
     listMeetings()
       .then((data) => setRecent(data.slice(0, 4).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
@@ -48,10 +48,8 @@ export default function BuatRapatScreen() {
         name.trim() || "Notulis Bot",
         numSpeakers ? Number(numSpeakers) : null
       );
-      // The live join/record/process lifecycle from here on is shown on the
-      // meeting detail page itself (it polls GET /jobs/<id> while the status
-      // is joining/recording/stopping/processing), not inline here — so this
-      // form's only job is to kick off the job and hand off to that page.
+      // bergabung, merekam, dan memproses ditampilkan di halaman rapat (ia memantau GET /jobs/<id>), form ini hanya memulai
+      // job lalu menyerahkannya
       router.replace(`/rapat/${job_id}`);
     } catch (e) {
       setError(e.message || "Terjadi kesalahan");
@@ -187,7 +185,6 @@ const styles = StyleSheet.create({
   scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
   content: { gap: spacing.sm, width: "100%" },
 
-  backLink: { ...type.small, color: colors.inkSoft, marginBottom: spacing.md },
   title: { ...type.h1, fontSize: 24, color: colors.ink },
   subtitle: { ...type.body, color: colors.inkSoft, marginBottom: spacing.lg },
 

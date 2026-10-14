@@ -1,0 +1,117 @@
+# Nama project sama seperti sebelum folder jadi backend/, supaya volume yang ada (cache model) dan image tetap dipakai.
+name: meeting-bot
+
+# Perekam: sampai 10 bot, satu akun Google masing-masing. Tiap worker adalah seluruh backend (image sama, Flask di 5050
+# di dalam container) dengan display Xvfb dan login sendiri, jadi penjaga satu-rekaman-sekali di
+# _join() app.py berlaku per akun, bukan untuk seluruh sistem. Mereka berbagi Postgres dan R2 lewat .env,
+# hanya file sesi Google dan port host yang berbeda.
+#
+# Login tiap akun sekali di HOST (butuh layar dan orangnya), satu file sesi per worker:
+#   GOOGLE_AUTH_STATE_PATH=auth/worker-1.json python -m bots.google_login
+#   GOOGLE_AUTH_STATE_PATH=auth/worker-2.json python -m bots.google_login
+#
+# Kekurangan: baru worker-1 yang login, dan belum ada yang mengarahkan join ke worker yang kosong (frontend menunjuk
+# satu EXPO_PUBLIC_API_URL), jadi ini baru membuktikan bot terpisah bisa jalan berdampingan.
+
+x-worker-base: &worker-base
+  build: .
+  env_file: .env
+  environment:
+    GOOGLE_AUTH_STATE_PATH: /app/auth/google.json
+    # timestamp adalah waktu lokal tanpa zona dan frontend menampilkannya apa adanya, jadi container butuh zona waktu
+    # user (di UTC tiap rapat tampil 8 jam lebih awal)
+    TZ: Asia/Makassar
+    # rekaman yang selesai diserahkan ke transkriber lewat ini
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  depends_on: [redis]
+  restart: unless-stopped
+  # /dev/shm bawaan Docker (64MB) terlalu kecil untuk buffer capture Chrome, getDisplayMedia() gagal dengan
+  # "NotReadableError: Could not start video source". Saran Chrome sendiri untuk capture video adalah 2GB+
+  shm_size: "2gb"
+
+# transkriber: torch (diarization) dan faster-whisper masing-masing 3 thread karena berjalan berdampingan
+x-transcriber-base: &transcriber-base
+  build:
+    context: .
+    dockerfile: Dockerfile.transcriber
+  env_file: .env
+  depends_on: [redis]
+  restart: unless-stopped
+  mem_limit: "7g"
+  cpus: "6.0"
+  volumes: ["hf-cache:/root/.cache/huggingface"]
+
+services:
+  worker-1:
+    <<: *worker-base
+    ports: ["5050:5050"]
+    volumes: ["./auth/worker-1.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-2:
+    <<: *worker-base
+    ports: ["5051:5050"]
+    volumes: ["./auth/worker-2.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-3:
+    <<: *worker-base
+    ports: ["5052:5050"]
+    volumes: ["./auth/worker-3.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-4:
+    <<: *worker-base
+    ports: ["5053:5050"]
+    volumes: ["./auth/worker-4.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-5:
+    <<: *worker-base
+    ports: ["5054:5050"]
+    volumes: ["./auth/worker-5.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-6:
+    <<: *worker-base
+    ports: ["5055:5050"]
+    volumes: ["./auth/worker-6.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-7:
+    <<: *worker-base
+    ports: ["5056:5050"]
+    volumes: ["./auth/worker-7.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-8:
+    <<: *worker-base
+    ports: ["5057:5050"]
+    volumes: ["./auth/worker-8.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-9:
+    <<: *worker-base
+    ports: ["5058:5050"]
+    volumes: ["./auth/worker-9.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-10:
+    <<: *worker-base
+    ports: ["5059:5050"]
+    volumes: ["./auth/worker-10.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+
+  # antrean antara perekam dan transkriber (pipeline/job_queue.py). Diberi password walau tidak ada
+  # `ports:` (hanya jaringan compose ini yang menjangkaunya), kalau-kalau ada port mapping yang tertambah karena salah di VPS sungguhan
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    restart: unless-stopped
+    volumes: ["redis-data:/data"]
+
+  # Dua transkriber membatasi transkripsi 2 job sekaligus, berapa pun bot yang merekam. Satu job panjang (model turbo
+  # plus diarization paralel) mencapai ~6,1GB pada klip 3 menit dan tumbuh sesuai rapat, jadi dua job panjang tidak muat
+  # di laptop 7,7GB atau VPS 12GB: jalankan SATU untuk rapat panjang (`docker compose stop transcriber-2`).
+  # TRANSCRIBER_ID menamai list Redis berisi job worker yang belum selesai (job_queue.py), tidak boleh berubah.
+  transcriber-1:
+    <<: *transcriber-base
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      TRANSCRIBER_ID: transcriber-1
+      OMP_NUM_THREADS: "3"
+      WHISPER_THREADS: "3"
+  transcriber-2:
+    <<: *transcriber-base
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      TRANSCRIBER_ID: transcriber-2
+      OMP_NUM_THREADS: "3"
+      WHISPER_THREADS: "3"
+
+# model whisper, alignment, dan pyannote disimpan di sini supaya selamat saat container dibuat ulang. Volume bernama, bukan
+# bind mount: ada di disk WSL2, jauh lebih cepat untuk file model besar daripada bind mount Windows. Dipakai bersama semua
+volumes:
+  hf-cache:
+  redis-data:

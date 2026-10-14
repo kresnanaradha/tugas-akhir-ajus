@@ -6,9 +6,7 @@ import { colors, radius, spacing, type } from "@/constants/theme";
 import { PLATFORM_LABEL } from "@/lib/format";
 import { StatusPill } from "./StatusPill";
 
-// Platform icon + accent color for the leading avatar circle — loosely
-// evokes each brand's own color without needing brand icon assets (Feather
-// has no Zoom/Meet marks, just a generic "video").
+// ikon dan aksen per platform, kira-kira warna merek (Feather tidak punya logo Zoom atau Meet)
 const PLATFORM_ACCENT = {
   google_meet: { icon: "video", bg: colors.successSoft, fg: colors.success },
   zoom: { icon: "video", bg: colors.infoSoft, fg: colors.info },
@@ -19,8 +17,8 @@ const DEFAULT_ACCENT = { icon: "video", bg: colors.surfaceSunken, fg: colors.ink
 export function MeetingRow({ meeting, selected, onSelect }) {
   const accent = PLATFORM_ACCENT[meeting.platform] || DEFAULT_ACCENT;
 
-  // With onSelect the row just selects (Rapat page's preview pane); without it,
-  // it navigates to the detail page as before (dashboard).
+  // Dengan onSelect baris hanya memilih (panel pratinjau halaman Rapat); tanpanya,
+  // ia membuka halaman detail seperti dulu (dashboard).
   const row = (
       <Pressable style={StyleSheet.flatten([styles.row, selected && styles.rowSelected])} onPress={onSelect}>
         <View style={[styles.iconCircle, { backgroundColor: accent.bg }]}>

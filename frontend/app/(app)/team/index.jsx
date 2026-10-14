@@ -18,9 +18,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { initialsOf } from "@/lib/format";
 
-// Deliberately NOT built here: nested sub-teams and a hard per-team seat
-// quota (Team is a flat monthly fee, not metered per seat — see CLAUDE.md's
-// "Team" section). Per-meeting sharing lives on rapat/[id].jsx instead.
+// sengaja tidak dibuat: sub-team bersarang dan kuota kursi (Team biaya tetap). Berbagi per rapat ada di rapat/[id].jsx
 
 const BENEFITS = [
   { icon: "share-2", title: "Bagikan hasil rapat", body: "Pilih rapat mana yang terlihat oleh anggota team, per rapat, bukan otomatis semuanya." },

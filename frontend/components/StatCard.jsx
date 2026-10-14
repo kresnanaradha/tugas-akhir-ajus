@@ -17,10 +17,7 @@ export function StatCard({ value, label, delta, deltaColor = colors.inkFaint, st
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    // Without this, a row of several cards squeezed into a narrow column
-    // (e.g. Admin's 2-column layout) shrinks each card below what its own
-    // value text needs, wrapping a number like "Rp 99.000" mid-digit instead
-    // of the row itself wrapping onto a second line.
+    // tanpa minimum, kartu yang diperas di kolom sempit memecah angka seperti "Rp 99.000" di tengah digit alih-alih barisnya yang membungkus
     minWidth: 150,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -29,7 +26,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     paddingHorizontal: spacing.lg,
     gap: 4,
-    justifyContent: "center", // a card stretched to a taller neighbour keeps its text in the middle
+    justifyContent: "center", // kartu yang diregangkan setinggi tetangga yang lebih tinggi tetap menaruh teksnya di tengah
     ...shadow.card,
   },
   value: { ...type.stat, fontSize: 34, lineHeight: 40, color: colors.ink, fontVariant: ["tabular-nums"] },

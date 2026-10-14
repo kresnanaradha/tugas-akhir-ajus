@@ -7,10 +7,7 @@ import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { joinTeam, previewTeamInvite } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
-// Landing page for a team invite link (POST /teams/invite's invite_url) —
-// shows which team before committing, then POSTs /teams/join. Lives under
-// (app)/ (needs login) same as team.jsx; an anonymous visitor gets bounced
-// to /login by the layout first, same as every other (app)/ route.
+// halaman tujuan tautan undangan team: menampilkan team mana, lalu POST /teams/join. Butuh login seperti semua halaman (app)/
 export default function JoinTeamScreen() {
   const { token } = useLocalSearchParams();
   const { user } = useAuth();
@@ -64,7 +61,7 @@ export default function JoinTeamScreen() {
             <Text style={styles.title}>Gabung ke Team "{teamName}"?</Text>
             <Text style={styles.body}>
               {user?.team_id
-                ? "Anda sudah tergabung dalam team lain — keluar dulu dari halaman Team sebelum gabung ke team baru."
+                ? "Anda sudah tergabung dalam team lain. Keluar dulu dari halaman Team sebelum gabung ke team baru."
                 : `Anda akan bergabung sebagai member. Rapat yang dibagikan anggota lain akan terlihat di daftar Rapat Anda.`}
             </Text>
             {!!error && <Text style={styles.errorText}>{error}</Text>}

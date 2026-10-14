@@ -7,13 +7,8 @@ import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { getBillingStatus, listMeetings, searchKnowledgeBase, setKnowledgeBase } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 
-// Search-only, deliberately no chat/conversation UI — the advisor's explicit
-// direction was a RAG knowledge base people *search*, not a standing
-// chatbot (see CLAUDE.md). A query goes straight to GET
-// /knowledge-base/search and comes back as a ranked list of matched summary
-// chunks; there's no GPT call and no message history anywhere here — the
-// "Hasil Lintas Rapat" card below is worded to match that (no claim of an
-// AI-synthesized answer, just relevant chunks pooled across meetings).
+// hanya pencarian, tanpa chat: dosen ingin RAG knowledge base yang dicari orang, bukan chatbot. Query masuk ke
+// GET /knowledge-base/search dan kembali sebagai satu jawaban singkat plus potongan ringkasan yang cocok, tanpa riwayat
 const KIND_LABEL = {
   executive_summary: "Pokok Pembahasan",
   key_decision: "Keputusan",
@@ -51,7 +46,7 @@ const FEATURES = [
     icon: "link",
     color: colors.goldDeep,
     title: "Sumber Transparan",
-    description: "Setiap hasil pencarian tertaut langsung ke rapat aslinya — tidak ada jawaban tanpa sumber.",
+    description: "Setiap hasil pencarian tertaut langsung ke rapat aslinya, tidak ada jawaban tanpa sumber.",
   },
 ];
 
@@ -97,13 +92,13 @@ function KbMeetingRow({ meeting, onRemove }) {
 }
 
 export default function KnowledgeBaseScreen() {
-  const [kbMeetings, setKbMeetings] = useState(null); // null = loading
-  const [plan, setPlan] = useState(null); // null = loading; Free has no Knowledge Base (backend 402s too)
+  const [kbMeetings, setKbMeetings] = useState(null); // null = memuat
+  const [plan, setPlan] = useState(null); // null = memuat; Free tidak punya Knowledge Base (backend juga 402)
   useEffect(() => {
     getBillingStatus().then((s) => setPlan(s.plan)).catch(() => setPlan("unknown"));
   }, []);
 
-  // Refetch on every focus so a meeting added from its own page shows up here.
+  // Ambil ulang tiap kali fokus supaya rapat yang ditambahkan dari halamannya sendiri muncul di sini.
   useFocusEffect(
     useCallback(() => {
       listMeetings()
@@ -125,9 +120,7 @@ export default function KnowledgeBaseScreen() {
   const [results, setResults] = useState([]);
   const [error, setError] = useState("");
 
-  // Lets the TopBar's search box (and anything else) link straight to a
-  // result here via /knowledge-base?q=... instead of only supporting typing
-  // into this page's own box.
+  // supaya pencarian di TopBar (atau tautan apa pun) bisa membuka pencarian lewat /knowledge-base?q=...
   const { q: initialQuery } = useLocalSearchParams();
   useEffect(() => {
     if (initialQuery) runSearch(String(initialQuery));
@@ -225,7 +218,6 @@ export default function KnowledgeBaseScreen() {
           </Pressable>
         </View>
 
-
             {showHero && (
               <>
             <View style={styles.exampleRow}>
@@ -317,21 +309,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     ...shadow.card,
   },
-  hero: { alignItems: "center", gap: 6, marginBottom: spacing.sm },
-  heroIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.pill,
-    backgroundColor: colors.goldSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  heroTitle: { ...type.display, color: colors.ink, textAlign: "center" },
   heroSubtitle: { ...type.body, color: colors.inkSoft, marginTop: 2 },
 
-  compactHeader: { marginBottom: spacing.xs },
-  eyebrow: { ...type.eyebrow, color: colors.inkFaint },
   title: { ...type.h1, fontSize: 24, color: colors.ink, marginTop: 4 },
 
   searchBar: {

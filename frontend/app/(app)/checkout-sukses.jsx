@@ -7,10 +7,7 @@ import { colors, radius, spacing, type } from "@/constants/theme";
 import { getBillingStatus } from "@/lib/api";
 
 const PLAN_LABEL = { free: "Free", pro: "Pro", team: "Team" };
-// Webhook delivery and this redirect land at roughly the same time (both
-// fire right after the user finishes on Xendit's page) — there's no
-// guarantee the webhook has already updated our DB by the time this page
-// loads, so poll briefly instead of trusting a single fetch.
+// webhook dan redirect ini tiba hampir bersamaan, jadi paket mungkin belum diperbarui: pantau sebentar
 const POLL_INTERVAL_MS = 1500;
 const POLL_TIMEOUT_MS = 15000;
 
@@ -25,7 +22,7 @@ export default function CheckoutSuksesScreen() {
       getBillingStatus()
         .then((data) => {
           setSubscription(data);
-          if (data.status === "active") return; // done — plan confirmed
+          if (data.status === "active") return; // selesai - paket terkonfirmasi
           if (Date.now() >= deadlineRef.current) {
             setTimedOut(true);
             return;

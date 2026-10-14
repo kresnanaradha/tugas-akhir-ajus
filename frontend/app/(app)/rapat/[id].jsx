@@ -15,79 +15,11 @@ import {
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { deleteMeeting, generateShortSummary, getJobStatus, getMeeting, getRecordingUrl, processMeeting, replaceActionItems, setKnowledgeBase, shareMeetingWithTeam, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
+import { buildEditorState, formatBytes, formatElapsed, joinTranscriptLines, meetingStats, parseTranscriptLines, resolveLineSpeakers, speakerColor } from "@/lib/transcript";
 import { BackLink } from "@/components/BackLink";
 import { StatCard } from "@/components/StatCard";
 import { StatusPill } from "@/components/StatusPill";
 import { useAuth } from "@/lib/auth-context";
-
-// Cycles through existing theme colors rather than introducing new ones —
-// consistent color per speaker label, not a real identity (diarization only
-// gives us numbered speakers, not names). Hashes the whole label (not just
-// a trailing "_00" digit) so a renamed/merged speaker ("Kresna") still gets
-// a stable color, and two labels that get merged into the same name
-// automatically end up the same color too.
-const SPEAKER_PALETTE = [colors.info, colors.success, colors.goldDeep, colors.danger];
-function speakerColor(speaker) {
-  if (!speaker) return SPEAKER_PALETTE[0];
-  let hash = 0;
-  for (let i = 0; i < speaker.length; i++) hash = (hash * 31 + speaker.charCodeAt(i)) >>> 0;
-  return SPEAKER_PALETTE[hash % SPEAKER_PALETTE.length];
-}
-
-// transcribe.py writes one "[SPEAKER_NN] text" line per utterance — parsed
-// back into rows for the editable view so each speaker gets its own styled
-// line instead of one giant plain-text blob. Falls back to a speaker-less
-// row for anything that doesn't match (blank lines, older formats).
-const LINE_PATTERN = /^\[(.+?)\]\s?(.*)$/;
-function parseTranscriptLines(text) {
-  return (text || "").split("\n").map((line) => {
-    const match = LINE_PATTERN.exec(line);
-    return match ? { speaker: match[1], text: match[2] } : { speaker: null, text: line };
-  });
-}
-// Per line, resolves to whichever rename applies: a line-only override (for
-// when diarization mis-attributed just that one line — a different person
-// said it, not actually the same speaker) beats a global rename of the raw
-// speaker id (e.g. SPEAKER_00 -> "Kresna" everywhere), which beats the raw
-// id itself. null for a speaker-less line.
-function resolveLineSpeakers(lines, speakerNames, lineOverrides) {
-  return lines.map((l, i) => (l.speaker ? lineOverrides[i] || speakerNames[l.speaker] || l.speaker : null));
-}
-function joinTranscriptLines(lines, lineSpeakers) {
-  return lines.map((l, i) => (lineSpeakers[i] ? `[${lineSpeakers[i]}] ${l.text}` : l.text)).join("\n");
-}
-
-// The editor always starts from the raw transcript, but a save also writes the
-// chosen names and edited text into segments.json (same line order). Rebuild
-// the editor state from that so saved names/edits are still there after a
-// reload: per raw speaker id the most common saved name wins (global rename),
-// and any line that differs from it becomes a per-line override.
-function buildEditorState(meeting) {
-  let lines = parseTranscriptLines(meeting.transcript);
-  const names = {};
-  const overrides = {};
-  const segs = meeting.segments;
-  if (segs && segs.length === lines.length) {
-    const counts = {};
-    lines.forEach((l, i) => {
-      if (!l.speaker) return;
-      const n = segs[i].speaker || l.speaker;
-      counts[l.speaker] = counts[l.speaker] || {};
-      counts[l.speaker][n] = (counts[l.speaker][n] || 0) + 1;
-    });
-    for (const raw of Object.keys(counts)) {
-      const [best] = Object.entries(counts[raw]).sort((a, b) => b[1] - a[1])[0];
-      if (best !== raw) names[raw] = best;
-    }
-    lines.forEach((l, i) => {
-      if (!l.speaker) return;
-      const n = segs[i].speaker || l.speaker;
-      if (n !== (names[l.speaker] || l.speaker)) overrides[i] = n;
-    });
-    lines = lines.map((l, i) => ({ ...l, text: segs[i].text ?? l.text }));
-  }
-  return { lines, names, overrides };
-}
 
 function SpeakerBadge({ speaker }) {
   const color = speakerColor(speaker);
@@ -98,13 +30,8 @@ function SpeakerBadge({ speaker }) {
   );
 }
 
-// One row of the "Nama Pembicara" panel: renames a diarization id
-// (SPEAKER_00) everywhere. Keeps its own draft and only commits on blur/enter,
-// so lines don't change (and the field doesn't snap back to the raw id when
-// emptied) while the user is still typing. Empty commit = back to the raw id.
-// Raw <textarea> (web-only app) that grows to fit its text. RN's multiline
-// TextInput always reserves at least two rows, which left an empty gap under
-// every one-line transcript row.
+// <textarea> mentah (hanya web) yang tumbuh sesuai teksnya: TextInput multiline RN selalu menyisakan dua baris, yang meninggalkan
+// celah di bawah setiap baris satu garis
 function LineTextarea({ value, onChange, onFocus }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
@@ -140,6 +67,8 @@ function LineTextarea({ value, onChange, onFocus }) {
   );
 }
 
+// satu baris panel nama pembicara: mengganti nama id pembicara di mana-mana. Menyimpan draf dan menyimpan saat blur atau enter, jadi
+// baris tidak berubah saat mengetik. Kosong = kembali ke id mentah
 function SpeakerNameRow({ raw, name, onCommit }) {
   const [draft, setDraft] = useState(name);
   useEffect(() => setDraft(name), [name]);
@@ -164,9 +93,7 @@ function SpeakerNameRow({ raw, name, onCommit }) {
   );
 }
 
-// Per-line badge: click to move just this line to another speaker (for when
-// diarization put one sentence under the wrong person). Renaming a whole
-// speaker happens in the panel above instead.
+// badge per baris: klik untuk memindahkan hanya baris ini ke pembicara lain. Mengganti nama satu pembicara penuh dilakukan di panel di atas
 function LineSpeakerBadge({ raw, value, overridden, options, open, onToggle, onPick, onReset }) {
   const color = speakerColor(overridden ? value : raw);
   return (
@@ -196,17 +123,9 @@ function LineSpeakerBadge({ raw, value, overridden, options, open, onToggle, onP
   );
 }
 
-function formatBytes(bytes) {
-  if (bytes == null) return null;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatElapsed(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
+// polling menyerah setelah sekian permintaan gagal berturut-turut. Permintaan gagal tidak memberi tahu apa-apa soal job-nya (gangguan,
+// Docker lambat), hanya respons 200 dengan status "failed" yang memberi tahu, jadi ia mencoba lagi daripada membekukan halaman
+const MAX_CONSECUTIVE_POLL_FAILURES = 10;
 const LIVE_STATUSES = ["joining", "recording", "stopping", "processing"];
 const STEPS = [
   { key: "joining", label: "Bergabung" },
@@ -214,29 +133,6 @@ const STEPS = [
   { key: "processing", label: "Memproses" },
 ];
 const STEP_INDEX = { joining: 0, recording: 1, stopping: 1, processing: 2 };
-
-// Numbers shown above the tabs, and per-speaker talk time for the "Waktu Bicara"
-// card -- all derived from data the page already has, no extra request.
-function meetingStats(meeting) {
-  const text = meeting.fixed_transcript || meeting.transcript || "";
-  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-  const items = meeting.summary?.action_items || [];
-  const talk = {};
-  (meeting.segments || []).forEach((seg) => {
-    if (seg.start != null && seg.end != null && seg.speaker) talk[seg.speaker] = (talk[seg.speaker] || 0) + (seg.end - seg.start);
-  });
-  const speakers = Object.entries(talk)
-    .map(([name, seconds]) => ({ name, seconds }))
-    .sort((a, b) => b.seconds - a.seconds);
-  return {
-    words,
-    speakers,
-    speakerCount: speakers.length || new Set((text.match(/^\[(.+?)\]/gm) || [])).size,
-    actionTotal: items.length,
-    actionDone: items.filter((i) => i.done).length,
-    decisions: meeting.summary?.key_decisions?.length || 0,
-  };
-}
 
 const TABS = [
   { key: "ringkasan", label: "Pokok Pembahasan Rapat", icon: "zap" },
@@ -270,34 +166,22 @@ export default function MeetingDetailScreen() {
   const videoRef = useRef(null);
   const [activeTab, setActiveTab] = useState("ringkasan");
 
-  // Live-job state (only relevant while meeting.status is one of LIVE_STATUSES)
-  const [liveStatus, setLiveStatus] = useState(null); // null once finished/not live
+  // State job langsung (hanya relevan saat meeting.status salah satu dari LIVE_STATUSES)
+  const [liveStatus, setLiveStatus] = useState(null); // null kalau sudah selesai/tidak live
   const [elapsed, setElapsed] = useState(0);
   const [liveError, setLiveError] = useState("");
   const pollTimer = useRef(null);
   const pollFailures = useRef(0);
 
-  // Transcript editor (Edit Transkrip tab) — left is the raw transcript,
-  // editable per speaker line (parsed from the "[SPEAKER_NN] text" lines
-  // transcribe.py writes) rather than one plain-text blob; right is the
-  // AI-corrected version, read-only, shown as a reference to correct against.
+  // Tab Edit Transkrip: transkrip mentah sebagai baris yang bisa diedit (kiri) dengan versi perbaikan AI sebagai acuan (kanan)
   const [editedLines, setEditedLines] = useState([]);
-  // { SPEAKER_00: "Kresna", ... } — renames a speaker id everywhere at once,
-  // keyed by the original id so the badge color (which derives from the id)
-  // stays stable even after renaming.
+  // { SPEAKER_00: "Kresna" }: mengganti nama pembicara di mana-mana, berkunci id aslinya supaya warna badge tetap
   const [speakerNames, setSpeakerNames] = useState({});
-  // { <line index>: "Diva", ... } — overrides just one line, for when
-  // diarization mis-attributed that single line to the wrong speaker
-  // cluster rather than the whole cluster actually being a different person.
+  // { <indeks baris>: "Diva" }: memindahkan satu baris ke pembicara lain, saat diarization salah hanya di baris itu
   const [lineOverrides, setLineOverrides] = useState({});
-  // Which line's "gabung ke speaker lain" pick-list is open — only one at
-  // a time, since it's rendered inline right under that line's badge.
+  // baris yang daftar "pindahkan ke pembicara"-nya terbuka (satu pada satu waktu)
   const [mergeOpenIndex, setMergeOpenIndex] = useState(null);
-  // Which raw transcript line is currently focused for editing — the "Saran
-  // Perbaikan AI" column only shows that one line's AI-corrected version
-  // (by the same index into fixed_transcript's lines) instead of the whole
-  // thing, so the suggestion right next to what's being typed is obvious
-  // instead of buried in a long parallel scroll.
+  // baris yang sedang diedit: "Saran Perbaikan AI" hanya menampilkan versi AI untuk satu baris itu
   const [focusedLineIndex, setFocusedLineIndex] = useState(null);
   const [savingTranscript, setSavingTranscript] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -308,10 +192,10 @@ export default function MeetingDetailScreen() {
   const [shortBusy, setShortBusy] = useState(false);
   const [shortError, setShortError] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
-  // Edits (names, moved lines, text) not yet saved: the summary only changes on save.
+  // Edit (nama, baris dipindah, teks) yang belum disimpan: ringkasan hanya berubah saat disimpan.
   const [dirty, setDirty] = useState(false);
   const router = useRouter();
-  // Action item editor: which item is being edited (index, "new", or null) + its draft.
+  // Editor action item: item mana yang sedang diedit (indeks, "new", atau null) + drafnya.
   const [editingItem, setEditingItem] = useState(null);
   const [itemDraft, setItemDraft] = useState({ task: "", assignee: "", due: "" });
   const [itemSaving, setItemSaving] = useState(false);
@@ -320,9 +204,7 @@ export default function MeetingDetailScreen() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
-  // Edit tab: which raw-transcript line the video is currently on. Lines map to
-  // segments by index (same assumption the save sync already relies on), so
-  // only trust it when both have the same length.
+  // baris tempat video berada (baris dipetakan ke segmen lewat indeks, jadi hanya kalau jumlahnya sama)
   const [playing, setPlaying] = useState(false);
   const editorScrollRef = useRef(null);
   const lineEls = useRef({});
@@ -330,9 +212,9 @@ export default function MeetingDetailScreen() {
     meeting?.segments && meeting.segments.length === editedLines.length
       ? meeting.segments.findIndex((seg) => seg.start != null && currentTime >= seg.start && currentTime < seg.end)
       : -1;
-  // Follow the video only while it plays, so it never fights the user typing.
+  // Ikuti video hanya saat diputar, supaya tidak pernah berebut dengan user yang mengetik.
   useEffect(() => {
-    // Web-only app: measure the row's DOM node against the scroll box directly.
+    // Aplikasi web saja: ukur node DOM baris terhadap kotak scroll langsung.
     const box = editorScrollRef.current?.getScrollableNode?.();
     const row = lineEls.current[activeLine];
     if (playing && box && row) {
@@ -343,14 +225,19 @@ export default function MeetingDetailScreen() {
 
   useEffect(() => () => clearTimeout(pollTimer.current), []);
 
+  // meeting yang dimuat juga mengembalikan editor ke yang tersimpan
+  function showMeeting(data) {
+    setMeeting(data);
+    const editor = buildEditorState(data);
+    setEditedLines(editor.lines);
+    setSpeakerNames(editor.names);
+    setLineOverrides(editor.overrides);
+  }
+
   useEffect(() => {
     getMeeting(id)
       .then((data) => {
-        setMeeting(data);
-        const editor = buildEditorState(data);
-        setEditedLines(editor.lines);
-        setSpeakerNames(editor.names);
-        setLineOverrides(editor.overrides);
+        showMeeting(data);
         setScreenStatus("done");
         if (LIVE_STATUSES.includes(data.status)) {
           setLiveStatus(data.status);
@@ -364,24 +251,8 @@ export default function MeetingDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // A rejected fetch here means the request itself couldn't complete (a
-  // network blip, Docker being briefly slow to respond, CORS hiccup, etc)
-  // -- it says nothing about whether the job succeeded or failed. A real
-  // job failure comes back as a normal 200 with {status: "failed"} in the
-  // body, handled separately below. Treating a transient fetch error as
-  // "failed" used to kill the polling loop outright (no retry scheduled),
-  // permanently freezing the UI at whatever liveStatus it last had -- e.g.
-  // a Zoom join whose next poll would've shown "recording" instead sat
-  // stuck on "joining" for 30+ seconds until the user manually left and
-  // reopened the page. Retrying (with a cap so a genuinely dead backend
-  // doesn't poll forever) fixes both that and the "shows failed" glitch.
-  const MAX_CONSECUTIVE_POLL_FAILURES = 10;
-
-  // GET /jobs/<id> only knows jobs held in that server process's memory. A 404
-  // there does not mean the job failed: the server may have restarted, or the
-  // job may be running in a different worker container, or was started outside
-  // the API. The meetings table still tracks the real status, so fall back to
-  // polling that until it stops being a live status.
+  // GET /jobs/<id> hanya tahu job di memori proses server itu, jadi 404 bukan berarti gagal (restart, worker
+  // lain). Baris rapat punya status yang sebenarnya: pantau itu sampai tidak live lagi.
   function pollMeeting() {
     getMeeting(id)
       .then((fresh) => {
@@ -390,11 +261,7 @@ export default function MeetingDetailScreen() {
           pollTimer.current = setTimeout(pollMeeting, 3000);
           return;
         }
-        setMeeting(fresh);
-        const editor = buildEditorState(fresh);
-        setEditedLines(editor.lines);
-        setSpeakerNames(editor.names);
-        setLineOverrides(editor.overrides);
+        showMeeting(fresh);
         setLiveStatus(null);
       })
       .catch(() => {
@@ -408,20 +275,7 @@ export default function MeetingDetailScreen() {
         pollFailures.current = 0;
         setLiveStatus(data.status);
         if (data.elapsed_seconds != null) setElapsed(data.elapsed_seconds);
-        if (data.status === "done") {
-          // Re-fetch the canonical, now-finished record instead of trying to
-          // reconstruct it from the job response — same data a page reload
-          // would show, and picks up segments/file info the job response
-          // never carried.
-          getMeeting(id).then((fresh) => {
-            setMeeting(fresh);
-            const editor = buildEditorState(fresh);
-            setEditedLines(editor.lines);
-            setSpeakerNames(editor.names);
-            setLineOverrides(editor.overrides);
-            setLiveStatus(null);
-          });
-        } else if (data.status === "failed") {
+        if (data.status === "failed") {
           setLiveError(data.error || "Terjadi kesalahan");
         } else {
           pollTimer.current = setTimeout(() => poll(jobId), 1000);
@@ -443,11 +297,8 @@ export default function MeetingDetailScreen() {
   }
 
   function handleStop() {
-    // Fire-and-forget — the next poll() tick reflects the real status
-    // regardless of whether this particular call succeeds. Still needs a
-    // .catch(): if the job already moved past "recording" (e.g. a double
-    // click, or it finished right before this landed), the backend 404s and
-    // an uncaught rejection here crashes the whole page in dev.
+    // kirim dan lupakan, polling berikutnya menunjukkan status sebenarnya. Perlu .catch: stop yang tiba setelah job selesai
+    // mendapat 404 dan akan menjatuhkan halaman saat dev
     stopJob(id).catch(() => {});
   }
 
@@ -460,9 +311,7 @@ export default function MeetingDetailScreen() {
     setSaveError("");
     setSavedNotice(false);
     try {
-      // Re-runs the summary against whatever the user just approved/edited —
-      // the meeting's summary afterward reflects that corrected transcript,
-      // not the model's first pass.
+      // ringkasan dibuat ulang dari transkrip yang baru dikoreksi user
       const lineSpeakers = resolveLineSpeakers(editedLines, speakerNames, lineOverrides);
       const result = await updateTranscript(
         id,
@@ -487,10 +336,8 @@ export default function MeetingDetailScreen() {
   }
 
   function handleToggleActionItem(index) {
-    // Optimistic, and the local state stays the source of truth: the request
-    // carries the wanted value and its response is ignored (it may predate a
-    // later click), so rapid successive checks can't erase each other. Only
-    // this one item is reverted if the save fails.
+    // optimistis, dan state lokal menang: permintaan membawa nilai yang diinginkan dan responsnya diabaikan (bisa lebih lama
+    // dari klik berikutnya), jadi centang cepat berturut-turut tidak saling membatalkan. Hanya item ini yang dikembalikan kalau gagal
     const done = !meeting.summary.action_items[index].done;
     const setDone = (value) =>
       setMeeting((m) => ({
@@ -610,7 +457,7 @@ export default function MeetingDetailScreen() {
     }
   }
 
-  // A recording kept without AI (Free, over the week's minutes): hand it to a transcriber.
+  // Rekaman yang disimpan tanpa AI (Free, melewati menit minggu ini): serahkan ke transkriber.
   async function handleProcessNow() {
     setProcessBusy(true);
     setProcessError("");
@@ -733,7 +580,7 @@ export default function MeetingDetailScreen() {
               </View>
             </View>
 
-            {/* Live view — bot still joining/recording/processing */}
+            {/* Tampilan live - bot masih bergabung/merekam/memproses */}
             {isLive && (
               <View style={styles.liveCard}>
                 <View style={styles.stepper}>
@@ -784,7 +631,7 @@ export default function MeetingDetailScreen() {
               </View>
             )}
 
-            {/* Live job failed before producing anything */}
+            {/* Job live gagal sebelum menghasilkan apa pun */}
             {isLiveFailed && (
               <View style={styles.liveCard}>
                 <View style={styles.liveFailedRow}>
@@ -794,7 +641,7 @@ export default function MeetingDetailScreen() {
               </View>
             )}
 
-            {/* Recorded and kept, but not processed by AI (Free, over the week's minutes) */}
+            {/* Direkam dan disimpan, tapi tidak diproses AI (Free, melewati menit minggu ini) */}
             {!isLive && !isLiveFailed && meeting.status === "limited" && (
               <View style={styles.liveCard}>
                 <View style={styles.liveFailedRow}>
@@ -826,7 +673,7 @@ export default function MeetingDetailScreen() {
               </View>
             )}
 
-            {/* Finished — tabbed Ringkasan AI / Transkrip / Rekaman */}
+            {/* Selesai - tab Ringkasan AI / Transkrip / Rekaman */}
             {!isLive && !isLiveFailed && meeting.status !== "limited" && (
               <>
                 <View style={styles.statRow}>
@@ -940,10 +787,7 @@ export default function MeetingDetailScreen() {
                             renderItemForm(i)
                           ) : (
                             <View key={i} style={styles.actionItemRow}>
-                              {/* Whole left side (checkbox + text) toggles, not just the
-                                  tiny icon — a full-row click target used to work before
-                                  the edit pencil was added, and a small icon alone is easy
-                                  to miss and feels like "the checkbox doesn't save". */}
+                              {/* seluruh sisi kiri (kotak centang dan teks) bisa diketuk, ikon kecil saja mudah terlewat */}
                               <Pressable style={styles.actionItemMain} onPress={() => handleToggleActionItem(i)}>
                                 <Feather
                                   name={item.done ? "check-square" : "square"}
@@ -981,9 +825,7 @@ export default function MeetingDetailScreen() {
                   <View style={styles.section}>
                     <View style={styles.mediaGrid}>
                       <View style={styles.videoCol}>
-                        {/* Raw <video> (not an RN component) — native browser controls give
-                            accurate play/pause/seek/duration for free, no custom waveform UI
-                            needed. This app targets web only. */}
+                        {/* <video> mentah (aplikasi web saja): kontrol bawaan browser menangani putar, geser, dan durasi */}
                         <video
                           ref={videoRef}
                           controls
@@ -997,8 +839,7 @@ export default function MeetingDetailScreen() {
                             {meeting.file_extension && meeting.file_size_bytes != null && " · "}
                             {formatBytes(meeting.file_size_bytes) && `Ukuran: ${formatBytes(meeting.file_size_bytes)}`}
                           </Text>
-                          {/* Raw <a download> — real file download, this is a real deployed
-                              app (not a sandboxed artifact preview) so it works normally. */}
+                          {/* <a download> mentah: unduhan file biasa */}
                           <a href={getRecordingUrl(meeting.id)} download style={{ textDecorationLine: "none" }}>
                             <View style={styles.downloadBtn}>
                               <Feather name="download" size={13} color={colors.ink} />
@@ -1030,8 +871,7 @@ export default function MeetingDetailScreen() {
                           </ScrollView>
                         ) : meeting.fixed_transcript || meeting.transcript ? (
                           <ScrollView style={styles.transcriptScroll}>
-                            {/* fixed_transcript is the LLM-corrected version — prefer it,
-                                falling back to the raw transcript only if that step failed. */}
+                            {/* transkrip perbaikan AI kalau ada, kalau tidak yang mentah */}
                             <Text style={styles.plainTranscript}>{meeting.fixed_transcript || meeting.transcript}</Text>
                           </ScrollView>
                         ) : (
@@ -1191,10 +1031,7 @@ export default function MeetingDetailScreen() {
                               </View>
                             );
                           }
-                          // Assumes fixed_transcript kept the same line order/count as the
-                          // raw transcript (fix_transcript() corrects wording, it doesn't
-                          // restructure lines) — same assumption the segments sync already
-                          // relies on (see updateTranscript's line_texts/line_speakers).
+                          // fixed_transcript mempertahankan urutan dan jumlah baris transkrip mentah (perbaikan hanya mengubah kata)
                           const suggestedLine = parseTranscriptLines(meeting.fixed_transcript)[focusedLineIndex];
                           if (!suggestedLine) {
                             return (
@@ -1253,8 +1090,6 @@ const styles = StyleSheet.create({
   scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
   content: { gap: spacing.md, width: "100%" },
 
-  backLink: { ...type.small, color: colors.inkSoft },
-
   stateBox: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xxl },
   stateText: { ...type.body, color: colors.inkSoft, textAlign: "center" },
   errorText: { ...type.body, color: colors.danger },
@@ -1283,7 +1118,7 @@ const styles = StyleSheet.create({
   metaText: { ...type.body, color: colors.inkSoft },
   metaIconGap: { marginLeft: spacing.md },
 
-  // Live view
+  // Tampilan live
   liveCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1332,7 +1167,7 @@ const styles = StyleSheet.create({
 
   liveFailedRow: { flexDirection: "row", alignItems: "center", gap: 10 },
 
-  // Tab bar
+  // Bilah tab
   tabBar: {
     flexDirection: "row",
     backgroundColor: colors.surfaceSunken,
@@ -1510,7 +1345,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   speakerBadgeLabel: { ...type.small, fontWeight: "700" },
-  speakerScopeToggle: { paddingVertical: 1 },
   namesPanel: {
     gap: 4,
     padding: spacing.md,
@@ -1539,7 +1373,6 @@ const styles = StyleSheet.create({
     outlineStyle: "none",
   },
   nameInputFilled: { backgroundColor: colors.goldSoft, borderColor: colors.gold, fontWeight: "600" },
-  speakerBadgeInput: { ...type.small, fontWeight: "700", padding: 0, minWidth: 60, outlineStyle: "none" },
   mergeMenu: {
     position: "absolute",
     top: "100%",
@@ -1560,7 +1393,7 @@ const styles = StyleSheet.create({
   mergeMenuItemLabel: { ...type.small, fontWeight: "600", color: colors.ink },
   syncNote: { ...type.small, color: colors.inkFaint, fontStyle: "italic" },
 
-  // Transcript editor (Transkrip tab)
+  // Editor transkrip (tab Transkrip)
   editorGrid: { flexDirection: "row", gap: spacing.xl, alignItems: "flex-start" },
   editorCol: { flex: 1, gap: spacing.md },
   editorColHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -1573,7 +1406,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     minHeight: 360,
   },
-  editorScroll: { maxHeight: 420 },
   plainTranscript: { ...type.small, color: colors.inkSoft, lineHeight: 19 },
   editorLinesBox: {
     maxHeight: 460,
@@ -1591,19 +1423,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  // z-index only wins against siblings within the same stacking context —
-  // without this, the "gabung ke" dropdown (position: absolute, zIndex: 10
-  // inside speakerBadgeWrap) still rendered underneath the next row, since
-  // that row is a separate, later-painted sibling with no z-index of its
-  // own. Lifting the whole open row above its siblings fixes it.
+  // z-index hanya menang di dalam satu stacking context: mengangkat seluruh baris yang terbuka menjaga dropdown "pindahkan ke" di atas baris berikutnya
   editorLineRowElevated: { position: "relative", zIndex: 20 },
   editorLineHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   editorLineRowActive: { backgroundColor: colors.goldSoft, borderLeftWidth: 3, borderLeftColor: colors.gold },
-  // Right column's read-only counterpart to editorLinesBox/editorLineRow —
-  // same per-speaker-line layout so the two columns read as one continuous
-  // idea, but deliberately undecorated (muted bg instead of the left's gold
-  // "this is editable" border, no per-line divider, no input/merge affordances)
-  // so it doesn't look like a second editable form.
+  // pasangan read-only dari editorLinesBox/editorLineRow: tata letak sama, tapi diredupkan supaya tidak terlihat seperti form kedua
   suggestLinesBox: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1613,14 +1437,6 @@ const styles = StyleSheet.create({
   },
   suggestLineRow: { gap: spacing.sm },
   suggestLineText: { ...type.body, fontSize: 14, color: colors.ink, lineHeight: 20 },
-  editorLineInput: {
-    ...type.body,
-    color: colors.ink,
-    lineHeight: 20,
-    padding: 0,
-    textAlignVertical: "top",
-    outlineStyle: "none",
-  },
   editorActions: { gap: spacing.sm, alignItems: "stretch" },
   savedNoticeText: { ...type.small, color: colors.success },
   dirtyNoticeText: { ...type.small, color: colors.goldDeep, fontWeight: "600" },

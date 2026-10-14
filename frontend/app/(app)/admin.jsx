@@ -11,10 +11,7 @@ import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
 import { UserManagement } from "@/components/UserManagement";
 
-// Same fixed categorical order already used for speaker badges elsewhere in
-// this app (see rapat/[id].jsx's SPEAKER_PALETTE) — reused here instead of
-// picking new colors, so "categorical series" reads consistently across the
-// whole product rather than each chart inventing its own order.
+// satu warna tetap per paket, ide yang sama dengan warna platform di laporan.jsx
 const PLAN_COLORS = { free: colors.inkFaint, pro: colors.info, team: colors.success };
 const PLAN_LABELS = { free: "Free", pro: "Pro", team: "Team" };
 
@@ -23,7 +20,7 @@ function formatIDR(n) {
 }
 
 function formatBytes(bytes) {
-  if (bytes == null) return "—";
+  if (bytes == null) return "-";
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes;
@@ -54,11 +51,7 @@ export default function AdminScreen() {
       });
   }, [user]);
 
-  // Regular users (and even the render-before-user-loads moment) never see
-  // this page's content — bounced straight back rather than shown an
-  // empty/error shell. The backend independently enforces this too
-  // (403 on /admin/stats for a non-super_admin session), this is just so
-  // the UI doesn't flash a page a regular user isn't meant to reach.
+  // bukan super admin: dikembalikan daripada menampilkan halaman yang tidak bisa dipakai (backend menolak /admin/stats juga)
   if (user && user.role !== "super_admin") {
     return <Redirect href="/dashboard" />;
   }
@@ -214,15 +207,12 @@ const styles = StyleSheet.create({
   },
   exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  // stretch + a growing last card: both columns end on the same line, no empty gap under the shorter one
+  // stretch + kartu terakhir yang tumbuh: kedua kolom berakhir di garis yang sama, tidak ada celah kosong di bawah yang lebih pendek
   columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "stretch" },
   column: { flex: 1, minWidth: 380, gap: spacing.md },
   sectionLabel: { ...type.eyebrow, color: colors.inkFaint, marginTop: spacing.md },
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignContent: "stretch" },
-  teamRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  teamName: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
   teamMeta: { ...type.small, color: colors.inkSoft },
-  teamNumbers: { ...type.small, color: colors.ink, fontVariant: ["tabular-nums"] },
 
   chartCard: {
     flexGrow: 1,

@@ -19,9 +19,7 @@ const FILTERS = [
   { key: "failed", label: "Gagal", test: (m) => m.status === "failed" },
 ];
 
-// Right half of the page: a read-only preview of the selected meeting (summary,
-// key decisions, action items), so the list can be skimmed without opening
-// every meeting. Fetches the full record when the selection changes.
+// separuh kanan halaman: pratinjau read-only rapat terpilih, diambil saat pilihan berubah
 function MeetingPreview({ meeting }) {
   const [state, setState] = useState({ status: "idle", data: null });
 
@@ -151,7 +149,7 @@ export default function RapatScreen() {
   const [meetings, setMeetings] = useState([]);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
-  // Pre-filled from the TopBar's search box (?q=...) but editable here too.
+  // Terisi dari kotak pencarian TopBar (?q=...) tapi bisa diedit di sini juga.
   const [searchQuery, setSearchQuery] = useState(q ? String(q) : "");
   const [selectedId, setSelectedId] = useState(null);
 

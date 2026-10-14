@@ -1,9 +1,6 @@
 import { useState } from "react";
 
-// Shared idle -> loading -> done/error state machine for anything that
-// calls the meeting-bot pipeline (upload or join) and waits on the result.
-// See lib/api.js for the actual fetch calls and components/PipelineResult.jsx
-// for how the result shape gets rendered.
+// idle -> loading -> done/error untuk apa pun yang memanggil pipeline backend (upload) dan menunggu hasilnya
 export function usePipelineRun(runFn) {
   const [status, setStatus] = useState("idle"); // idle | loading | error | done
   const [result, setResult] = useState(null);

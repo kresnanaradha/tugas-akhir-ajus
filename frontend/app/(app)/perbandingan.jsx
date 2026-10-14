@@ -8,23 +8,21 @@ import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { getComparisonAnalysis, getComparisonExportUrl, getMeeting, listMeetings } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 
-// Same accent per platform as components/MeetingRow.jsx, here as the colored
-// top edge of each meeting's header card.
+// Aksen per platform yang sama dengan components/MeetingRow.jsx, di sini sebagai tepi atas
+// berwarna di kartu header tiap rapat.
 const PLATFORM_ACCENT = {
   google_meet: colors.success,
   zoom: colors.info,
   upload: colors.gold,
 };
 
-// Only meetings with a real summary are worth comparing.
+// Hanya rapat dengan ringkasan sungguhan yang layak dibandingkan.
 function comparable(meetings) {
   return meetings.filter((m) => m.status === "completed" && m.recording);
 }
 
-// Raw <select> (web-only app, same reasoning as the file input in
-// rapat/upload.jsx) — a native dropdown handles long lists and keyboard input
-// for free. appearance:"none" drops the browser's own inconsistently-styled
-// arrow so a Feather chevron matching the rest of the app sits on top instead.
+// <select> mentah (aplikasi web saja): dropdown bawaan menangani daftar panjang dan keyboard. appearance none membuang
+// panah bawaan browser supaya chevron Feather sesuai dengan sisa aplikasi
 function MeetingPicker({ meetings, value, onChange, placeholder }) {
   return (
     <View style={{ position: "relative", justifyContent: "center" }}>
@@ -76,8 +74,8 @@ function SectionCard({ icon, title, count, children }) {
   );
 }
 
-// Loads one meeting's detail; the page keeps both so the two sides can be laid
-// out row by row (each section of A level with the same section of B).
+// Memuat detail satu rapat; halaman menyimpan keduanya supaya kedua sisi bisa ditata
+// baris demi baris (tiap bagian A sejajar dengan bagian yang sama di B).
 function useMeeting(meetingId) {
   const [state, setState] = useState({ status: "idle", data: null });
 
@@ -169,8 +167,8 @@ function HeadColumn({ state, meetingId, allMeetings, excludeId, onPick, label })
   );
 }
 
-// One comparison row per section, in the order the advisor asked for: topics
-// first, the (truncated) summary after. Each renders the card of ONE meeting.
+// Satu baris perbandingan per bagian, dalam urutan permintaan dosen: topik
+// dulu, ringkasan (dipotong) sesudahnya. Masing-masing merender kartu SATU rapat.
 const SECTIONS = [
   {
     icon: "hash",
@@ -242,7 +240,7 @@ const SECTIONS = [
               <Text style={[styles.bodyText, { flex: 1 }, a.done && styles.done]}>
                 {a.task}
                 {a.assignee || a.due ? (
-                  <Text style={styles.mutedText}>{`  — ${[a.assignee, a.due].filter(Boolean).join(" · ")}`}</Text>
+                  <Text style={styles.mutedText}>{`  (${[a.assignee, a.due].filter(Boolean).join(" · ")})`}</Text>
                 ) : null}
               </Text>
             </View>
@@ -254,7 +252,7 @@ const SECTIONS = [
   },
 ];
 
-// A and B cards side by side; the row stretches so both cards are the same height.
+// Kartu A dan B berdampingan; barisnya meregang supaya kedua kartu sama tinggi.
 function CompareRow({ section, left, right }) {
   const cell = (state) => {
     const meeting = state.data;

@@ -2,12 +2,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
 
-// Renders the {transcript, fixed_transcript, summary, ..._error} shape
-// shared by /upload, /google/join, /zoom/join, and GET /meetings/<id> (see
-// meeting-bot/app.py). No internal scroll — whatever page renders this
-// already scrolls itself. onDone is optional: pass it for a "Tutup" button
-// (e.g. closing back to the form after a fresh run); omit it on a page
-// that's just displaying a past meeting's result.
+// menampilkan hasil {transcript, fixed_transcript, summary, ..._error} dari sebuah upload. Tanpa scroll sendiri, halamannya yang scroll.
+// onDone menambah tombol "Tutup", hilangkan kalau hanya menampilkan hasil
 export function PipelineResult({ result, onDone }) {
   const summary = result.summary;
 

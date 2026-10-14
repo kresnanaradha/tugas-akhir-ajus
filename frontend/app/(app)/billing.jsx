@@ -6,11 +6,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { cancelPendingCheckout, cancelSubscription, getBillingStatus, startCheckout } from "@/lib/api";
 
-// Illustrative pricing/quotas — not backed by a real business decision, just
-// what the checkout call actually charges (PLAN_PRICES in app.py) so the
-// numbers shown here and what Xendit charges don't drift apart. Limits
-// (meetings/month, recording minutes/week) mirror billing_store.PLAN_LIMITS, the
-// actual enforced source of truth — keep the two in sync if either changes.
+// harga dari PLAN_PRICES di app.py (yang ditagih checkout), batasnya mengikuti billing_store.PLAN_LIMITS. Jaga tetap sama
 const PLANS = [
   {
     key: "free",
@@ -53,9 +49,9 @@ const PLANS = [
 ];
 
 const STATUS_LABEL = {
-  active: null, // nothing extra to say — the plan badge already covers it
+  active: null, // tidak ada yang perlu ditambahkan - lencana paket sudah cukup
   pending: "Menunggu konfirmasi pembayaran...",
-  past_due: "Pembayaran terakhir gagal — coba perbarui metode bayar Anda.",
+  past_due: "Pembayaran terakhir gagal. Coba perbarui metode bayar Anda.",
   canceled: null,
 };
 
@@ -63,7 +59,7 @@ export default function BillingScreen() {
   const { checkout } = useLocalSearchParams();
   const [subscription, setSubscription] = useState(null);
   const [loadError, setLoadError] = useState("");
-  const [pendingPlan, setPendingPlan] = useState(null); // which plan's button is mid-click
+  const [pendingPlan, setPendingPlan] = useState(null); // tombol paket mana yang sedang diklik
   const [actionError, setActionError] = useState("");
   const [confirmDowngradeOpen, setConfirmDowngradeOpen] = useState(false);
 
@@ -73,8 +69,8 @@ export default function BillingScreen() {
       .catch((e) => setLoadError(e.message || "Gagal memuat status langganan"));
   }
 
-  // Back from Xendit without paying (?checkout=cancel), or a pending checkout
-  // left over from earlier: drop it right away instead of "waiting" forever.
+  // Kembali dari Xendit tanpa membayar (?checkout=cancel), atau checkout pending
+  // yang tersisa dari sebelumnya: buang segera daripada "menunggu" selamanya.
   async function dropPendingCheckout() {
     try {
       setSubscription(await cancelPendingCheckout());
@@ -93,7 +89,7 @@ export default function BillingScreen() {
     setActionError("");
     try {
       const { checkout_url } = await startCheckout(plan);
-      window.location.href = checkout_url; // hand off to Xendit's hosted checkout page
+      window.location.href = checkout_url; // serahkan ke halaman checkout Xendit
     } catch (e) {
       setActionError(e.message || "Gagal memulai checkout");
       setPendingPlan(null);
@@ -114,15 +110,13 @@ export default function BillingScreen() {
     }
   }
 
-  // Only an "active" subscription actually counts as being on that plan —
-  // "pending" means checkout was started but never confirmed by the webhook
-  // yet, so it shouldn't show as upgraded (or block re-clicking Upgrade)
-  // until the payment genuinely goes through.
+  // hanya langganan "active" yang dihitung sebagai paket itu: "pending" berarti checkout dimulai tapi webhook
+  // belum mengonfirmasinya
   const currentPlan = subscription?.status === "active" ? subscription.plan : "free";
   const inherited = !!subscription?.inherited_from_team;
   const statusNote = subscription ? STATUS_LABEL[subscription.status] : null;
-  // Billing already stopped (Xendit's recurring plan was deactivated the
-  // moment this was scheduled) — this is purely "you keep access until...".
+  // Tagihan sudah berhenti (plan berulang Xendit dinonaktifkan begitu
+  // dijadwalkan) - ini murni "kamu tetap punya akses sampai...".
   const scheduledCancel = subscription?.status === "active" && subscription?.cancel_at_period_end;
   const periodEndLabel =
     scheduledCancel && subscription.current_period_end
@@ -175,7 +169,7 @@ export default function BillingScreen() {
           <View style={styles.noticeBox}>
             <Feather name="calendar" size={14} color={colors.inkFaint} />
             <Text style={styles.noticeText}>
-              Langganan gak diperpanjang lagi — tetap bisa pakai paket {PLANS.find((p) => p.key === currentPlan)?.name}{" "}
+              Langganan tidak diperpanjang lagi, tetap bisa pakai paket {PLANS.find((p) => p.key === currentPlan)?.name}{" "}
               sampai <Text style={{ fontWeight: "700" }}>{periodEndLabel}</Text>, baru abis itu turun ke Free.
             </Text>
           </View>
@@ -313,69 +307,6 @@ const styles = StyleSheet.create({
   description: { ...type.body, color: colors.inkSoft, marginTop: 2, marginBottom: spacing.md },
   sectionTitle: { ...type.h2, color: colors.ink, marginBottom: spacing.sm, marginTop: spacing.sm },
   errorText: { ...type.small, color: colors.danger, marginTop: 4 },
-  savedText: { ...type.small, color: colors.success, marginTop: 4 },
-  link: { ...type.small, fontWeight: "600", color: colors.info },
-
-  profileCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    gap: spacing.md,
-    marginBottom: spacing.md,
-    ...shadow.card,
-  },
-  profileHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.ink,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarLabel: { color: colors.white, fontWeight: "700", fontSize: 16 },
-  profileName: { ...type.bodyMedium, fontWeight: "700", fontSize: 16, color: colors.ink },
-  profileEmail: { ...type.small, color: colors.inkFaint, marginTop: 1 },
-  roleBadge: { backgroundColor: colors.goldSoft, borderRadius: radius.pill, paddingVertical: 3, paddingHorizontal: 10 },
-  roleBadgeLabel: { ...type.small, fontWeight: "700", color: colors.goldDeep },
-
-  divider: { height: 1, backgroundColor: colors.border },
-  profileField: { gap: 6 },
-  fieldLabel: { ...type.eyebrow, color: colors.inkFaint },
-  fieldRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  fieldInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceSunken,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-    ...type.body,
-    color: colors.ink,
-    outlineStyle: "none",
-  },
-  smallButton: {
-    flexDirection: "row",
-    gap: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: 9,
-    paddingHorizontal: spacing.md,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface,
-  },
-  smallButtonPrimary: { backgroundColor: colors.gold, borderColor: colors.gold },
-  fieldHint: { ...type.small, color: colors.inkFaint, marginTop: 2 },
-  dangerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  dangerLink: { flexDirection: "row", alignItems: "center", gap: 6 },
-  dangerLinkLabel: { ...type.small, fontWeight: "600", color: colors.danger },
-  smallButtonDisabled: { opacity: 0.5 },
-  smallButtonLabel: { ...type.small, fontWeight: "700", color: colors.ink },
 
   noticeBox: {
     flexDirection: "row",

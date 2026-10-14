@@ -10,7 +10,7 @@ import { BackLink } from "@/components/BackLink";
 import { PipelineResult } from "@/components/PipelineResult";
 import { MeetingRow } from "@/components/MeetingRow";
 
-// Mirrors UPLOAD_EXTENSIONS in meeting-bot/app.py.
+// Sama dengan UPLOAD_EXTENSIONS di backend/app.py.
 const ACCEPTED = ".mp3,.wav,.m4a,.mp4,.webm,.ogg";
 
 const FEATURES = [
@@ -35,7 +35,7 @@ export default function UploadRapatScreen() {
     uploadAudio(file, numSpeakers ? Number(numSpeakers) : null)
   );
 
-  const [recent, setRecent] = useState(null); // null = loading
+  const [recent, setRecent] = useState(null); // null = memuat
   useEffect(() => {
     listMeetings()
       .then((data) => setRecent(data.slice(0, 4).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
@@ -74,7 +74,7 @@ export default function UploadRapatScreen() {
         ) : (
           <View style={styles.split}>
             <View style={styles.mainCol}>
-              {/* Raw DOM element (not RN View) so real drag-and-drop events work — this app targets web only. */}
+              {/* Elemen DOM mentah (bukan View RN) supaya event drag-and-drop sungguhan jalan - aplikasi ini hanya untuk web. */}
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -103,9 +103,7 @@ export default function UploadRapatScreen() {
                   onChange={(e) => handleFiles(e.target.files)}
                   style={{ display: "none" }}
                 />
-                {/* Wrapped in one RN View so children lay out as a column — a
-                    plain <div> gives RN <Text> siblings no block context, so
-                    without this they render inline (all on one line). */}
+                {/* satu View supaya anak Text bertumpuk sebagai kolom (saudara dari div biasa dirender sebaris) */}
                 <View style={styles.dropInner}>
                   <View style={styles.dropIconWrap}>
                     <Feather name="upload" size={22} color={colors.goldDeep} />
@@ -178,7 +176,6 @@ const styles = StyleSheet.create({
   scrollContent: { alignItems: "center", paddingVertical: spacing.lg, paddingHorizontal: "5%" },
   content: { gap: spacing.md, width: "100%" },
 
-  backLink: { ...type.small, color: colors.inkSoft, marginBottom: spacing.md },
   title: { ...type.h1, fontSize: 24, color: colors.ink },
   subtitle: { ...type.body, color: colors.inkSoft, marginBottom: spacing.lg },
 

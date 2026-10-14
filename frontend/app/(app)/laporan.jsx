@@ -9,14 +9,12 @@ import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
 
-// Same fixed categorical order as admin.jsx's PLAN_COLORS, same reasoning —
-// one consistent color per category across the whole app instead of each
-// chart inventing its own.
+// satu warna tetap per platform, ide yang sama dengan warna paket di admin.jsx
 const PLATFORM_COLORS = { google_meet: colors.info, zoom: colors.success, upload: colors.goldDeep };
 const PLATFORM_LABELS = { google_meet: "Google Meet", zoom: "Zoom", upload: "Upload" };
 
-// Date shown under each Volume Rapat figure. The week runs Monday to Sunday, the
-// same as the server's date_trunc('week') that produces the count.
+// Tanggal di bawah tiap angka Volume Rapat. Minggu berjalan Senin sampai Minggu, sama
+// dengan date_trunc('week') server yang menghasilkan hitungannya.
 function volumeDates() {
   const fmt = (d, o) => new Intl.DateTimeFormat("id-ID", o).format(d);
   const now = new Date();
@@ -37,8 +35,8 @@ export default function LaporanScreen() {
   const [status, setStatus] = useState("loading"); // loading | error | done
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
-  const [actions, setActions] = useState(null); // null = loading, false = failed
-  const [team, setTeam] = useState(null); // null = not on a team (or failed): the section just stays hidden
+  const [actions, setActions] = useState(null); // null = memuat, false = gagal
+  const [team, setTeam] = useState(null); // null = tidak punya team (atau gagal): bagiannya tetap tersembunyi
 
   useEffect(() => {
     getReportStats()
@@ -64,12 +62,8 @@ export default function LaporanScreen() {
       .catch(() => setActions(false));
   }, []);
 
-  // Rows here come from every meeting's own action_items array (via
-  // meeting_id + index, see GET /reports/action-items), not just this one
-  // meeting — so unlike the meeting detail page, marking one done here also
-  // has to update this rollup's own counts locally (an open item leaving the
-  // "Belum Selesai" list, its assignee's open/done split shifting) instead
-  // of just flipping one flag. Optimistic, reverted on failure.
+  // item di sini milik suatu rapat (meeting_id + index) dan menandainya selesai harus memperbarui hitungan halaman ini juga
+  // (daftar terbuka, pembagian terbuka/selesai per penanggung jawab). Optimistis, dikembalikan kalau gagal
   function markDone(item) {
     setActions((a) => ({
       ...a,
@@ -81,8 +75,8 @@ export default function LaporanScreen() {
       ),
     }));
     toggleActionItem(item.meeting_id, item.index, true).catch(() => {
-      // Reverts by putting it back at the end of the list — exact original
-      // order isn't worth tracking for a failure path that should be rare.
+      // Dikembalikan dengan menaruhnya di akhir daftar - urutan asli yang persis
+      // tidak sepadan dilacak untuk jalur gagal yang seharusnya jarang.
       setActions((a) => ({
         ...a,
         done: a.done - 1,
@@ -153,7 +147,7 @@ export default function LaporanScreen() {
               <View style={styles.chartCard}>
                 <Text style={styles.chartTitle}>Distribusi Platform</Text>
                 <View style={styles.chartBody}>
-                  {/* every platform, even at 0, so the card is never one lonely bar */}
+                  {/* semua platform, walau 0, supaya kartunya tidak pernah berisi satu batang kesepian */}
                   <HorizontalBarChart
                     labelWidth={90}
                     fill
@@ -300,7 +294,7 @@ const styles = StyleSheet.create({
   },
   exportButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 
-  // stretch + a growing last card: both columns end on the same line, no empty gap under the shorter one
+  // stretch + kartu terakhir yang tumbuh: kedua kolom berakhir di garis yang sama, tidak ada celah kosong di bawah yang lebih pendek
   columns: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "stretch" },
   column: { flex: 1, minWidth: 380, gap: spacing.md },
   openRow: { flexDirection: "row", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
@@ -319,7 +313,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     ...shadow.card,
   },
-  // The chart sits in the middle of a card that was stretched to its neighbour's height.
+  // Grafiknya di tengah kartu yang diregangkan sampai setinggi tetangganya.
   chartBody: { flex: 1, justifyContent: "space-evenly", gap: spacing.md },
   chartTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
 

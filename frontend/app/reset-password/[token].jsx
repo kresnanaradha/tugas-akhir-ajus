@@ -5,8 +5,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { resetPassword } from "@/lib/api";
 
-// Target of the link in the password-reset email (POST /auth/forgot). Public:
-// lives outside (app)/ so a logged-out visitor isn't bounced to /login.
+// Tujuan tautan di email reset password (POST /auth/forgot). Publik:
+// ada di luar (app)/ supaya pengunjung yang belum login tidak dialihkan ke /login.
 export default function ResetPasswordScreen() {
   const { token } = useLocalSearchParams();
   const [password, setPassword] = useState("");

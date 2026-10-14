@@ -1,6 +1,4 @@
-// Thin wrapper around the meeting-bot Flask API (see meeting-bot/app.py).
-// EXPO_PUBLIC_API_URL lets this point at a deployed bot service later;
-// defaults to the local dev server.
+// pembungkus tipis untuk API backend (backend/app.py). EXPO_PUBLIC_API_URL mengarahkannya ke backend yang di-deploy, defaultnya lokal
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5050";
 
 async function handleResponse(res) {
@@ -13,10 +11,7 @@ async function handleResponse(res) {
   return data;
 }
 
-// credentials: "include" on every call (not just the /auth/* ones) — the
-// session cookie /auth/login sets has to ride along on every request that
-// might hit a login_required/super_admin_required route, and there's no
-// harm sending it on the ones that don't check it (yet).
+// credentials: "include" di setiap panggilan supaya cookie sesi selalu ikut
 function apiFetch(path, options) {
   return fetch(`${API_BASE_URL}${path}`, { ...options, credentials: "include" });
 }
@@ -63,23 +58,21 @@ export async function logout() {
   return handleResponse(res);
 }
 
-// The signed-in user, or throws (401) if there isn't one — callers use this
-// to decide whether to redirect to /login.
+// User yang sedang login, atau melempar error (401) kalau tidak ada - dipakai pemanggil
+// untuk memutuskan apakah dialihkan ke /login.
 export async function getMe() {
   const res = await apiFetch("/auth/me");
   return handleResponse(res);
 }
 
-// Self-service "delete account" — actually deactivates (old meetings still
-// point at this user's id) and clears the session server-side. See
-// POST /auth/me/deactivate.
+// "hapus akun" menonaktifkan (rapat menunjuk ke user) dan membersihkan sesi
 export async function deactivateAccount() {
   const res = await apiFetch("/auth/me/deactivate", { method: "POST" });
   return handleResponse(res);
 }
 
-// Self-service profile edit (name, email, phone, email_notifications —
-// pass only what changed) — see PATCH /auth/me.
+// Edit profil sendiri (name, email, phone, email_notifications -
+// kirim hanya yang berubah) - lihat PATCH /auth/me.
 export async function updateProfile(fields) {
   const res = await apiFetch("/auth/me", {
     method: "PATCH",
@@ -89,7 +82,7 @@ export async function updateProfile(fields) {
   return handleResponse(res);
 }
 
-// Self-service password change, requires the current password — see
+// Ganti password sendiri, butuh password saat ini - lihat
 // POST /auth/me/password.
 export async function changePassword(currentPassword, newPassword) {
   const res = await apiFetch("/auth/me/password", {
@@ -100,10 +93,7 @@ export async function changePassword(currentPassword, newPassword) {
   return handleResponse(res);
 }
 
-// Runs the bot's full pipeline (transcribe -> fix -> summarize) on an
-// already-recorded file. Can take several minutes for long recordings.
-// numSpeakers is optional — the uploader's best guess at how many people are
-// in the recording, passed through to improve diarization (see transcribe()).
+// menjalankan pipeline pada file yang sudah direkam, bisa memakan menit. numSpeakers adalah tebakan pengunggah, membantu diarization
 export async function uploadAudio(file, numSpeakers) {
   const formData = new FormData();
   formData.append("file", file);
@@ -112,10 +102,8 @@ export async function uploadAudio(file, numSpeakers) {
   return handleResponse(res);
 }
 
-// Starts a join in the background and returns immediately with a job_id —
-// the bot can be in the meeting for as long as the meeting runs, so this
-// doesn't block on that (unlike uploadAudio). Poll getJobStatus(jobId) for
-// progress, and stopJob(jobId) to end the recording early.
+// memulai join di latar belakang dan langsung mengembalikan job_id (bot tinggal selama rapat berjalan). Pantau
+// getJobStatus(jobId), stopJob(jobId) mengakhiri rekaman lebih awal
 export async function startJoinMeeting(platform, url, name, numSpeakers) {
   const endpoint = platform === "zoom" ? "/zoom/join" : "/google/join";
   const res = await apiFetch(endpoint, {
@@ -126,41 +114,36 @@ export async function startJoinMeeting(platform, url, name, numSpeakers) {
   return handleResponse(res);
 }
 
-// {status: "joining"|"recording"|"stopping"|"processing"|"done"|"failed",
-// elapsed_seconds?, result?, error?} — see GET /jobs/<id> in app.py.
+// {status: "joining"|"recording"|"stopping"|"processing"|"failed",
+// elapsed_seconds?, error?} - lihat GET /jobs/<id> di app.py. 404 berarti job selesai atau tidak dikenal proses itu.
 export async function getJobStatus(jobId) {
   const res = await apiFetch(`/jobs/${encodeURIComponent(jobId)}`);
   return handleResponse(res);
 }
 
-// Ends the recording early — the pipeline still runs afterward on whatever
-// got recorded so far, same as if the max duration had been reached.
+// Mengakhiri rekaman lebih awal - pipeline tetap jalan sesudahnya atas apa yang
+// sudah terekam, sama seperti kalau durasi maksimum tercapai.
 export async function stopJob(jobId) {
   const res = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/stop`, { method: "POST" });
   return handleResponse(res);
 }
 
-// Real meetings recorded so far (newest first) — see GET /meetings.
+// Rapat yang sudah direkam (terbaru dulu) - lihat GET /meetings.
 export async function listMeetings() {
   const res = await apiFetch("/meetings");
   return handleResponse(res);
 }
 
-// One past meeting's full detail — transcript/fixed_transcript/summary read
-// back from disk (see GET /meetings/<id> in app.py).
+// Detail lengkap satu rapat lama - transcript/fixed_transcript/summary dibaca
+// dari R2 (lihat GET /meetings/<id> di app.py).
 export async function getMeeting(id) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}`);
   return handleResponse(res);
 }
 
-// Saves the user-approved/edited transcript as this meeting's fixed
-// transcript and re-runs the summary against it — see POST
-// /meetings/<id>/transcript in app.py. lineSpeakers/lineTexts are optional:
-// one entry per transcript line, same order as segments.json — when given
-// and their length matches, also patches those speakers/text in
-// segments.json so the synced Transkrip tab shows the same correction
-// instead of the original ASR output. Returns
-// {fixed_transcript, summary, segments?} or {fixed_transcript, summary_error}.
+// menyimpan transkrip yang dikoreksi dan membuat ulang ringkasan darinya. lineSpeakers / lineTexts (satu per baris, urutan sama dengan
+// segments.json) juga memperbaiki pembicara dan teks di segments.json supaya tab Transkrip menampilkan koreksinya.
+// Mengembalikan {fixed_transcript, summary, segments?} atau {fixed_transcript, summary_error}
 export async function updateTranscript(id, transcript, lineSpeakers, lineTexts) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/transcript`, {
     method: "POST",
@@ -170,22 +153,19 @@ export async function updateTranscript(id, transcript, lineSpeakers, lineTexts) 
   return handleResponse(res);
 }
 
-// Sets one action item's done flag — see POST
-// /meetings/<id>/action-items/<index>/toggle in app.py. Sends the wanted
-// value (not a blind flip) so quick successive clicks can't cancel each
-// other. Returns the updated summary object.
-// Adds the short summary to a meeting summarized before it existed; returns the new summary.
-// Hands a recording kept without AI processing (status "limited") to a transcriber.
+// mengirim rekaman yang disimpan tanpa AI (status "limited") ke transkriber
 export async function processMeeting(id) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/process`, { method: "POST" });
   return handleResponse(res);
 }
 
+// menambahkan ringkasan singkat ke rapat yang diringkas sebelum kolom itu ada, mengembalikan ringkasan baru
 export async function generateShortSummary(id) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/short-summary`, { method: "POST" });
   return handleResponse(res);
 }
 
+// mengatur status selesai satu action item (nilai yang diinginkan, bukan membalik, supaya klik cepat tidak saling membatalkan)
 export async function toggleActionItem(id, index, done) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items/${index}/toggle`, {
     method: "POST",
@@ -195,8 +175,8 @@ export async function toggleActionItem(id, index, done) {
   return handleResponse(res);
 }
 
-// Replaces the whole action item list ({task, assignee, due, done}[]) — one
-// call covers edit, add and remove. See PUT /meetings/<id>/action-items.
+// Mengganti seluruh daftar action item ({task, assignee, due, done}[]) - satu
+// panggilan untuk edit, tambah, dan hapus. Lihat PUT /meetings/<id>/action-items.
 export async function replaceActionItems(id, items) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items`, {
     method: "PUT",
@@ -206,15 +186,15 @@ export async function replaceActionItems(id, items) {
   return handleResponse(res);
 }
 
-// Permanently deletes a meeting (R2 files, KB chunks, DB row) — owner or
-// super admin only, refused while it's still recording/processing.
+// Menghapus rapat permanen (file R2, potongan KB, baris DB) - hanya pemilik atau
+// super admin, ditolak selagi masih merekam/memproses.
 export async function deleteMeeting(id) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
   return handleResponse(res);
 }
 
-// Opt a meeting in/out of the Knowledge Base (only its executive summary +
-// key decisions get indexed) — see POST /meetings/<id>/knowledge-base.
+// Memasukkan/mengeluarkan rapat dari Knowledge Base (hanya ringkasan eksekutif +
+// keputusan utama yang diindeks) - lihat POST /meetings/<id>/knowledge-base.
 export async function setKnowledgeBase(id, enabled) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/knowledge-base`, {
     method: "POST",
@@ -224,22 +204,14 @@ export async function setKnowledgeBase(id, enabled) {
   return handleResponse(res);
 }
 
-// Current subscription — {id, plan: "free"|"pro"|"team", status, current_period_end}.
-// Always returns something (Free with no row yet is the default, not an
-// error) — see GET /billing/status in app.py.
+// langganan saat ini {id, plan, status, current_period_end}. Selalu mengembalikan sesuatu (Free tanpa baris adalah default)
 export async function getBillingStatus() {
   const res = await apiFetch("/billing/status");
   return handleResponse(res);
 }
 
-// Starts a Xendit subscription checkout for "pro" or "team" — returns
-// {checkout_url}; redirect the browser there. The plan only actually
-// changes once the user finishes linking a payment method on that page and
-// Xendit's webhook confirms it (see POST /billing/webhook in app.py) — this
-// call alone doesn't upgrade anything.
-// The sidebar's plan card listens for this, so it refreshes right after
-// anything that can change the plan (join/leave a team, cancel...) instead of
-// waiting for the next page change.
+// kartu paket di sidebar mendengarkan event ini, jadi diperbarui begitu ada yang bisa mengubah paket
+// (masuk atau keluar team, membatalkan) tanpa menunggu pindah halaman
 const changesPlan = async (promise) => {
   const result = await promise;
   if (typeof window !== "undefined") window.dispatchEvent(new Event("notulis:plan-changed"));
@@ -251,6 +223,8 @@ export async function cancelPendingCheckout() {
   return changesPlan(handleResponse(res));
 }
 
+// memulai checkout Xendit untuk "pro" atau "team" dan mengembalikan {checkout_url} untuk tujuan redirect. Paket baru berubah setelah
+// webhook mengonfirmasi pembayaran
 export async function startCheckout(plan) {
   const res = await apiFetch("/billing/checkout", {
     method: "POST",
@@ -260,28 +234,25 @@ export async function startCheckout(plan) {
   return handleResponse(res);
 }
 
-// Cancels the current paid subscription (downgrades to Free immediately).
+// Membatalkan langganan berbayar saat ini (turun ke Free di akhir periode).
 export async function cancelSubscription() {
   const res = await apiFetch("/billing/cancel", { method: "POST" });
   return changesPlan(handleResponse(res));
 }
 
-// URL for a meeting's recording file — for <video>/<audio> playback or a
-// direct download link, not fetched as JSON. See GET /meetings/<id>/recording.
+// URL file rekaman rapat - untuk pemutaran <video>/<audio> atau tautan
+// unduh langsung, bukan diambil sebagai JSON. Lihat GET /meetings/<id>/recording.
 export function getRecordingUrl(id) {
   return `${API_BASE_URL}/meetings/${encodeURIComponent(id)}/recording`;
 }
 
-// Super admin dashboard: meeting volume, active subscriptions + MRR, OpenAI
-// cost (real tracked usage, see openai_cost.since — not retroactive),
-// R2 storage used, total registered users. 403s for a non-super_admin user,
-// 401 if not logged in at all — see GET /admin/stats in app.py.
+// angka dashboard admin (403 untuk selain super admin)
 export async function getAdminStats() {
   const res = await apiFetch("/admin/stats");
   return handleResponse(res);
 }
 
-// Super admin user management — see /admin/users* in app.py.
+// Manajemen user super admin - lihat /admin/users* di app.py.
 export async function listUsers() {
   return handleResponse(await apiFetch("/admin/users"));
 }
@@ -295,7 +266,7 @@ export async function createUser({ name, email, password, role }) {
   return handleResponse(res);
 }
 
-// fields: any of {name, role, active} — deactivating replaces deleting.
+// fields: salah satu dari {name, role, active} - menonaktifkan menggantikan menghapus.
 export async function updateUser(id, fields) {
   const res = await apiFetch(`/admin/users/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -314,24 +285,20 @@ export async function resetUserPassword(id, password) {
   return handleResponse(res);
 }
 
-// URL for the formal PDF report — for a plain link/anchor, not fetched as
-// JSON (the browser handles the download). See GET /admin/export.
+// URL laporan PDF resmi - untuk tautan/anchor biasa, bukan diambil sebagai
+// JSON (browser yang menangani unduhan). Lihat GET /admin/export.
 export function getAdminExportUrl() {
   return `${API_BASE_URL}/admin/export`;
 }
 
-// This user's own meeting stats — volume, platform breakdown, total
-// duration (see GET /reports/stats in app.py). Same shape of aggregation as
-// getAdminStats(), just scoped to "my meetings" instead of the whole system.
+// statistik rapat milik user ini, bentuk sama dengan getAdminStats() untuk rapat mereka saja
 export async function getReportStats() {
   const res = await apiFetch("/reports/stats");
   return handleResponse(res);
 }
 
-// Rekap of every action item across this user's meetings — totals, per
-// assignee, and the still-open items. Separate call because it's slow on a
-// cold cache (see GET /reports/action-items).
-// Usage of the caller's own team, or null when they are not on one. See GET /reports/team.
+// semua action item di seluruh rapat user ini, panggilan terpisah karena lambat saat dingin
+// pemakaian team si pemanggil, null kalau mereka tidak punya team
 export async function getReportTeam() {
   const res = await apiFetch("/reports/team");
   return handleResponse(res);
@@ -341,13 +308,13 @@ export async function getReportActionItems() {
   return handleResponse(await apiFetch("/reports/action-items"));
 }
 
-// URL for this user's own PDF report — for a plain link/anchor, not fetched
-// as JSON (the browser handles the download). See GET /reports/export.
+// URL laporan PDF milik user sendiri - untuk tautan/anchor biasa, bukan diambil
+// sebagai JSON (browser yang menangani unduhan). Lihat GET /reports/export.
 export function getReportExportUrl() {
   return `${API_BASE_URL}/reports/export`;
 }
 
-// URL for the Perbandingan Rapat page's PDF export — see GET /perbandingan/export.
+// URL ekspor PDF halaman Perbandingan Rapat - lihat GET /perbandingan/export.
 export async function getComparisonAnalysis(a, b) {
   const res = await apiFetch(`/perbandingan/analisis?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
   return handleResponse(res);
@@ -357,7 +324,7 @@ export function getComparisonExportUrl(meetingIdA, meetingIdB) {
   return `${API_BASE_URL}/perbandingan/export?a=${encodeURIComponent(meetingIdA)}&b=${encodeURIComponent(meetingIdB)}`;
 }
 
-// The caller's team + member list, or null if not on one — see GET /teams/me.
+// Team si pemanggil + daftar anggota, atau null kalau tidak punya - lihat GET /teams/me.
 export async function getMyTeam() {
   return handleResponse(await apiFetch("/teams/me"));
 }
@@ -380,8 +347,8 @@ export async function renameTeam(teamId, name) {
   return handleResponse(res);
 }
 
-// Admin-only. `email` is optional — omit it to get a shareable link without
-// sending mail. Returns {token, invite_url, expires_at}.
+// Hanya admin. `email` opsional - hilangkan untuk mendapat tautan yang bisa dibagikan tanpa
+// mengirim email. Mengembalikan {token, invite_url, expires_at}.
 export async function inviteToTeam(email) {
   const res = await apiFetch("/teams/invite", {
     method: "POST",
@@ -391,7 +358,7 @@ export async function inviteToTeam(email) {
   return handleResponse(res);
 }
 
-// {team_name} for the join page to show before the user commits.
+// {team_name} untuk ditampilkan halaman gabung sebelum user memutuskan.
 export async function previewTeamInvite(token) {
   return handleResponse(await apiFetch(`/teams/invite/${encodeURIComponent(token)}`));
 }
@@ -405,8 +372,8 @@ export async function joinTeam(token) {
   return changesPlan(handleResponse(res));
 }
 
-// Self-service leave (any role) — same server-side effect as an admin
-// removing this same user via removeTeamMember().
+// Keluar mandiri (peran apa pun) - efek di server sama dengan admin
+// mengeluarkan user yang sama lewat removeTeamMember().
 export async function leaveTeam() {
   return changesPlan(handleResponse(await apiFetch("/teams/leave", { method: "POST" })));
 }
@@ -424,7 +391,7 @@ export async function updateTeamMemberRole(userId, role) {
   return handleResponse(res);
 }
 
-// Per-meeting opt-in to team sharing — see POST /meetings/<id>/share-team.
+// Opt in berbagi ke team per rapat - lihat POST /meetings/<id>/share-team.
 export async function shareMeetingWithTeam(id, enabled) {
   const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/share-team`, {
     method: "POST",
@@ -434,14 +401,8 @@ export async function shareMeetingWithTeam(id, enabled) {
   return handleResponse(res);
 }
 
-// RAG Knowledge Base search — returns {answer, results}. `answer` is one
-// GPT-synthesized paragraph grounded only in the matched chunks (null if
-// synthesis failed or nothing matched); `results` is those matched chunks
-// themselves (each {meeting_id, meeting_title, meeting_created_at,
-// meeting_platform, kind, text, similarity}), ranked closest-first — always
-// populated so the UI can show sources even if `answer` is null. One query
-// in, one answer out: no conversation history is kept or sent anywhere, by
-// design — see GET /knowledge-base/search in app.py.
+// Pencarian Knowledge Base: {answer, results}. `answer` adalah satu paragraf singkat dari potongan yang cocok (null kalau gagal atau
+// tidak ada yang cocok), `results` adalah potongan itu {meeting_id, meeting_title, meeting_created_at, meeting_platform, kind, text, similarity}
 export async function searchKnowledgeBase(query) {
   const res = await apiFetch(`/knowledge-base/search?q=${encodeURIComponent(query)}`);
   return handleResponse(res);

@@ -6,8 +6,8 @@ import { useEffect } from "react";
 import { FONT_FAMILY } from "@/constants/theme";
 import { AuthProvider } from "@/lib/auth-context";
 
-// Inter for the whole web app: the stylesheet is added once, and body gets the family
-// so text that does not use a type token still inherits it.
+// Inter untuk seluruh aplikasi web: stylesheet ditambahkan sekali, dan body diberi font itu
+// supaya teks yang tidak memakai token tipografi tetap mewarisinya.
 function useInterFont() {
   useEffect(() => {
     if (typeof document === "undefined" || document.getElementById("notulis-font")) return;

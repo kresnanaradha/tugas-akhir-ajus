@@ -1,0 +1,24 @@
+# menjalankan transcriber_service.py: mengambil job dari Redis (pipeline/job_queue.py) di container sendiri, karena Chromium, Xvfb, dan
+# PulseAudio ditambah whisper dalam satu container pernah OOM-kill tes langsung
+FROM python:3.12-slim
+
+# ffmpeg: dipakai pemuat audio whisperx. Tidak ada lagi dari image bot yang berlaku, container ini tidak pernah membuka browser
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# trio torch CPU terkunci yang sama dengan jalur TORCH_CPU di Dockerfile, termasuk torchaudio: pyannote menariknya dan terikat ke satu
+# torch tertentu ("libtorch_cuda.so: cannot open shared object file"). Smoke test worker-test dulu tidak pernah menjalankan diarization,
+# jadi ini terlewat
+RUN pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements-transcriber.txt .
+RUN pip install --no-cache-dir -r requirements-transcriber.txt
+
+COPY pipeline/ pipeline/
+COPY transcriber_service.py .
+
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "transcriber_service.py"]

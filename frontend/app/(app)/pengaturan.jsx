@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
@@ -8,13 +8,8 @@ import { changePassword, deactivateAccount, logout as apiLogout, updateProfile }
 import { useAuth } from "@/lib/auth-context";
 import { initialsOf } from "@/lib/format";
 
-// One text field with its own Save button and saved/error feedback — used
-// for Nama/Email/Nomor Telepon below, otherwise identical in shape.
-// Assumes `initialValue` is already loaded by mount time (true here: the
-// (app)/ layout only renders its children once useAuth()'s user exists).
-// allowEmpty: Nama/Email may never be blank, but an optional field like
-// phone should be clearable back to "" (so it can't just check value.trim()
-// is truthy the way the required fields do).
+// satu kolom teks dengan tombol Simpan dan umpan balik sendiri, dipakai untuk Nama / Email / Nomor Telepon. Mengandaikan initialValue
+// sudah dimuat (layout hanya merender setelah user ada). allowEmpty membuat kolom opsional seperti telepon bisa dikosongkan
 function EditableField({ label, initialValue, keyboardType, allowEmpty, onSave }) {
   const [value, setValue] = useState(initialValue);
   const [saving, setSaving] = useState(false);
@@ -93,8 +88,8 @@ function ProfileCard() {
       const fresh = await updateProfile({ email_notifications: value });
       updateUser(fresh);
     } catch {
-      // Best-effort — the switch just stays at its current (unsaved) value
-      // if this fails, no separate error banner for one toggle.
+      // Sebisanya - saklarnya tetap di nilai saat ini (belum tersimpan)
+      // kalau ini gagal, tanpa banner error terpisah untuk satu saklar.
     } finally {
       setSavingNotif(false);
     }
@@ -398,98 +393,6 @@ const styles = StyleSheet.create({
   dangerLinkLabel: { ...type.small, fontWeight: "600", color: colors.danger },
   smallButtonDisabled: { opacity: 0.5 },
   smallButtonLabel: { ...type.small, fontWeight: "700", color: colors.ink },
-
-  noticeBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: colors.surfaceSunken,
-    borderRadius: radius.sm,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  noticeBoxWarning: { backgroundColor: colors.dangerSoft },
-  noticeText: { ...type.small, color: colors.inkSoft, flex: 1 },
-
-  planRow: { flexDirection: "row", gap: spacing.lg, alignItems: "stretch" },
-  planCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    gap: spacing.md,
-    position: "relative",
-    ...shadow.card,
-  },
-  planCardHighlighted: { borderColor: colors.gold, borderWidth: 2 },
-  popularBadge: {
-    position: "absolute",
-    top: -12,
-    left: spacing.xl,
-    backgroundColor: colors.gold,
-    borderRadius: radius.pill,
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-  },
-  popularBadgeLabel: { ...type.small, fontWeight: "700", color: colors.ink },
-
-  planIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    backgroundColor: colors.goldSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  planHeading: { gap: 2 },
-  planName: { ...type.h1, fontSize: 20, color: colors.ink },
-  planTagline: { ...type.small, color: colors.inkFaint },
-
-  priceRow: { flexDirection: "row", alignItems: "baseline", gap: 6 },
-  price: { ...type.display, fontSize: 26, color: colors.ink },
-  priceBilling: { ...type.small, color: colors.inkFaint },
-
-  featureList: { gap: spacing.sm, flex: 1 },
-  featureRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  featureLabel: { ...type.body, color: colors.inkSoft, flex: 1, lineHeight: 19 },
-
-  planButton: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: 11,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 42,
-  },
-  planButtonHighlighted: { backgroundColor: colors.gold, borderColor: colors.gold },
-  planButtonCurrent: { backgroundColor: colors.surfaceSunken },
-  planButtonLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.ink },
-  planButtonLabelHighlighted: { color: colors.ink },
-  planButtonLabelCurrent: { color: colors.inkFaint },
-
-  membersCard: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    ...shadow.card,
-  },
-  membersHeader: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" },
-  iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.sm,
-    backgroundColor: colors.goldSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  membersTitle: { ...type.h2, color: colors.ink, marginBottom: 4 },
-  membersBody: { ...type.body, color: colors.inkFaint, lineHeight: 20 },
 
   modalOverlay: {
     flex: 1,

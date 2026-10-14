@@ -14,12 +14,10 @@ const DAY_MS = 86400000;
 export function TopBar() {
   const { user, signOut } = useAuth();
   const [search, setSearch] = useState("");
-  const [recent, setRecent] = useState(null); // null = not loaded yet
+  const [recent, setRecent] = useState(null); // null = belum dimuat
   const [openMenu, setOpenMenu] = useState(null); // null | "bell" | "user"
 
-  // One fetch, shared by the badge (any meeting from the last 24h?) and the
-  // bell dropdown's content — TopBar is mounted on every page, so this runs
-  // once per navigation rather than only when the bell is actually opened.
+  // satu pengambilan data untuk badge (ada rapat 24 jam terakhir?) dan dropdown lonceng. Bilah ini ada di setiap halaman, jadi berjalan sekali per navigasi
   useEffect(() => {
     listMeetings()
       .then((all) => setRecent(all.slice(0, 5).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
@@ -31,9 +29,7 @@ export function TopBar() {
   function runSearch() {
     const q = search.trim();
     if (!q) return;
-    // The Rapat list (filter by title), not Knowledge Base — KB is a
-    // narrower, opt-in, Pro+-only search over a handful of meetings, not
-    // what "cari rapat" should mean for everyone.
+    // cari di daftar Rapat (berdasarkan judul), bukan Knowledge Base: itu opt in dan hanya Pro
     router.push(`/rapat?q=${encodeURIComponent(q)}`);
     setSearch("");
   }
@@ -142,11 +138,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     backgroundColor: colors.surface,
-    // Establishes a stacking context for the whole bar so the dropdowns
-    // below (position: absolute, zIndex: 50 within this context) paint
-    // above every page's own content — without this, a page's own buttons
-    // (zIndex: auto) could still end up painted on top purely by DOM order,
-    // since position:relative alone doesn't create a stacking context.
+    // membuat stacking context untuk bilah supaya dropdown (zIndex 50) tampil di atas isi halaman mana pun
     position: "relative",
     zIndex: 30,
   },
@@ -163,9 +155,7 @@ const styles = StyleSheet.create({
   searchInput: { ...type.body, color: colors.ink, flex: 1, outlineStyle: "none" },
   right: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
 
-  // Covers the whole screen behind an open dropdown so a click anywhere
-  // else closes it — simplest cross-platform "click outside" without a new
-  // dependency. Sits under the dropdowns (lower zIndex) but above the page.
+  // menutupi layar di belakang dropdown yang terbuka supaya klik di mana saja menutupnya (tanpa dependensi tambahan)
   overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
 
   bellWrap: { position: "relative", padding: 4 },

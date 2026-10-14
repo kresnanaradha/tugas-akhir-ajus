@@ -19,7 +19,7 @@ function greetingWord() {
   return "malam";
 }
 
-// href: null = not wired to a page yet.
+// href: null = belum tersambung ke halaman.
 const QUICK_ACTIONS = [
   { icon: "video", label: "Rapat Baru", note: "Bot join otomatis", href: "/rapat/baru" },
   { icon: "upload", label: "Upload", note: "Transkripsi file lama", href: "/rapat/upload" },
@@ -34,8 +34,8 @@ const todayLabel = new Intl.DateTimeFormat("id-ID", {
   year: "numeric",
 }).format(new Date());
 
-// The banner's content, from the newest finished meeting's stored summary (no
-// extra AI call): its still-open action items first, else its key decisions.
+// Isi banner, dari ringkasan tersimpan rapat selesai terbaru (tanpa
+// panggilan AI tambahan): action item yang masih terbuka dulu, kalau tidak keputusan utamanya.
 function buildInsight(meeting, summary) {
   const open = (summary?.action_items || []).filter((a) => !a.done);
   const short = (t, n) => (t.length > n ? `${t.slice(0, n).trim()}...` : t);

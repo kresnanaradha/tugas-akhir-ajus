@@ -4,10 +4,8 @@ import { Pressable, StyleSheet, Text } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 
-// Real "back" (wherever the user actually came from — a dashboard list, a
-// search result, the rapat list, ...), not a hardcoded destination. Falls
-// back to `fallbackHref` only when there's no navigation history to go back
-// to (e.g. this page was opened directly via a pasted link or a refresh).
+// "kembali" sungguhan (ke mana pun user datang), kembali ke `fallbackHref` kalau tidak ada riwayat (dibuka lewat
+// tautan yang ditempel atau setelah refresh)
 export function BackLink({ label = "Kembali", fallbackHref = "/rapat" }) {
   return (
     <Pressable

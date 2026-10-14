@@ -5,10 +5,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { createUser, listUsers, resetUserPassword, updateUser } from "@/lib/api";
 
-// Super admin's user management: list, add, change role, deactivate/activate
-// (instead of deleting, since meetings point at the user's id) and reset a
-// password. The backend enforces all of it (super_admin only, and no
-// self-lockout); this just drives it.
+// manajemen user super admin: daftar, tambah, ubah peran, nonaktifkan (bukan hapus, rapat menunjuk ke user), reset
+// password. Backend yang menegakkan semuanya, ini hanya menjalankannya
 const PLAN_LABEL = { free: "Free", pro: "Pro", team: "Team" };
 
 export function UserManagement({ currentUserId }) {
@@ -16,7 +14,7 @@ export function UserManagement({ currentUserId }) {
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "user" });
-  const [resetFor, setResetFor] = useState(null); // user id whose reset form is open
+  const [resetFor, setResetFor] = useState(null); // id user yang form reset-nya terbuka
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -27,7 +25,7 @@ export function UserManagement({ currentUserId }) {
   }
   useEffect(load, []);
 
-  // Runs one action, then reloads the list; any error is shown in one place.
+  // Menjalankan satu aksi, lalu memuat ulang daftar; error apa pun ditampilkan di satu tempat.
   async function run(action, onDone) {
     setBusy(true);
     setError("");

@@ -2,11 +2,8 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, type } from "@/constants/theme";
 
-// Horizontal bars for a small part-to-whole breakdown (3 categories max at
-// this app's scale — plan distribution). 1-3 series is comfortable with
-// color alone per the dataviz skill, direct-labeled so nothing relies on
-// color-matching against a legend.
-// fill: spread the rows over the whole height of a card that was stretched to its neighbour.
+// batang horizontal untuk rincian kecil (paling banyak 3 kategori di sini), tiap baris diberi label langsung supaya tidak bergantung pada legenda.
+// fill menyebar barisnya ke seluruh tinggi kartu yang diregangkan sampai setinggi tetangganya
 export function HorizontalBarChart({ data, labelWidth = 56, unit = "", fill = false }) {
   const max = Math.max(1, ...data.map((d) => d.value));
 

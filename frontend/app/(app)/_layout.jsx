@@ -9,10 +9,8 @@ import { useAuth } from "@/lib/auth-context";
 export default function AppLayout() {
   const { status } = useAuth();
 
-  // Every screen under (app)/ requires a session — checked once here rather
-  // than in each screen, since they all share this layout. A direct
-  // navigation to e.g. /dashboard with no session bounces to /login instead
-  // of rendering the shell around an empty/erroring page.
+  // setiap layar di bawah (app)/ butuh sesi, dicek sekali di sini. Tanpa sesi, arahkan ke /login daripada
+  // menampilkan kerangka di sekitar halaman kosong
   if (status === "loading") {
     return (
       <View style={[styles.root, { alignItems: "center", justifyContent: "center" }]}>

@@ -15,7 +15,7 @@ import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 // "Hasil Lintas Rapat" card below is worded to match that (no claim of an
 // AI-synthesized answer, just relevant chunks pooled across meetings).
 const KIND_LABEL = {
-  executive_summary: "Ringkasan",
+  executive_summary: "Pokok Pembahasan",
   key_decision: "Keputusan",
   topic: "Topik",
   action_item: "Action Item",
@@ -168,7 +168,7 @@ export default function KnowledgeBaseScreen() {
           <Text style={[styles.heroSubtitle, { textAlign: "center" }]}>
             Cari keputusan, topik, dan action item dari semua rapat lama dengan bahasa biasa, lengkap dengan sumber rapatnya. Upgrade ke Pro (Rp99rb / bulan) untuk membukanya, plus rapat dan durasi rekaman tanpa batas.
           </Text>
-          <Pressable style={styles.searchButton} onPress={() => router.push("/pengaturan")}>
+          <Pressable style={styles.searchButton} onPress={() => router.push("/billing")}>
             <Text style={styles.searchButtonLabel}>Upgrade ke Pro</Text>
           </Pressable>
         </View>

@@ -164,30 +164,36 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
     _send(config, to_email, "Atur ulang password Notulis", text, html_body)
 
 
-def send_quota_exhausted_email(to_email: str, name: str, limit_minutes: float, upgrade_url: str, cut_off: bool = False) -> None:
-    """Raises on failure (the caller logs it); no-op if SMTP isn't configured."""
+def send_meeting_unprocessed_email(
+    to_email: str, name: str, title: str, duration_minutes: float, remaining_minutes: float,
+    limit_minutes: float, meeting_url: str, upgrade_url: str,
+) -> None:
+    """A Free recording longer than what is left of the week's AI minutes: kept whole,
+    not processed. Raises on failure (the caller logs it); no-op if SMTP isn't configured."""
     config = _config()
     if config is None:
         return
 
-    note = "Rekaman rapat Anda yang sedang berjalan sudah dihentikan otomatis. " if cut_off else ""
+    summary = (
+        f"Rekaman rapat \"{title}\" ({duration_minutes:g} menit) sudah tersimpan utuh dan bisa diputar, "
+        f"tetapi belum diproses AI (transkrip dan ringkasan) karena sisa kuota paket Free minggu ini "
+        f"{remaining_minutes:g} dari {limit_minutes:g} menit."
+    )
     text = (
-        f"Halo {name},\n\n"
-        f"Kuota rekaman paket Free Anda minggu ini ({limit_minutes:g} menit) sudah habis. "
-        f"{note}"
-        "Kuota baru tersedia Minggu pukul 08.00 WITA.\n\n"
-        "Rapat penting tidak harus menunggu. Dengan Pro (Rp99rb / bulan):\n"
-        "- Rapat dan durasi rekaman tanpa batas\n"
+        f"Halo {name},\n\n{summary}\n\n"
+        "Dengan Pro (Rp99rb / bulan) rapat ini bisa langsung diproses, dan rapat berikutnya tanpa batas menit:\n"
+        "- Transkrip + ringkasan AI untuk semua rapat, tanpa kuota mingguan\n"
         "- Video + transkrip tersinkron, editor transkrip\n"
         "- Knowledge Base: cari keputusan dari semua rapat lama\n\n"
-        f"Upgrade sekarang: {upgrade_url}\n\n"
+        f"Upgrade sekarang: {upgrade_url}\n"
+        f"Lihat rekaman: {meeting_url}\n\n"
         "-- Notulis"
     )
     font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
     perks = "".join(
         f'<li style="margin:0 0 6px;">{p}</li>'
         for p in (
-            "<strong>Rapat dan durasi rekaman tanpa batas</strong>, tidak ada kuota mingguan",
+            "<strong>Transkrip + ringkasan AI untuk semua rapat</strong>, tanpa kuota mingguan",
             "Video + transkrip tersinkron dan editor transkrip",
             "Knowledge Base: cari keputusan dari semua rapat lama",
         )
@@ -197,13 +203,14 @@ def send_quota_exhausted_email(to_email: str, name: str, limit_minutes: float, u
     <tr><td style="padding-bottom:20px;"><span style="font-size:18px;font-weight:700;color:{_INK};">Notulis</span></td></tr>
     <tr>
       <td style="background-color:{_SURFACE};border:1px solid {_BORDER};border-radius:12px;padding:28px;">
-        <h1 style="margin:0 0 6px;font-size:20px;line-height:1.3;color:{_INK};">Kuota rekaman minggu ini habis</h1>
+        <h1 style="margin:0 0 6px;font-size:20px;line-height:1.3;color:{_INK};">Rekaman tersimpan, belum diproses AI</h1>
         <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:{_INK_SOFT};">
-          Halo {html.escape(name)}, {limit_minutes:g} menit rekaman paket Free Anda minggu ini sudah terpakai.
-          {"Rekaman rapat Anda yang sedang berjalan <strong>sudah dihentikan otomatis</strong>. " if cut_off else ""}Kuota baru tersedia <strong>Minggu pukul 08.00 WITA</strong>.
+          Halo {html.escape(name)}, rekaman rapat <strong>{html.escape(title)}</strong> ({duration_minutes:g} menit)
+          <strong>sudah tersimpan utuh</strong> dan bisa diputar. Transkrip dan ringkasan AI belum dibuat karena sisa kuota
+          paket Free minggu ini {remaining_minutes:g} dari {limit_minutes:g} menit.
         </p>
         <div style="background-color:{_BG};border:1px solid {_BORDER};border-radius:10px;padding:18px 20px;margin-bottom:22px;">
-          <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:{_INK};">Rapat penting tidak harus menunggu.</p>
+          <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:{_INK};">Rapat ini bisa langsung diproses.</p>
           <p style="margin:0 0 12px;font-size:13px;color:{_GOLD_DEEP};font-weight:600;">Pro, Rp99rb / bulan</p>
           <ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.5;color:{_INK_SOFT};">{perks}</ul>
         </div>
@@ -212,12 +219,13 @@ def send_quota_exhausted_email(to_email: str, name: str, limit_minutes: float, u
                   text-decoration:none;border-radius:8px;padding:12px 26px;">
           Upgrade ke Pro
         </a>
-        <p style="margin:18px 0 0;font-size:12px;color:{_INK_FAINT};">Bisa berhenti kapan saja dari menu Pengaturan.</p>
+        <p style="margin:18px 0 0;font-size:13px;"><a href="{meeting_url}" style="color:{_GOLD_DEEP};">Lihat rekaman</a></p>
+        <p style="margin:10px 0 0;font-size:12px;color:{_INK_FAINT};">Setelah upgrade, buka rapat ini lalu klik "Proses Sekarang".</p>
       </td>
     </tr>
   </table>
 </div>"""
-    _send(config, to_email, "Kuota rekaman habis: lanjutkan rapat dengan Pro", text, html_body)
+    _send(config, to_email, "Rekaman tersimpan, upgrade untuk memprosesnya dengan AI", text, html_body)
 
 
 def send_team_invite_email(to_email: str, team_name: str, inviter_name: str, invite_url: str) -> None:

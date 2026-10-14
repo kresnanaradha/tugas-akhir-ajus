@@ -129,7 +129,7 @@ function UpsellPanel() {
           Notulis tetap bisa dipakai sendirian. Membuat team memerlukan paket Team, supaya hasil rapat bisa dibagikan
           dan anggota dikelola bersama.
         </Text>
-        <Pressable style={styles.primaryButton} onPress={() => router.push("/pengaturan")}>
+        <Pressable style={styles.primaryButton} onPress={() => router.push("/billing")}>
           <Text style={styles.primaryButtonLabel}>Lihat Paket Team</Text>
         </Pressable>
       </View>

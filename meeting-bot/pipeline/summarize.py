@@ -89,6 +89,18 @@ _DETAILS_PROMPT = (
     "null), and nothing that was not committed to."
 )
 
+# A third, tiny call (the narrative above is one paragraph per topic, far too long
+# for a glance): what the meeting was about and what came out of it.
+_SHORT_PROMPT = (
+    "You write a short summary of a meeting transcript, in the same language as "
+    "the transcript: 2 to 4 sentences, at most about 70 words, saying what the "
+    "meeting was about and its main outcome or decisions. No greetings, no "
+    "mention of the meeting ending, nothing that is not in the transcript. If a "
+    "speaker has to be mentioned, write 'Pembicara N' for a label like SPEAKER_0N, "
+    "or the exact name for a label that is a real name; prefer not to mention "
+    "speakers at all. Plain text, one paragraph."
+)
+
 _SPEAKER_LABEL = re.compile(r"(?i)^(?:pembicara|speaker)[ _]?0*(\d+)$")
 _SPEAKER_INLINE = re.compile(r"(?i)\b(?:speaker[ _]|pembicara )0*(\d+)\b")
 _CLOSING = re.compile(r"(?i)\b(ditutup|diakhiri|menutup|mengakhiri|terima kasih)\b")
@@ -183,6 +195,7 @@ def _fix_chunk(client: OpenAI, text: str, meeting_id: str, part: int, parts: int
 _MIN_WORDS = 15
 NO_SPEECH_SUMMARY = {
     "executive_summary": "Tidak ada percakapan yang terdeteksi dalam rekaman ini.",
+    "short_summary": "Tidak ada percakapan yang terdeteksi dalam rekaman ini.",
     "key_decisions": [],
     "topics_discussed": [],
     "action_items": [],
@@ -230,6 +243,80 @@ def _summary_user_message(transcript: str) -> str:
     return f"{_speaker_note(transcript)}Transcript length: {words} words. Write executive_summary of about {target} words.\n\n{transcript}"
 
 
+def short_summary(transcript: str, meeting_id: str | None) -> str:
+    """2-4 sentence summary. Also used to add one to a meeting summarized before this existed."""
+    if not _has_speech(transcript):
+        return NO_SPEECH_SUMMARY["short_summary"]
+    response = OpenAI().chat.completions.create(
+        model=_MODEL,
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": _SHORT_PROMPT},
+            {"role": "user", "content": _speaker_note(transcript) + transcript},
+        ],
+    )
+    if meeting_id:
+        _log_usage(meeting_id, "summarize_short", response)
+    text = response.choices[0].message.content.strip()
+    return _SPEAKER_INLINE.sub(lambda m: f"Pembicara {int(m.group(1))}", text)
+
+
+_COMPARE_PROMPT = (
+    "You compare two meetings from their summaries, in Indonesian. Return JSON with: "
+    "'about_a' and 'about_b' (one plain sentence each, starting 'Rapat A membahas ...' "
+    "and 'Rapat B membahas ...', saying what that meeting was about), "
+    "'similarities' (list of up to 4 short sentences about what both meetings share: "
+    "topics, goals, people, decisions), 'differences' (list of up to 4 short sentences "
+    "about what is different or only in one of them, say which one: Rapat A or Rapat B), "
+    "'progress' (list of up to 3 short sentences about follow-up or change from A to B, "
+    "such as an action item or decision that moved on; empty list if the meetings are "
+    "unrelated), and 'conclusion' (2 to 3 sentences, the overall comparison). Use only "
+    "what the summaries say, invent nothing. If the two meetings are about unrelated "
+    "things, say that plainly instead of forcing a link. If one summary is empty, an "
+    "apology or has no topics, decisions or action items, leave similarities and "
+    "progress empty and say in the conclusion that it has too little content to compare."
+)
+
+
+def _compare_block(label: str, meeting: dict, summary: dict) -> str:
+    items = "; ".join(a.get("task", "") + (" (selesai)" if a.get("done") else "") for a in summary.get("action_items") or [])
+    return (
+        f"{label}: {meeting.get('title', '')} ({str(meeting.get('created_at', ''))[:10]})\n"
+        f"Ringkasan: {(summary.get('executive_summary') or '')[:3000]}\n"
+        f"Topik: {', '.join(summary.get('topics_discussed') or [])}\n"
+        f"Keputusan: {'; '.join(summary.get('key_decisions') or [])}\n"
+        f"Action item: {items}"
+    )
+
+
+def compare_meetings(meeting_a: dict, summary_a: dict, meeting_b: dict, summary_b: dict) -> dict:
+    """One gpt-4o-mini call over the two meetings' summaries (not transcripts):
+    similarities, differences, progress from A to B and an overall conclusion."""
+    response = OpenAI().chat.completions.create(
+        model=_MODEL,
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": _COMPARE_PROMPT},
+            {"role": "user", "content": _compare_block("Rapat A", meeting_a, summary_a) + "\n\n" + _compare_block("Rapat B", meeting_b, summary_b)},
+        ],
+    )
+    _log_usage(meeting_a["id"], "compare", response)
+    data = json.loads(response.choices[0].message.content)
+
+    def lines(key):
+        return [str(x).strip() for x in data.get(key) or [] if str(x).strip()]
+
+    return {
+        "about_a": str(data.get("about_a") or "").strip(),
+        "about_b": str(data.get("about_b") or "").strip(),
+        "similarities": lines("similarities"),
+        "differences": lines("differences"),
+        "progress": lines("progress"),
+        "conclusion": str(data.get("conclusion") or "").strip(),
+    }
+
+
 def _build_summary(transcript: str, meeting_id: str | None) -> dict:
     """Builds the summary dict without saving or indexing anything, so it can
     be tested against stored transcripts. meeting_id None skips usage logging
@@ -257,6 +344,7 @@ def _build_summary(transcript: str, meeting_id: str | None) -> dict:
     if meeting_id:
         _log_usage(meeting_id, "summarize", narrative)
         _log_usage(meeting_id, "summarize_details", details)
+    short = short_summary(transcript, meeting_id)
 
     data = json.loads(details.choices[0].message.content)
 
@@ -280,6 +368,7 @@ def _build_summary(transcript: str, meeting_id: str | None) -> dict:
     paragraphs[-1] = " ".join(sentences)
     return {
         "executive_summary": "\n\n".join(p for p in paragraphs if p.strip()),
+        "short_summary": short,
         "key_decisions": [clean(x) for x in data.get("key_decisions", [])],
         "topics_discussed": [clean(x) for x in data.get("topics_discussed", [])],
         "action_items": [

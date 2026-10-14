@@ -11,7 +11,7 @@ export const colors = {
   bg: "#F6F4EE",
   surface: "#FFFFFF",
   surfaceSunken: "#F1EEE4",
-  border: "#E4E0D2",
+  border: "#ECE8DC",
 
   gold: "#E3B54A",
   goldSoft: "#F6E7C4",
@@ -27,40 +27,46 @@ export const colors = {
   white: "#FFFFFF",
 };
 
+// More air than the first version (md 12, lg 16, xl 24): every gap and padding
+// that uses a token grows with it, which is most of the app.
 export const spacing = {
   xs: 4,
   sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  xxl: 32,
-  xxxl: 48,
+  md: 14,
+  lg: 20,
+  xl: 28,
+  xxl: 36,
+  xxxl: 52,
 };
 
 export const radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
+  sm: 10,
+  md: 14,
+  lg: 20,
   pill: 999,
 };
 
+// Loaded in app/_layout.jsx; the rest is the usual system fallback.
+export const FONT_FAMILY = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
 export const type = {
-  display: { fontSize: 30, fontWeight: "700", letterSpacing: -0.4 },
-  h1: { fontSize: 22, fontWeight: "700", letterSpacing: -0.2 },
-  h2: { fontSize: 17, fontWeight: "600" },
-  body: { fontSize: 14.5, fontWeight: "400" },
-  bodyMedium: { fontSize: 14.5, fontWeight: "500" },
-  small: { fontSize: 12.5, fontWeight: "400" },
-  eyebrow: { fontSize: 11, fontWeight: "600", letterSpacing: 0.6 },
-  stat: { fontSize: 28, fontWeight: "700", letterSpacing: -0.5 },
+  display: { fontFamily: FONT_FAMILY, fontSize: 32, fontWeight: "700", letterSpacing: -0.6 },
+  h1: { fontFamily: FONT_FAMILY, fontSize: 24, fontWeight: "700", letterSpacing: -0.4 },
+  h2: { fontFamily: FONT_FAMILY, fontSize: 17, fontWeight: "600", letterSpacing: -0.1 },
+  body: { fontFamily: FONT_FAMILY, fontSize: 14.5, fontWeight: "400", lineHeight: 22 },
+  bodyMedium: { fontFamily: FONT_FAMILY, fontSize: 14.5, fontWeight: "500", lineHeight: 22 },
+  small: { fontFamily: FONT_FAMILY, fontSize: 12.5, fontWeight: "400", lineHeight: 18 },
+  eyebrow: { fontFamily: FONT_FAMILY, fontSize: 11, fontWeight: "600", letterSpacing: 0.8, textTransform: "uppercase" },
+  stat: { fontFamily: FONT_FAMILY, fontSize: 28, fontWeight: "700", letterSpacing: -0.6 },
 };
 
+// Soft and wide instead of a tight dark edge: cards float a little off the page.
 export const shadow = {
   card: {
     shadowColor: "#1B1F2B",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    elevation: 2,
   },
 };

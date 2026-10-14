@@ -15,7 +15,13 @@ export function PipelineResult({ result, onDone }) {
     <View>
       {summary && (
         <>
-          <Text style={styles.sectionLabel}>RINGKASAN</Text>
+          {!!summary.short_summary && (
+            <>
+              <Text style={styles.sectionLabel}>RINGKASAN</Text>
+              <Text style={styles.body}>{summary.short_summary}</Text>
+            </>
+          )}
+          <Text style={styles.sectionLabel}>POKOK PEMBAHASAN RAPAT</Text>
           <Text style={styles.body}>{summary.executive_summary}</Text>
 
           {summary.key_decisions?.length > 0 && (

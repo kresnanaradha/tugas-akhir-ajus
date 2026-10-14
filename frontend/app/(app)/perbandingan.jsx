@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 
 import { StatusPill } from "@/components/StatusPill";
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getComparisonExportUrl, getMeeting, listMeetings } from "@/lib/api";
+import { getComparisonAnalysis, getComparisonExportUrl, getMeeting, listMeetings } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 
 // Same accent per platform as components/MeetingRow.jsx, here as the colored
@@ -76,7 +76,9 @@ function SectionCard({ icon, title, count, children }) {
   );
 }
 
-function MeetingColumn({ meetingId, allMeetings, excludeId, onPick, label }) {
+// Loads one meeting's detail; the page keeps both so the two sides can be laid
+// out row by row (each section of A level with the same section of B).
+function useMeeting(meetingId) {
   const [state, setState] = useState({ status: "idle", data: null });
 
   useEffect(() => {
@@ -94,6 +96,10 @@ function MeetingColumn({ meetingId, allMeetings, excludeId, onPick, label }) {
     };
   }, [meetingId]);
 
+  return state;
+}
+
+function HeadColumn({ state, meetingId, allMeetings, excludeId, onPick, label }) {
   const picker = (
     <>
       <Text style={styles.colLabel}>{label}</Text>
@@ -121,11 +127,7 @@ function MeetingColumn({ meetingId, allMeetings, excludeId, onPick, label }) {
   }
 
   const meeting = state.data;
-  const summary = meeting.summary;
   const { date, time } = formatMeetingDate(meeting.created_at);
-  const decisions = summary?.key_decisions || [];
-  const topics = summary?.topics_discussed || [];
-  const items = summary?.action_items || [];
 
   return (
     <View style={styles.col}>
@@ -163,58 +165,177 @@ function MeetingColumn({ meetingId, allMeetings, excludeId, onPick, label }) {
           <Feather name="chevron-right" size={13} color={colors.inkSoft} />
         </Pressable>
       </View>
+    </View>
+  );
+}
 
-      {!summary ? (
-        <Text style={styles.stateText}>Rapat ini belum punya ringkasan.</Text>
-      ) : (
-        <>
-          <SectionCard icon="zap" title="Ringkasan AI">
-            <Text style={styles.bodyText}>{summary.executive_summary}</Text>
-          </SectionCard>
-
-          <SectionCard icon="hash" title="Topik Dibahas" count={topics.length}>
-            <View style={styles.chipRow}>
-              {topics.map((t, i) => (
-                <View key={i} style={styles.chip}>
-                  <Text style={styles.chipLabel}>{t}</Text>
-                </View>
-              ))}
-              {topics.length === 0 && <Text style={styles.mutedText}>Tidak ada topik tercatat.</Text>}
+// One comparison row per section, in the order the advisor asked for: topics
+// first, the (truncated) summary after. Each renders the card of ONE meeting.
+const SECTIONS = [
+  {
+    icon: "hash",
+    title: "Topik Dibahas",
+    count: (s) => (s.topics_discussed || []).length,
+    body: (s) => {
+      const topics = s.topics_discussed || [];
+      return (
+        <View style={styles.chipRow}>
+          {topics.map((t, i) => (
+            <View key={i} style={styles.chip}>
+              <Text style={styles.chipLabel}>{t}</Text>
             </View>
-          </SectionCard>
+          ))}
+          {topics.length === 0 && <Text style={styles.mutedText}>Tidak ada topik tercatat.</Text>}
+        </View>
+      );
+    },
+  },
+  {
+    icon: "align-left",
+    title: "Ringkasan",
+    body: (s, meeting) => (
+      <>
+        <Text style={styles.bodyText} numberOfLines={5}>
+          {s.short_summary || s.executive_summary}
+        </Text>
+        <Pressable onPress={() => router.push(`/rapat/${meeting.id}`)}>
+          <Text style={styles.moreLink}>Baca selengkapnya</Text>
+        </Pressable>
+      </>
+    ),
+  },
+  {
+    icon: "check-circle",
+    title: "Keputusan",
+    count: (s) => (s.key_decisions || []).length,
+    body: (s) => {
+      const decisions = s.key_decisions || [];
+      return (
+        <>
+          {decisions.map((d, i) => (
+            <View key={i} style={styles.bulletRow}>
+              <Feather name="check-circle" size={13} color={colors.success} style={{ marginTop: 3 }} />
+              <Text style={[styles.bodyText, { flex: 1 }]}>{d}</Text>
+            </View>
+          ))}
+          {decisions.length === 0 && <Text style={styles.mutedText}>Tidak ada keputusan tercatat.</Text>}
+        </>
+      );
+    },
+  },
+  {
+    icon: "list",
+    title: "Action Items",
+    count: (s) => (s.action_items || []).length,
+    body: (s) => {
+      const items = s.action_items || [];
+      return (
+        <>
+          {items.map((a, i) => (
+            <View key={i} style={styles.bulletRow}>
+              <Feather
+                name={a.done ? "check-square" : "square"}
+                size={14}
+                color={a.done ? colors.success : colors.inkFaint}
+                style={{ marginTop: 2 }}
+              />
+              <Text style={[styles.bodyText, { flex: 1 }, a.done && styles.done]}>
+                {a.task}
+                {a.assignee || a.due ? (
+                  <Text style={styles.mutedText}>{`  — ${[a.assignee, a.due].filter(Boolean).join(" · ")}`}</Text>
+                ) : null}
+              </Text>
+            </View>
+          ))}
+          {items.length === 0 && <Text style={styles.mutedText}>Tidak ada action item.</Text>}
+        </>
+      );
+    },
+  },
+];
 
-          <SectionCard icon="check-circle" title="Keputusan" count={decisions.length}>
-            {decisions.map((d, i) => (
-              <View key={i} style={styles.bulletRow}>
-                <Feather name="check-circle" size={13} color={colors.success} style={{ marginTop: 3 }} />
-                <Text style={[styles.bodyText, { flex: 1 }]}>{d}</Text>
-              </View>
-            ))}
-            {decisions.length === 0 && <Text style={styles.mutedText}>Tidak ada keputusan tercatat.</Text>}
-          </SectionCard>
+// A and B cards side by side; the row stretches so both cards are the same height.
+function CompareRow({ section, left, right }) {
+  const cell = (state) => {
+    const meeting = state.data;
+    const summary = meeting?.summary;
+    if (state.status !== "done") return <View style={styles.col} />;
+    return (
+      <View style={styles.col}>
+        <SectionCard icon={section.icon} title={section.title} count={summary && section.count ? section.count(summary) : null}>
+          {summary ? section.body(summary, meeting) : <Text style={styles.mutedText}>Rapat ini belum punya ringkasan.</Text>}
+        </SectionCard>
+      </View>
+    );
+  };
+  return (
+    <View style={styles.grid}>
+      {cell(left)}
+      {cell(right)}
+    </View>
+  );
+}
 
-          <SectionCard icon="list" title="Action Items" count={items.length}>
-            {items.map((a, i) => (
-              <View key={i} style={styles.bulletRow}>
-                <Feather
-                  name={a.done ? "check-square" : "square"}
-                  size={14}
-                  color={a.done ? colors.success : colors.inkFaint}
-                  style={{ marginTop: 2 }}
-                />
-                <Text style={[styles.bodyText, { flex: 1 }, a.done && styles.done]}>
-                  {a.task}
-                  {a.assignee || a.due ? (
-                    <Text style={styles.mutedText}>{`  — ${[a.assignee, a.due].filter(Boolean).join(" · ")}`}</Text>
-                  ) : null}
-                </Text>
+const ANALYSIS_BLOCKS = [
+  ["similarities", "Kesamaan", "link", colors.success],
+  ["differences", "Perbedaan", "shuffle", colors.info],
+  ["progress", "Perkembangan dari Rapat A ke B", "trending-up", colors.goldDeep],
+];
+
+function AnalysisCard({ leftId, rightId }) {
+  const [state, setState] = useState({ status: "loading", data: null, error: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading", data: null, error: "" });
+    getComparisonAnalysis(leftId, rightId)
+      .then((data) => !cancelled && setState({ status: "done", data, error: "" }))
+      .catch((e) => !cancelled && setState({ status: "error", data: null, error: e.message || "" }));
+    return () => {
+      cancelled = true;
+    };
+  }, [leftId, rightId]);
+
+  const data = state.data;
+  return (
+    <SectionCard icon="cpu" title="Perbandingan AI">
+      {state.status === "loading" && (
+        <View style={styles.aiLoading}>
+          <ActivityIndicator color={colors.gold} />
+          <Text style={styles.mutedText}>AI sedang membandingkan kedua rapat...</Text>
+        </View>
+      )}
+      {state.status === "error" && <Text style={styles.stateText}>{state.error || "Perbandingan AI gagal dibuat."}</Text>}
+      {data && (
+        <>
+          {!!(data.about_a || data.about_b) && (
+            <View style={{ gap: spacing.xs }}>
+              {!!data.about_a && <Text style={styles.bodyText}>{data.about_a}</Text>}
+              {!!data.about_b && <Text style={styles.bodyText}>{data.about_b}</Text>}
+            </View>
+          )}
+          {ANALYSIS_BLOCKS.map(([key, title, icon, color]) =>
+            data[key]?.length ? (
+              <View key={key} style={{ gap: spacing.xs }}>
+                <Text style={styles.aiHeading}>{title}</Text>
+                {data[key].map((line, i) => (
+                  <View key={i} style={styles.bulletRow}>
+                    <Feather name={icon} size={13} color={color} style={{ marginTop: 3 }} />
+                    <Text style={[styles.bodyText, { flex: 1 }]}>{line}</Text>
+                  </View>
+                ))}
               </View>
-            ))}
-            {items.length === 0 && <Text style={styles.mutedText}>Tidak ada action item.</Text>}
-          </SectionCard>
+            ) : null
+          )}
+          {!!data.conclusion && (
+            <View style={styles.conclusionBox}>
+              <Text style={styles.aiHeading}>Kesimpulan</Text>
+              <Text style={styles.bodyText}>{data.conclusion}</Text>
+            </View>
+          )}
         </>
       )}
-    </View>
+    </SectionCard>
   );
 }
 
@@ -223,6 +344,8 @@ export default function PerbandinganScreen() {
   const [meetings, setMeetings] = useState([]);
   const [leftId, setLeftId] = useState(null);
   const [rightId, setRightId] = useState(null);
+  const left = useMeeting(leftId);
+  const right = useMeeting(rightId);
 
   useEffect(() => {
     listMeetings()
@@ -262,11 +385,18 @@ export default function PerbandinganScreen() {
         {status === "error" && <Text style={styles.stateText}>Gagal memuat daftar rapat.</Text>}
         {notEnough && <Text style={styles.stateText}>Butuh minimal 2 rapat yang sudah selesai untuk dibandingkan.</Text>}
 
+        {status === "done" && leftId && rightId && <AnalysisCard leftId={leftId} rightId={rightId} />}
+
         {status === "done" && meetings.length >= 2 && (
-          <View style={styles.grid}>
-            <MeetingColumn allMeetings={meetings} meetingId={leftId} excludeId={rightId} onPick={setLeftId} label="RAPAT A" />
-            <MeetingColumn allMeetings={meetings} meetingId={rightId} excludeId={leftId} onPick={setRightId} label="RAPAT B" />
-          </View>
+          <>
+            <View style={styles.grid}>
+              <HeadColumn state={left} allMeetings={meetings} meetingId={leftId} excludeId={rightId} onPick={setLeftId} label="RAPAT A" />
+              <HeadColumn state={right} allMeetings={meetings} meetingId={rightId} excludeId={leftId} onPick={setRightId} label="RAPAT B" />
+            </View>
+            {SECTIONS.map((section) => (
+              <CompareRow key={section.title} section={section} left={left} right={right} />
+            ))}
+          </>
         )}
       </View>
     </ScrollView>
@@ -299,7 +429,7 @@ const styles = StyleSheet.create({
 
   colLabel: { ...type.eyebrow, color: colors.inkFaint },
 
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   col: { flex: 1, minWidth: 320, gap: spacing.md },
 
   headCard: {
@@ -331,6 +461,7 @@ const styles = StyleSheet.create({
   detailButtonLabel: { ...type.small, fontWeight: "600", color: colors.inkSoft },
 
   card: {
+    flexGrow: 1,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
@@ -351,6 +482,10 @@ const styles = StyleSheet.create({
   cardTitle: { ...type.bodyMedium, fontWeight: "700", color: colors.ink, flex: 1 },
   countBadge: { backgroundColor: colors.surfaceSunken, borderRadius: radius.pill, paddingVertical: 1, paddingHorizontal: 8 },
   countBadgeLabel: { ...type.small, fontWeight: "700", color: colors.inkSoft },
+  moreLink: { ...type.small, fontWeight: "600", color: colors.goldDeep },
+  aiLoading: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  aiHeading: { ...type.eyebrow, color: colors.inkFaint },
+  conclusionBox: { backgroundColor: colors.surfaceSunken, borderRadius: radius.sm, padding: spacing.md, gap: spacing.xs },
   bodyText: { ...type.small, fontSize: 13.5, lineHeight: 19, color: colors.inkSoft },
   bulletRow: { flexDirection: "row", gap: 8 },
   done: { color: colors.inkFaint, textDecorationLine: "line-through" },

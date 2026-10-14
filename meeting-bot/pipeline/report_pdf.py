@@ -270,20 +270,22 @@ def _meeting_cell(meeting: dict) -> list:
         flow.append(Paragraph("Rapat ini belum punya ringkasan.", cell_body))
         return flow
 
+    topics = summary.get("topics_discussed") or []
+    flow.append(Paragraph(f"TOPIK DIBAHAS ({len(topics)})", cell_heading))
+    flow.append(Paragraph(escape(", ".join(topics)) or "&ndash;", cell_body))
+
+    # Short on purpose: the whole comparison is one table row, and a long narrative
+    # summary alone is taller than a page (reportlab cannot split a row).
+    text = (summary.get("short_summary") or summary.get("executive_summary") or "").strip()
+    if len(text) > 500:
+        text = text[:500].rsplit(" ", 1)[0] + "..."
     flow.append(Paragraph("RINGKASAN", cell_heading))
-    for paragraph in (summary.get("executive_summary") or "").split("\n\n"):
-        if paragraph.strip():
-            flow.append(Paragraph(escape(paragraph.strip()), cell_body))
-            flow.append(Spacer(1, 4))
+    flow.append(Paragraph(escape(text) or "&ndash;", cell_body))
 
     decisions = summary.get("key_decisions") or []
     flow.append(Paragraph(f"KEPUTUSAN UTAMA ({len(decisions)})", cell_heading))
     for d in decisions:
         flow.append(Paragraph(f"&#8226; {escape(d)}", cell_body))
-
-    topics = summary.get("topics_discussed") or []
-    flow.append(Paragraph(f"TOPIK DIBAHAS ({len(topics)})", cell_heading))
-    flow.append(Paragraph(escape(", ".join(topics)) or "&ndash;", cell_body))
 
     items = summary.get("action_items") or []
     done = sum(1 for a in items if a.get("done"))
@@ -296,7 +298,26 @@ def _meeting_cell(meeting: dict) -> list:
     return flow
 
 
-def generate_comparison_report(meeting_a: dict, meeting_b: dict, generated_by: str) -> bytes:
+def _analysis_flow(analysis: dict | None) -> list:
+    """The AI comparison block at the bottom of the comparison PDF (empty when
+    there is none), same heading/body look as _meeting_cell."""
+    if not analysis:
+        return []
+    heading = ParagraphStyle("anHeading", fontSize=9, textColor=_GOLD_DEEP, fontName="Helvetica-Bold", spaceBefore=8, spaceAfter=4)
+    body = ParagraphStyle("anBody", fontSize=9, textColor=_INK, leading=13)
+    flow = [Paragraph("PERBANDINGAN AI", ParagraphStyle("anTitle", fontSize=12, textColor=_INK, fontName="Helvetica-Bold", spaceAfter=2))]
+    flow += [Paragraph(escape(analysis[k]), body) for k in ("about_a", "about_b") if analysis.get(k)]
+    for title, key in (("KESAMAAN", "similarities"), ("PERBEDAAN", "differences"), ("PERKEMBANGAN", "progress")):
+        if analysis.get(key):
+            flow.append(Paragraph(title, heading))
+            flow += [Paragraph(f"&#8226; {escape(x)}", body) for x in analysis[key]]
+    if analysis.get("conclusion"):
+        flow.append(Paragraph("KESIMPULAN", heading))
+        flow.append(Paragraph(escape(analysis["conclusion"]), body))
+    return flow + [Spacer(1, 16)]
+
+
+def generate_comparison_report(meeting_a: dict, meeting_b: dict, generated_by: str, analysis: dict | None = None) -> bytes:
     """The Perbandingan Rapat page's PDF export — the same two meetings
     side by side, via reportlab's standard trick for that: a 2-column,
     1-row Table whose cells each hold a list of flowables (see
@@ -338,6 +359,7 @@ def generate_comparison_report(meeting_a: dict, meeting_b: dict, generated_by: s
         Spacer(1, 14),
         comparison_table,
         Spacer(1, 16),
+        *_analysis_flow(analysis),
         Paragraph("Dokumen ini dibuat otomatis oleh sistem Notulis.", footer_style),
     ]
 

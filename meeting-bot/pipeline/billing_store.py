@@ -32,7 +32,7 @@ DEFAULT_ACCOUNT_ID = "default"
 # _check_meeting_quota()/_join(); a plan not in this dict (shouldn't happen)
 # falls back to Free's limits, the safe default.
 PLAN_LIMITS = {
-    "free": {"meetings_per_month": 5, "max_duration_minutes": None, "minutes_per_week": 60},
+    "free": {"meetings_per_month": 5, "max_duration_minutes": 180, "minutes_per_week": 60},
     "pro": {"meetings_per_month": None, "max_duration_minutes": None, "minutes_per_week": None},
     "team": {"meetings_per_month": None, "max_duration_minutes": None, "minutes_per_week": None},
 }

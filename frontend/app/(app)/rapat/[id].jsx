@@ -13,7 +13,7 @@ import {
 } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, replaceActionItems, setKnowledgeBase, shareMeetingWithTeam, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
+import { deleteMeeting, generateShortSummary, getJobStatus, getMeeting, getRecordingUrl, processMeeting, replaceActionItems, setKnowledgeBase, shareMeetingWithTeam, stopJob, toggleActionItem, updateTranscript } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { BackLink } from "@/components/BackLink";
 import { StatCard } from "@/components/StatCard";
@@ -239,7 +239,7 @@ function meetingStats(meeting) {
 }
 
 const TABS = [
-  { key: "ringkasan", label: "Ringkasan AI", icon: "zap" },
+  { key: "ringkasan", label: "Pokok Pembahasan Rapat", icon: "zap" },
   { key: "transkrip", label: "Transkrip", icon: "file-text" },
   { key: "edit", label: "Edit Transkrip", icon: "edit-3" },
 ];
@@ -303,6 +303,10 @@ export default function MeetingDetailScreen() {
   const [saveError, setSaveError] = useState("");
   const [kbSaving, setKbSaving] = useState(false);
   const [kbError, setKbError] = useState("");
+  const [processBusy, setProcessBusy] = useState(false);
+  const [processError, setProcessError] = useState("");
+  const [shortBusy, setShortBusy] = useState(false);
+  const [shortError, setShortError] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
   // Edits (names, moved lines, text) not yet saved: the summary only changes on save.
   const [dirty, setDirty] = useState(false);
@@ -593,6 +597,35 @@ export default function MeetingDetailScreen() {
     );
   }
 
+  async function handleShortSummary() {
+    setShortBusy(true);
+    setShortError("");
+    try {
+      const summary = await generateShortSummary(id);
+      setMeeting((m) => ({ ...m, summary }));
+    } catch (e) {
+      setShortError(e.message || "Gagal membuat ringkasan");
+    } finally {
+      setShortBusy(false);
+    }
+  }
+
+  // A recording kept without AI (Free, over the week's minutes): hand it to a transcriber.
+  async function handleProcessNow() {
+    setProcessBusy(true);
+    setProcessError("");
+    try {
+      await processMeeting(id);
+      setMeeting((m) => ({ ...m, status: "processing" }));
+      setLiveStatus("processing");
+      pollMeeting();
+    } catch (e) {
+      setProcessError(e.message || "Gagal memulai pemrosesan");
+    } finally {
+      setProcessBusy(false);
+    }
+  }
+
   function handleToggleKb() {
     const enabled = !meeting.in_kb;
     setKbSaving(true);
@@ -761,8 +794,40 @@ export default function MeetingDetailScreen() {
               </View>
             )}
 
+            {/* Recorded and kept, but not processed by AI (Free, over the week's minutes) */}
+            {!isLive && !isLiveFailed && meeting.status === "limited" && (
+              <View style={styles.liveCard}>
+                <View style={styles.liveFailedRow}>
+                  <Feather name="info" size={20} color={colors.goldDeep} />
+                  <Text style={[styles.summaryText, { flex: 1 }]}>
+                    Rekaman rapat ini ({meeting.duration_minutes} menit) tersimpan utuh dan bisa diputar, tetapi belum dibuatkan
+                    transkrip dan ringkasan AI karena melewati sisa kuota Free minggu ini. Upgrade ke Pro lalu klik Proses
+                    Sekarang, atau proses setelah kuota baru tersedia (Minggu pukul 08.00) bila cukup.
+                  </Text>
+                </View>
+                <video
+                  controls
+                  style={{ width: "100%", borderRadius: radius.md, backgroundColor: "#000", aspectRatio: "16/9" }}
+                  src={getRecordingUrl(meeting.id)}
+                />
+                {(meeting.user_id === user?.id || user?.role === "super_admin") && (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm }}>
+                    <Pressable style={styles.kbButton} onPress={() => router.push("/billing")}>
+                      <Feather name="zap" size={13} color={colors.ink} />
+                      <Text style={styles.kbButtonLabel}>Upgrade ke Pro</Text>
+                    </Pressable>
+                    <Pressable style={styles.smallButton} onPress={handleProcessNow} disabled={processBusy}>
+                      <Feather name="play" size={12} color={colors.ink} />
+                      <Text style={styles.smallButtonLabel}>{processBusy ? "Memulai..." : "Proses Sekarang"}</Text>
+                    </Pressable>
+                    {!!processError && <Text style={styles.errorText}>{processError}</Text>}
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Finished — tabbed Ringkasan AI / Transkrip / Rekaman */}
-            {!isLive && !isLiveFailed && (
+            {!isLive && !isLiveFailed && meeting.status !== "limited" && (
               <>
                 <View style={styles.statRow}>
                   <StatCard value={meeting.duration_minutes != null ? `${meeting.duration_minutes} mnt` : "-"} label="Durasi rekaman" />
@@ -791,24 +856,48 @@ export default function MeetingDetailScreen() {
                 {activeTab === "ringkasan" &&
                   (meeting.summary ? (
                     <View style={styles.section}>
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.sm }}>
+                        {!!kbError && <Text style={styles.errorText}>{kbError}</Text>}
+                        <Pressable
+                          style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
+                          onPress={handleToggleKb}
+                          disabled={kbSaving}
+                        >
+                          <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
+                          <Text style={styles.kbButtonLabel}>
+                            {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
+                          </Text>
+                        </Pressable>
+                      </View>
+
+                      <View style={styles.summaryCard}>
+                        <View style={styles.summaryCardHeader}>
+                          <View style={styles.iconWrap}>
+                            <Feather name="file-text" size={16} color={colors.goldDeep} />
+                          </View>
+                          <Text style={[styles.summaryCardLabel, { flex: 1 }]}>Ringkasan</Text>
+                        </View>
+                        {meeting.summary.short_summary ? (
+                          <Text style={styles.summaryText}>{meeting.summary.short_summary}</Text>
+                        ) : (
+                          <View style={{ gap: spacing.sm, alignItems: "flex-start" }}>
+                            <Text style={styles.actionItemMeta}>Rapat ini diringkas sebelum ringkasan singkat ada.</Text>
+                            <Pressable style={styles.smallButton} onPress={handleShortSummary} disabled={shortBusy}>
+                              <Feather name="zap" size={12} color={colors.ink} />
+                              <Text style={styles.smallButtonLabel}>{shortBusy ? "Membuat..." : "Buat ringkasan singkat"}</Text>
+                            </Pressable>
+                            {!!shortError && <Text style={styles.errorText}>{shortError}</Text>}
+                          </View>
+                        )}
+                      </View>
+
                       <View style={styles.summaryCard}>
                         <View style={styles.summaryCardHeader}>
                           <View style={styles.iconWrap}>
                             <Feather name="zap" size={16} color={colors.goldDeep} />
                           </View>
-                          <Text style={[styles.summaryCardLabel, { flex: 1 }]}>Executive Summary</Text>
-                          <Pressable
-                            style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
-                            onPress={handleToggleKb}
-                            disabled={kbSaving}
-                          >
-                            <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
-                            <Text style={styles.kbButtonLabel}>
-                              {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
-                            </Text>
-                          </Pressable>
+                          <Text style={[styles.summaryCardLabel, { flex: 1 }]}>Pokok Pembahasan Rapat</Text>
                         </View>
-                        {!!kbError && <Text style={styles.errorText}>{kbError}</Text>}
                         <Text style={styles.summaryText}>{meeting.summary.executive_summary}</Text>
                       </View>
 
@@ -831,27 +920,6 @@ export default function MeetingDetailScreen() {
                             </View>
                           ))}
                         </View>
-                        {stats.speakers.length > 0 && (
-                          <View style={styles.colCard}>
-                            <Text style={styles.colTitle}>Waktu Bicara</Text>
-                            {stats.speakers.map((sp) => {
-                              const total = stats.speakers.reduce((n, x) => n + x.seconds, 0) || 1;
-                              const pct = Math.round((sp.seconds / total) * 100);
-                              const color = speakerColor(sp.name);
-                              return (
-                                <View key={sp.name} style={{ gap: 4 }}>
-                                  <View style={styles.talkRow}>
-                                    <Text style={styles.talkName} numberOfLines={1}>{sp.name}</Text>
-                                    <Text style={styles.talkMeta}>{formatElapsed(Math.round(sp.seconds))} ({pct}%)</Text>
-                                  </View>
-                                  <View style={styles.talkTrack}>
-                                    <View style={{ width: `${pct}%`, height: 6, backgroundColor: color }} />
-                                  </View>
-                                </View>
-                              );
-                            })}
-                          </View>
-                        )}
                       </View>
 
                       <View style={styles.actionItemsCard}>
@@ -1319,10 +1387,6 @@ const styles = StyleSheet.create({
   summaryText: { ...type.body, color: colors.inkSoft, lineHeight: 21 },
 
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  talkRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
-  talkName: { ...type.small, fontWeight: "600", color: colors.ink, flex: 1 },
-  talkMeta: { ...type.small, color: colors.inkSoft, fontVariant: ["tabular-nums"] },
-  talkTrack: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: "hidden" },
   twoCol: { flexDirection: "row", flexWrap: "wrap", gap: spacing.lg },
   colCard: {
     flex: 1,

@@ -170,6 +170,10 @@ kind label.
 this user's own Laporan page (`GET /reports/stats`, `GET
 /reports/action-items` — a cross-meeting action-item rollup, cached 60s
 and invalidated on any toggle/edit, and `GET /reports/export` for the PDF);
+`GET /reports/team` (`report_stats.team_usage`) gives the Laporan page's "Pemakaian Team"
+section: meetings, this month's, shared-with-team and minutes per current member,
+computed from the meetings table (failed joins excluded; someone who leaves takes
+their past meetings out of the figures);
 `pipeline/admin_stats.py` for the system-wide Admin dashboard (`GET
 /admin/stats`, `GET /admin/export`) — meeting volume, MRR, OpenAI cost
 (real tracked usage), R2 storage, user count.
@@ -178,7 +182,11 @@ and invalidated on any toggle/edit, and `GET /reports/export` for the PDF);
 two meetings side by side as a PDF (a 2-column, 1-row reportlab `Table`
 whose cells each hold a list of flowables — the standard trick for
 side-by-side content in reportlab, since it has no native two-document
-layout). Frontend page does the live side-by-side view; deliberately no
+layout). `GET /perbandingan/analisis?a&b` adds an AI comparison (one gpt-4o-mini
+call over the two summaries, `summarize.compare_meetings`: similarities, differences,
+progress A to B, conclusion; cached in-process per ids+summary text), shown last on the
+page and as a "Perbandingan AI" block at the bottom of the PDF. Topics come first,
+the summary is truncated (short summary), per the advisor. Frontend page does the live side-by-side view; deliberately no
 automatic text-diff/highlighting (two different meetings' content is
 naturally almost entirely different, so a literal diff would just flag
 everything as "different" and add no signal).
@@ -302,9 +310,12 @@ to `/login` live there, via `lib/auth-context.jsx`).
   export the same comparison as a PDF.
 - `app/(app)/admin.jsx` — system-wide stats (super admin only) plus a user
   management panel (add, change role, reset password, (de)activate).
-- `app/(app)/pengaturan.jsx` — Xendit subscription plans (Free/Pro/Team),
-  upgrade/downgrade, profile self-service (name/email/phone/password/
+- `app/(app)/pengaturan.jsx` — profile self-service only (name/email/phone/password/
   notifications/logout/deactivate).
+- `app/(app)/billing.jsx` — Xendit subscription plans (Free/Pro/Team), upgrade/
+  downgrade, pending-checkout notice, plan inherited from a team. Moved out of
+  Pengaturan on the advisor's request; Xendit's return URL and the quota email
+  both point at `/billing`.
 - `app/(app)/team/index.jsx` — create a team (Team plan only), rename it,
   list/re-role/remove members, generate an invite link (+ optional email),
   leave. `app/(app)/team/gabung/[token].jsx` — the invite landing page
@@ -316,7 +327,9 @@ to `/login` live there, via `lib/auth-context.jsx`).
 - `lib/auth-context.jsx` — current-user state + the redirect-to-`/login`
   gate for everything under `(app)/`.
 - `constants/theme.js` — design tokens (colors, spacing, type, radius)
-  used everywhere instead of hardcoded values; `pipeline/mailer.py` and
+  used everywhere instead of hardcoded values (Oct 2026 polish for the advisor: more
+  spacing, larger radius, soft wide card shadow, Inter font injected in `app/_layout.jsx`,
+  uppercase eyebrows; changing a token restyles every page); `pipeline/mailer.py` and
   `pipeline/report_pdf.py` on the backend mirror this same palette so
   emails/PDFs don't look like a different product.
 
@@ -416,13 +429,19 @@ but no full-length run has been done yet -- do a 15-minute one first):
   `EMPTY_MEETING_MINUTES` / no sound for `SILENCE_MINUTES` (default 30, 0 = off;
   an AudioContext analyser in the recorded page, RMS > 0.003, checked in
   `bots/base.py`) / Stop Rekam, so a stuck bot records until one of those fires
-  (~270 MB per hour in R2). Free is capped by a weekly pool instead: 60 recorded
-  minutes per week (bot joins only, not uploads, `_weekly_quota()` in `app.py`),
-  reset every Sunday 08:00 server time (WITA); the join is refused when it is
-  used up, the recording is cut at what is left, and the owner gets one email
-  (`mailer.send_quota_exhausted_email`) on the recording that used the last
-  minutes. Plus 5 meetings per month (`billing_store.PLAN_LIMITS`). Pengaturan
-  shows the remaining minutes. Use a Team/Pro account to test beyond 60 minutes.
+  (~270 MB per hour in R2). Free has a weekly pool of 60 minutes of AI processing
+  (bot joins only, not uploads, `_weekly_quota()` in `app.py`, reset every Sunday 08:00 server
+  time, WITA) but is NOT stopped at 60 minutes: a Free recording stops only at a 180 minute
+  technical ceiling (`PLAN_LIMITS["free"]["max_duration_minutes"]`) and a join is never refused for
+  quota. When a recording ends, `_run_join_job` compares its length with what is left of the week:
+  if it fits it is queued for transcription as usual, if it is longer (all or nothing, e.g. 20 min
+  processed, then 45 min with 40 left) it is uploaded and kept whole with `status = "limited"`
+  ("Belum Diproses"), not queued, and the owner gets `mailer.send_meeting_unprocessed_email`.
+  Limited meetings do not use up the pool (`recorded_minutes_since` skips them). The detail page
+  shows the video plus "Upgrade ke Pro" / "Proses Sekarang"; `POST /meetings/<id>/process` queues it
+  if the owner's plan or week now has room (else 402). Plus 5 meetings per month
+  (`billing_store.PLAN_LIMITS`). The Sidebar plan card shows the minutes used. Check:
+  `python -m tests.test_free_quota_flow`.
   The env var is read when the container
   is created, so recreate `worker-*` after changing it.
 - `bots/base.py` `record()` writes each chunk to disk as it arrives instead of

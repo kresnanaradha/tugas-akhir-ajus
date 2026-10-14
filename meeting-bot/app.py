@@ -39,7 +39,7 @@ from pipeline.meetings_store import (
     start_meeting,
     update_meeting,
 )
-from pipeline.summarize import fix_transcript, summarize
+from pipeline.summarize import compare_meetings, fix_transcript, short_summary, summarize
 from pipeline.transcribe import transcribe
 from pipeline.xendit_client import create_subscription_session, deactivate_recurring_plan
 
@@ -424,10 +424,19 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
     # sharing one container's memory limit is exactly what OOM-killed a
     # live test (worker-test-2, mem_limit=3g) -- see CLAUDE.md.
     recording_key = storage.upload_recording(local_recording_path, job_id)
-    update_meeting(job_id, status="processing", recording=recording_key, duration_minutes=duration_minutes)
-    job_queue.enqueue_transcription(job_id, recording_key, num_speakers)
-    if not getattr(bot, "quota_notified", False):  # the live notice already went out when the cap hit
-        _notify_if_quota_exhausted(job_id, duration_minutes)
+    # Free's weekly minutes are a pool for AI processing, not a recording cap: a
+    # recording that is longer than what is left of the week is kept whole, but
+    # gets no transcript/summary (all or nothing, never half) until the owner
+    # upgrades. Checked before this meeting's minutes are saved, so it is not
+    # counted against itself.
+    owner_id = (get_meeting(job_id) or {}).get("user_id")
+    weekly = _weekly_quota(owner_id) if owner_id else None
+    if weekly and duration_minutes > weekly["remaining"]:
+        update_meeting(job_id, status="limited", recording=recording_key, duration_minutes=duration_minutes)
+        _send_unprocessed_email(owner_id, job_id, title, duration_minutes, weekly)
+    else:
+        update_meeting(job_id, status="processing", recording=recording_key, duration_minutes=duration_minutes)
+        job_queue.enqueue_transcription(job_id, recording_key, num_speakers)
 
     # Drop this job from _jobs (rather than marking it "done") so a later
     # GET /jobs/<id> 404s -- the frontend already falls back to polling
@@ -440,23 +449,18 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
         _jobs.pop(job_id, None)
 
 
-def _send_quota_exhausted(owner_id: str, limit: float, cut_off: bool) -> None:
-    owner = auth_store.get_user(owner_id)
-    mailer.send_quota_exhausted_email(owner['email'], owner['name'], limit, f"{LOCAL_FRONTEND_URL}/pengaturan", cut_off)
-
-
-def _notify_if_quota_exhausted(meeting_id: str, duration_minutes: float) -> None:
-    """Email the owner once, on the recording that used up the week's quota."""
+def _send_unprocessed_email(owner_id: str, meeting_id: str, title: str, duration_minutes: float, weekly: dict) -> None:
+    """Tell the owner a recording was kept but not processed by AI (best effort)."""
     try:
-        owner_id = (get_meeting(meeting_id) or {}).get("user_id")
-        weekly = _weekly_quota(owner_id) if owner_id else None
-        if not weekly or weekly["remaining"] >= _QUOTA_EXHAUSTED_BELOW_MIN:
-            return
-        if weekly["limit"] - (weekly["used"] - duration_minutes) < _QUOTA_EXHAUSTED_BELOW_MIN:
-            return  # was already used up before this recording
-        _send_quota_exhausted(owner_id, weekly["limit"], cut_off=False)
+        owner = auth_store.get_user(owner_id)
+        if not owner["email_notifications"]:
+            return  # the Pengaturan toggle covers every email except password reset and invites
+        mailer.send_meeting_unprocessed_email(
+            owner["email"], owner["name"], title, duration_minutes, weekly["remaining"], weekly["limit"],
+            f"{LOCAL_FRONTEND_URL}/rapat/{meeting_id}", f"{LOCAL_FRONTEND_URL}/billing",
+        )
     except Exception as e:
-        print(f"[quota] exhausted email failed: {e}")
+        print(f"[quota] unprocessed-meeting email failed: {e}")
 
 
 def _plan_limits(user_id: str) -> dict:
@@ -486,11 +490,6 @@ def _weekly_quota(user_id: str) -> dict | None:
         "remaining": round(max(limit - used, 0), 1),
         "resets_at": (start + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S"),
     }
-
-
-# Counts as used up once less than this is left -- a recording cut at the cap
-# lands a rounding hair short of the limit.
-_QUOTA_EXHAUSTED_BELOW_MIN = 0.5
 
 
 def _kb_allowed(user_id: str) -> bool:
@@ -546,14 +545,11 @@ def _join(bot_cls, platform: str, title: str):
     if quota_error:
         return jsonify({"error": quota_error}), 402
 
-    # Free's recording length cap (see billing_store.PLAN_LIMITS) is a
-    # tighter ceiling on top of MAX_DURATION_MIN, not a replacement for it —
-    # a Pro/Team user is still bounded by that env var, just not by a plan.
+    # Only a technical ceiling for a stuck bot (Free: billing_store.PLAN_LIMITS), on
+    # top of MAX_DURATION_MIN. The weekly minutes do NOT stop a recording: they only
+    # decide, afterwards, whether it is processed by AI (see _run_join_job).
     plan_cap = _plan_limits(session["user_id"])["max_duration_minutes"]
-    weekly = _weekly_quota(session["user_id"])
-    if weekly and weekly["remaining"] < _QUOTA_EXHAUSTED_BELOW_MIN:
-        return jsonify({"error": f"Kuota rekaman Free minggu ini ({weekly['limit']} menit) sudah habis. Reset Minggu pukul 08.00, atau upgrade ke Pro."}), 402
-    caps = [c for c in (MAX_DURATION_MIN, plan_cap, weekly["remaining"] if weekly else None) if c is not None]
+    caps = [c for c in (MAX_DURATION_MIN, plan_cap) if c is not None]
     max_duration = min(caps) if caps else None
 
     job_id = uuid.uuid4().hex
@@ -562,19 +558,6 @@ def _join(bot_cls, platform: str, title: str):
     # that's what lets the Rapat list show "Sedang Merekam" instead of the
     # row only appearing once the whole pipeline is done.
     bot = bot_cls(url, name, max_duration, on_status_change=lambda status: update_meeting(job_id, status=status))
-    if weekly and max_duration == weekly["remaining"]:
-        # The weekly quota is what will stop this recording: tell the owner the
-        # moment it does, not after the upload finishes.
-        owner_id, limit = session["user_id"], weekly["limit"]
-
-        def _on_limit_reached():
-            bot.quota_notified = True
-            try:
-                _send_quota_exhausted(owner_id, limit, cut_off=True)
-            except Exception as e:
-                print(f"[quota] live exhausted email failed: {e}")
-
-        bot.on_limit_reached = _on_limit_reached
     with _jobs_lock:
         # Recording relies on capturing the whole (virtual) display, not just
         # the meeting tab (see CLAUDE.md's "Known accepted limitation") — that
@@ -824,6 +807,29 @@ def meeting_knowledge_base(meeting_id):
         knowledge_base.remove_meeting(meeting_id)
     update_meeting(meeting_id, in_kb=enabled)
     return jsonify({"in_kb": enabled})
+
+
+@app.post("/meetings/<meeting_id>/short-summary")
+@login_required
+def meeting_short_summary(meeting_id):
+    """Adds the short summary to a meeting that was summarized before that
+    field existed (new meetings get it from summarize()). One small AI call;
+    only this field of summary.json changes."""
+    record = get_meeting(meeting_id)
+    if record is None:
+        return jsonify({"error": "Meeting not found"}), 404
+    if not _can_edit_meeting(record):
+        return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
+    transcript = artifacts.load_fixed_transcript(meeting_id) or artifacts.load_transcript(meeting_id)
+    if not transcript or artifacts.load_summary(meeting_id) is None:
+        return jsonify({"error": "Rapat ini belum punya transkrip dan ringkasan"}), 404
+
+    text = short_summary(transcript, meeting_id)
+    with _summary_lock:
+        summary = artifacts.load_summary(meeting_id) or {}
+        summary["short_summary"] = text
+        artifacts.save_summary(meeting_id, summary)
+    return jsonify(summary)
 
 
 @app.post("/meetings/<meeting_id>/action-items/<int:index>/toggle")
@@ -1103,6 +1109,13 @@ def reports_stats_route():
     return jsonify(report_stats.get_stats(session["user_id"]))
 
 
+@app.get("/reports/team")
+@login_required
+def reports_team():
+    """Usage of the caller's own team (null when not on one) for the Laporan page."""
+    return jsonify(report_stats.team_usage(session["user_id"]))
+
+
 @app.get("/reports/action-items")
 @login_required
 def reports_action_items():
@@ -1130,6 +1143,71 @@ def reports_export():
     )
 
 
+_comparison_cache: dict = {}
+
+
+def _load_two_meetings():
+    """The two meetings of a comparison request, summaries loaded, or an error
+    response. Same read permission as GET /meetings/<id>."""
+    a_id, b_id = request.args.get("a"), request.args.get("b")
+    if not a_id or not b_id:
+        return None, (jsonify({"error": "Parameter a dan b (id rapat) wajib diisi"}), 400)
+    meeting_a, meeting_b = get_meeting(a_id), get_meeting(b_id)
+    if meeting_a is None or meeting_b is None or not (_can_view_meeting(meeting_a) and _can_view_meeting(meeting_b)):
+        return None, (jsonify({"error": "Salah satu rapat tidak ditemukan"}), 404)
+    for m in (meeting_a, meeting_b):
+        m["summary"] = artifacts.load_summary(m["id"]) if m["recording"] else None
+    return (meeting_a, meeting_b), None
+
+
+def _comparison_analysis(meeting_a, meeting_b):
+    """AI comparison of two meetings, or None when one has no summary. Cached per
+    (ids, summary text), so reopening the page or exporting the PDF after the
+    page already asked costs nothing. ponytail: in-process dict, lost on restart."""
+    if not meeting_a["summary"] or not meeting_b["summary"]:
+        return None
+    key = (meeting_a["id"], meeting_b["id"], hash(str(meeting_a["summary"]) + str(meeting_b["summary"])))
+    if key not in _comparison_cache:
+        _comparison_cache[key] = compare_meetings(meeting_a, meeting_a["summary"], meeting_b, meeting_b["summary"])
+    return _comparison_cache[key]
+
+
+@app.get("/perbandingan/analisis")
+@login_required
+def perbandingan_analisis():
+    """AI comparison (similarities, differences, progress, conclusion) shown at
+    the bottom of the Perbandingan Rapat page."""
+    pair, error = _load_two_meetings()
+    if error:
+        return error
+    try:
+        return jsonify(_comparison_analysis(*pair))
+    except Exception as e:
+        print(f"[perbandingan] AI comparison failed: {e}")
+        return jsonify({"error": "Perbandingan AI gagal dibuat"}), 502
+
+
+@app.post("/meetings/<meeting_id>/process")
+@login_required
+def meeting_process_now(meeting_id):
+    """Hands a recording that was kept without AI processing (status "limited") to
+    a transcriber, once the owner's plan or week allows it. Same all-or-nothing
+    rule as when it was recorded: the whole meeting must fit in what is left."""
+    record = get_meeting(meeting_id)
+    if record is None or not _can_view_meeting(record):
+        return jsonify(_NOT_FOUND[0]), _NOT_FOUND[1]
+    if not _can_edit_meeting(record):
+        return jsonify({"error": "Hanya pemilik rapat yang bisa memprosesnya"}), 403
+    if record["status"] != "limited":
+        return jsonify({"error": "Rapat ini tidak menunggu pemrosesan"}), 409
+    weekly = _weekly_quota(record["user_id"]) if record.get("user_id") else None
+    if weekly and (record.get("duration_minutes") or 0) > weekly["remaining"]:
+        return jsonify({"error": f"Sisa kuota minggu ini {weekly['remaining']:g} menit, rapat ini {record['duration_minutes']:g} menit. Upgrade ke Pro untuk memprosesnya."}), 402
+    update_meeting(meeting_id, status="processing")
+    job_queue.enqueue_transcription(meeting_id, record["recording"], record.get("estimated_participants"))
+    return jsonify({"status": "processing"})
+
+
 @app.get("/perbandingan/export")
 @login_required
 def perbandingan_export():
@@ -1137,18 +1215,18 @@ def perbandingan_export():
     by side, via pipeline/report_pdf.py's generate_comparison_report().
     Same read permission as GET /meetings/<id> (login only, no per-meeting
     ownership check — this app doesn't gate reads by owner, only deletes)."""
-    a_id, b_id = request.args.get("a"), request.args.get("b")
-    if not a_id or not b_id:
-        return jsonify({"error": "Parameter a dan b (id rapat) wajib diisi"}), 400
-
-    meeting_a, meeting_b = get_meeting(a_id), get_meeting(b_id)
-    if meeting_a is None or meeting_b is None or not (_can_view_meeting(meeting_a) and _can_view_meeting(meeting_b)):
-        return jsonify({"error": "Salah satu rapat tidak ditemukan"}), 404
-    for m in (meeting_a, meeting_b):
-        m["summary"] = artifacts.load_summary(m["id"]) if m["recording"] else None
+    pair, error = _load_two_meetings()
+    if error:
+        return error
+    meeting_a, meeting_b = pair
+    try:
+        analysis = _comparison_analysis(meeting_a, meeting_b)
+    except Exception as e:
+        print(f"[perbandingan] AI comparison failed for the PDF: {e}")
+        analysis = None  # the side-by-side PDF is still worth having
 
     user = auth_store.get_user(session["user_id"])
-    pdf_bytes = report_pdf.generate_comparison_report(meeting_a, meeting_b, generated_by=user["name"])
+    pdf_bytes = report_pdf.generate_comparison_report(meeting_a, meeting_b, generated_by=user["name"], analysis=analysis)
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
@@ -1172,7 +1250,7 @@ def billing_return():
     status = request.args.get("status", "cancel")
     if status == "success":
         return redirect(f"{LOCAL_FRONTEND_URL}/checkout-sukses")
-    return redirect(f"{LOCAL_FRONTEND_URL}/pengaturan?checkout=cancel")
+    return redirect(f"{LOCAL_FRONTEND_URL}/billing?checkout=cancel")
 
 
 @app.get("/billing/status")

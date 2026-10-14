@@ -114,6 +114,12 @@ export function TopBar() {
                   <Text style={styles.menuItemLabel}>Pengaturan</Text>
                 </Pressable>
               </Link>
+              <Link href="/billing" asChild>
+                <Pressable style={styles.menuItem} onPress={() => setOpenMenu(null)}>
+                  <Feather name="credit-card" size={14} color={colors.inkSoft} />
+                  <Text style={styles.menuItemLabel}>Billing</Text>
+                </Pressable>
+              </Link>
               <Pressable style={styles.menuItem} onPress={handleLogout}>
                 <Feather name="log-out" size={14} color={colors.danger} />
                 <Text style={[styles.menuItemLabel, { color: colors.danger }]}>Keluar</Text>

@@ -144,6 +144,32 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
     _send(config, to_email, "Atur ulang password Notulis", text, _layout(content))
 
 
+def send_google_session_expired_email(to_email: str, worker_id: str) -> None:
+    """Untuk super admin: sesi Google worker habis, rapat Meet ditolak sampai google_login.py dijalankan lagi."""
+    config = _config()
+    if config is None:
+        return
+
+    text = (
+        f"Sesi Google worker {worker_id} sudah habis. Rapat Google Meet ditolak sampai sesinya diperbarui.\n"
+        "Jalankan di host: python -m bots.google_login (satu file sesi per worker, lihat docker-compose.yml). "
+        "Worker memeriksa ulang otomatis tiap 5 menit.\n\n"
+        "-- Notulis"
+    )
+    content = "\n".join([
+        _heading("Sesi Google Habis"),
+        _paragraph(
+            f"Sesi Google worker <b>{html.escape(worker_id)}</b> sudah habis, jadi rapat Google Meet ditolak "
+            "sampai sesinya diperbarui. Rapat Zoom tidak terpengaruh."
+        ),
+        _paragraph(
+            "Jalankan <code>python -m bots.google_login</code> di host. Worker memeriksa ulang otomatis tiap 5 menit.",
+            size=12, color=_INK_FAINT, margin="0",
+        ),
+    ])
+    _send(config, to_email, "Sesi Google worker Notulis habis", text, _layout(content))
+
+
 def send_meeting_unprocessed_email(
     to_email: str, name: str, title: str, duration_minutes: float, remaining_minutes: float,
     limit_minutes: float, meeting_url: str, upgrade_url: str,

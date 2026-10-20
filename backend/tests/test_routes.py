@@ -38,6 +38,8 @@ assert client_as("owner").get("/meetings/nope").status_code == 404
 
 detail = client_as("owner").get("/meetings/m1").get_json()
 assert detail["transcript"] == "t" and detail["file_extension"] == "webm" and detail["file_size_bytes"] == 5
+# can_edit dipakai frontend untuk menyembunyikan tombol ubah
+assert detail["can_edit"] is True and client_as("viewer").get("/meetings/m1").get_json()["can_edit"] is False
 
 # ubah: pemilik dan super admin boleh, penonton tautan dapat 403, orang asing 404
 url = "/meetings/m1/knowledge-base"
@@ -51,7 +53,8 @@ server.admin_stats.get_stats = lambda: {"ok": 1}
 assert client_as("owner").get("/admin/stats").status_code == 403
 assert client_as("boss", "super_admin").get("/admin/stats").get_json() == {"ok": 1}
 
-# job yang tidak berjalan
+# job yang tidak berjalan (status job ada di Redis, dipalsukan)
+server.join_queue.get_job = lambda job_id: None
 assert client_as("owner").get("/jobs/unknown").status_code == 404
 
 with server.app.app_context():

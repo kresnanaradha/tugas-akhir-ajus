@@ -1,7 +1,7 @@
 # Notulis backend
 
 Flask API plus the bots. A bot joins a Google Meet or Zoom call as a guest (Playwright), records the tab,
-and the recording is transcribed with speaker labels (whisperx), cleaned up and summarized (GPT-4o mini). On
+and the recording is transcribed with speaker labels (Whisper plus pyannote on Replicate), cleaned up and summarized (GPT-4o mini). On
 top of that sits the rest of the product: login and roles, meeting history, a Knowledge Base, PDF reports,
 Xendit billing, teams and the admin dashboard. `../CLAUDE.md` is the status file (what is built, what to watch
 out for), this one is how to run it.
@@ -18,8 +18,10 @@ Join flow adapted from [screenappai/meeting-bot](https://github.com/screenappai/
 - `transcriber_service.py`: the worker loop of the transcriber containers
 - `tests/`: plain scripts, no framework
 
-A recording is uploaded to R2 when it ends and queued in Redis, a transcriber picks it up (separate container
-so Chrome and whisper never share memory). `POST /upload` skips the queue and runs the pipeline in the API process.
+A join goes onto a Redis queue and a free worker takes it. A recording is uploaded to R2 when it ends and queued
+in Redis again, a transcriber picks it up (separate container, it only waits for Replicate and calls OpenAI).
+`POST /upload` skips the queue and runs the pipeline in the API process. Transcription needs `REPLICATE_API_TOKEN`,
+there is no local fallback.
 
 ## Setup
 
@@ -32,8 +34,7 @@ Without Docker: `pip install -r requirements.txt`, `playwright install chromium`
 `ffmpeg` on PATH, and Redis plus `python transcriber_service.py` if you want recordings transcribed).
 
 The tables are created on the first connection, nothing to migrate. Code is baked into the images, so after a
-change: `docker compose build worker-1 && docker compose up -d --force-recreate worker-1`. Run only ONE
-transcriber for long meetings (`docker compose stop transcriber-2`), a long job needs ~6GB.
+change: `docker compose build worker-1 && docker compose up -d --force-recreate worker-1`.
 
 ### Google Meet needs a saved login
 
@@ -67,7 +68,7 @@ ends the recording early.
 ## Tests
 
 ```bash
-docker compose exec -T worker-1 python -m tests.test_routes      # also test_pdf, test_mailer, test_process, test_free_quota_flow
+docker compose exec -T worker-1 python -m tests.test_routes      # also test_pdf, test_mailer, test_process, test_free_quota_flow, test_replicate, test_join_queue
 ```
 
 They use fake data (no database, R2 or model calls). Joining real meetings can only be tried by hand.
@@ -86,8 +87,10 @@ They use fake data (no database, R2 or model calls). Joining real meetings can o
 
 ## Limits
 
-- One recording per worker at a time (the whole display is captured, two bots would record each other).
-  Nothing sends a join to a free worker yet, and only worker-1 has a Google login.
+- One recording per worker at a time (the whole display is captured, two bots would record each other). Joins go
+  through a Redis queue and a free worker takes them (`pipeline/join_queue.py`); a join waits up to 10 minutes for a
+  free worker. Only worker-1 has a Google login, so Meet runs on it only, Zoom runs on any worker
+  (`WORKER_PLATFORMS` in `docker-compose.yml`).
 - The recording is the whole virtual display, not just the tab. Fine in a container, where nothing else is on it.
 - `num_speakers` is a guess from the user ("Perkiraan Jumlah Peserta"), there is no reliable way to read the real
   count from Meet or Zoom. It helps diarization a lot.

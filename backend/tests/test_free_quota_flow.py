@@ -24,7 +24,8 @@ def run(minutes, remaining):
     app._weekly_quota = lambda uid: None if remaining is None else {"limit": 60, "used": 60 - remaining, "remaining": remaining}
     app.job_queue.enqueue_transcription = lambda *a: calls["queued"].append(a)
     app._send_unprocessed_email = lambda *a: calls["emails"].append(a)
-    app._jobs["j"] = {"phase": "starting"}
+    app.join_queue.set_job = lambda *a, **kw: None
+    app.join_queue.finish = lambda *a: None
     app._run_join_job("j", FakeBot(minutes), "zoom", "T", None)
     return calls
 

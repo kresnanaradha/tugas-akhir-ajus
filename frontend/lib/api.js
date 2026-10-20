@@ -114,8 +114,8 @@ export async function startJoinMeeting(platform, url, name, numSpeakers) {
   return handleResponse(res);
 }
 
-// {status: "joining"|"recording"|"stopping"|"processing"|"failed",
-// elapsed_seconds?, error?} - lihat GET /jobs/<id> di app.py. 404 berarti job selesai atau tidak dikenal proses itu.
+// {status: "queued"|"joining"|"recording"|"stopping"|"processing"|"failed",
+// elapsed_seconds?, error?} - lihat GET /jobs/<id> di app.py. 404 berarti job selesai atau sudah tidak ada di Redis.
 export async function getJobStatus(jobId) {
   const res = await apiFetch(`/jobs/${encodeURIComponent(jobId)}`);
   return handleResponse(res);
@@ -287,6 +287,12 @@ export async function resetUserPassword(id, password) {
 
 // URL laporan PDF resmi - untuk tautan/anchor biasa, bukan diambil sebagai
 // JSON (browser yang menangani unduhan). Lihat GET /admin/export.
+// worker perekam yang hidup: [{id, platforms, busy, google_expired}]
+export async function getAdminWorkers() {
+  const res = await apiFetch("/admin/workers");
+  return handleResponse(res);
+}
+
 export function getAdminExportUrl() {
   return `${API_BASE_URL}/admin/export`;
 }

@@ -126,13 +126,13 @@ function LineSpeakerBadge({ raw, value, overridden, options, open, onToggle, onP
 // polling menyerah setelah sekian permintaan gagal berturut-turut. Permintaan gagal tidak memberi tahu apa-apa soal job-nya (gangguan,
 // Docker lambat), hanya respons 200 dengan status "failed" yang memberi tahu, jadi ia mencoba lagi daripada membekukan halaman
 const MAX_CONSECUTIVE_POLL_FAILURES = 10;
-const LIVE_STATUSES = ["joining", "recording", "stopping", "processing"];
+const LIVE_STATUSES = ["queued", "joining", "recording", "stopping", "processing"];
 const STEPS = [
   { key: "joining", label: "Bergabung" },
   { key: "recording", label: "Merekam" },
   { key: "processing", label: "Memproses" },
 ];
-const STEP_INDEX = { joining: 0, recording: 1, stopping: 1, processing: 2 };
+const STEP_INDEX = { queued: 0, joining: 0, recording: 1, stopping: 1, processing: 2 };
 
 const TABS = [
   { key: "ringkasan", label: "Pokok Pembahasan Rapat", icon: "zap" },
@@ -493,6 +493,7 @@ export default function MeetingDetailScreen() {
   }
 
   const stats = meetingStats(meeting || {});
+  const canEdit = !!meeting?.can_edit; // penonton (tautan, team) hanya membaca, backend menolak ubahan mereka
   const isLive = liveStatus && liveStatus !== "failed";
   const isLiveFailed = liveStatus === "failed";
   const stepIndex = STEP_INDEX[liveStatus] ?? 0;
@@ -537,7 +538,7 @@ export default function MeetingDetailScreen() {
                     </Text>
                   </Pressable>
                 )}
-                {!isLive && !confirmDelete && (
+                {!isLive && !confirmDelete && canEdit && (
                   <Pressable
                     style={[styles.smallButton, !(user?.team_id && meeting.user_id === user?.id) && { marginLeft: "auto" }]}
                     onPress={() => setConfirmDelete(true)}
@@ -609,12 +610,16 @@ export default function MeetingDetailScreen() {
                   <View style={styles.liveCenter}>
                     <ActivityIndicator color={colors.gold} size="large" />
                     <Text style={styles.liveStatusText}>
-                      {liveStatus === "joining" ? "Bot sedang bergabung ke rapat..." : "Memproses transkripsi & ringkasan..."}
+                      {liveStatus === "queued"
+                        ? "Menunggu perekam yang kosong..."
+                        : liveStatus === "joining"
+                          ? "Bot sedang bergabung ke rapat..."
+                          : "Memproses transkripsi & ringkasan..."}
                     </Text>
                   </View>
                 )}
 
-                {liveStatus === "recording" && (
+                {liveStatus === "recording" && canEdit && (
                   <Pressable style={styles.stopButton} onPress={handleStop}>
                     <Feather name="square" size={13} color={colors.white} />
                     <Text style={styles.stopButtonLabel}>Stop Rekam</Text>
@@ -685,7 +690,7 @@ export default function MeetingDetailScreen() {
                 </View>
 
                 <View style={styles.tabBar}>
-                  {TABS.map((tab) => {
+                  {TABS.filter((tab) => canEdit || tab.key !== "edit").map((tab) => {
                     const active = activeTab === tab.key;
                     return (
                       <Pressable
@@ -703,19 +708,21 @@ export default function MeetingDetailScreen() {
                 {activeTab === "ringkasan" &&
                   (meeting.summary ? (
                     <View style={styles.section}>
-                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.sm }}>
-                        {!!kbError && <Text style={styles.errorText}>{kbError}</Text>}
-                        <Pressable
-                          style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
-                          onPress={handleToggleKb}
-                          disabled={kbSaving}
-                        >
-                          <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
-                          <Text style={styles.kbButtonLabel}>
-                            {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
-                          </Text>
-                        </Pressable>
-                      </View>
+                      {canEdit && (
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.sm }}>
+                          {!!kbError && <Text style={styles.errorText}>{kbError}</Text>}
+                          <Pressable
+                            style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
+                            onPress={handleToggleKb}
+                            disabled={kbSaving}
+                          >
+                            <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
+                            <Text style={styles.kbButtonLabel}>
+                              {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      )}
 
                       <View style={styles.summaryCard}>
                         <View style={styles.summaryCardHeader}>
@@ -729,10 +736,12 @@ export default function MeetingDetailScreen() {
                         ) : (
                           <View style={{ gap: spacing.sm, alignItems: "flex-start" }}>
                             <Text style={styles.actionItemMeta}>Rapat ini diringkas sebelum ringkasan singkat ada.</Text>
-                            <Pressable style={styles.smallButton} onPress={handleShortSummary} disabled={shortBusy}>
-                              <Feather name="zap" size={12} color={colors.ink} />
-                              <Text style={styles.smallButtonLabel}>{shortBusy ? "Membuat..." : "Buat ringkasan singkat"}</Text>
-                            </Pressable>
+                            {canEdit && (
+                              <Pressable style={styles.smallButton} onPress={handleShortSummary} disabled={shortBusy}>
+                                <Feather name="zap" size={12} color={colors.ink} />
+                                <Text style={styles.smallButtonLabel}>{shortBusy ? "Membuat..." : "Buat ringkasan singkat"}</Text>
+                              </Pressable>
+                            )}
                             {!!shortError && <Text style={styles.errorText}>{shortError}</Text>}
                           </View>
                         )}
@@ -772,7 +781,7 @@ export default function MeetingDetailScreen() {
                       <View style={styles.actionItemsCard}>
                         <View style={styles.actionItemsHeader}>
                           <Text style={[styles.colTitle, { flex: 1 }]}>Action Items</Text>
-                          {editingItem !== "new" && (
+                          {editingItem !== "new" && canEdit && (
                             <Pressable style={styles.smallButton} onPress={() => startEditItem("new")}>
                               <Feather name="plus" size={12} color={colors.ink} />
                               <Text style={styles.smallButtonLabel}>Tambah</Text>
@@ -788,7 +797,7 @@ export default function MeetingDetailScreen() {
                           ) : (
                             <View key={i} style={styles.actionItemRow}>
                               {/* seluruh sisi kiri (kotak centang dan teks) bisa diketuk, ikon kecil saja mudah terlewat */}
-                              <Pressable style={styles.actionItemMain} onPress={() => handleToggleActionItem(i)}>
+                              <Pressable style={styles.actionItemMain} onPress={() => canEdit && handleToggleActionItem(i)}>
                                 <Feather
                                   name={item.done ? "check-square" : "square"}
                                   size={15}
@@ -806,9 +815,11 @@ export default function MeetingDetailScreen() {
                                   )}
                                 </View>
                               </Pressable>
-                              <Pressable onPress={() => startEditItem(i)} hitSlop={10}>
-                                <Feather name="edit-2" size={13} color={colors.inkFaint} style={{ marginTop: 3 }} />
-                              </Pressable>
+                              {canEdit && (
+                                <Pressable onPress={() => startEditItem(i)} hitSlop={10}>
+                                  <Feather name="edit-2" size={13} color={colors.inkFaint} style={{ marginTop: 3 }} />
+                                </Pressable>
+                              )}
                             </View>
                           )
                         )}

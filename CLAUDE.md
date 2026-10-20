@@ -5,8 +5,8 @@ records it (video+audio), transcribes it (with speaker labels), and produces
 an AI summary - now grown into a small multi-user product around that core:
 login/roles, per-user meeting history, a RAG knowledge base over past
 meetings, PDF reports, Xendit subscription billing, a super admin dashboard,
-and Docker-based multi-worker bots. Flask + Playwright + whisperx + GPT-4o
-mini backend, React Native (Expo, web target) frontend. Join-flow adapted
+and Docker-based multi-worker bots. Flask + Playwright + Replicate (Whisper +
+pyannote) + GPT-4o mini backend, React Native (Expo, web target) frontend. Join-flow adapted
 from [screenappai/meeting-bot](https://github.com/screenappai/meeting-bot)
 (MIT).
 
@@ -19,7 +19,7 @@ is project status - what's done, what's next, what to watch out for.
   billing, admin, RAG). See "What's built" below.
 - `backend/tests/` - plain scripts (no framework) with fake data, run inside
   the worker container: `docker compose exec -T worker-1 python -m tests.test_routes`
-  (also `test_pdf`, `test_mailer`, `test_process`, `test_free_quota_flow`, `test_replicate`). Rebuild first,
+  (also `test_pdf`, `test_mailer`, `test_process`, `test_free_quota_flow`, `test_replicate`, `test_join_queue`). Rebuild first,
   code is baked into the image. Oct 2026 cleanup: comments rewritten short, dead code and
   one-off scripts (R2 migration, KB backfill) removed, comments and docstrings in Indonesian, the pipeline shared by `/upload` and the
   transcriber moved to `pipeline/process.py`.
@@ -43,21 +43,22 @@ login and their live session is cut within 30s (`_active_cache` in `app.py`).
 A user also optionally belongs to one team (`users.team_id`/`team_role`,
 NULL = no team) - see "Team" below.
 
-**Meeting lifecycle** - `POST /google/join` / `/zoom/join` start the bot in
-a background thread and return `{job_id}` immediately; poll `GET
-/jobs/<id>` for `{status: "joining"|"recording"|"stopping"|"processing",
-elapsed_seconds?, error?}` while the bot is still joining/recording. `POST
-/jobs/<id>/stop` ends the recording early via `bot.stop_event` (checked
-once a second in `bots/base.py`'s `record()`), for the "Stop Rekam" button.
-`_jobs` is an in-memory dict, lost on restart - fine at POC scale. `_join()`
-rejects a second join (`409`) while one is already in progress in that
-process - see "Known accepted limitation" for why this still matters even
-with multiple worker containers. `/jobs/<id>` and `/jobs/<id>/stop` are
-**not** `login_required` (a stray gap, low priority since a job id is an
-unguessable uuid).
+**Meeting lifecycle** (join queue, task n04, built 2026-10-18) - `POST /google/join` /
+`/zoom/join` validate, create the meeting row, and push a job onto a Redis queue per platform
+(`pipeline/join_queue.py`, `notulis:join_jobs:<platform>`); they return `{job_id}` immediately, or `503` when no live
+worker supports that platform. Every worker container runs one join consumer (`_join_worker_loop` in `app.py`,
+started from `__main__`, off with `RECORDER=0`) that takes ONE job at a time (two bots on one display would record
+each other's windows) and only from the platforms in its `WORKER_PLATFORMS` (Meet needs a logged-in Google session,
+Zoom needs no account). Job state (`queued|joining|recording|stopping|processing|failed`, `started_at`, `worker`) and
+the Stop flag live in Redis, so any API instance serves `GET /jobs/<id>` (frontend shows "Menunggu perekam yang
+kosong" for `queued`) and `POST /jobs/<id>/stop`; a small thread in the consumer copies the Stop flag onto
+`bot.stop_event` (checked once a second in `bots/base.py`'s `record()`). Workers register a heartbeat key (TTL 15 s);
+a job whose worker's heartbeat is gone reads as `failed`. A queued job older than `JOIN_QUEUE_MAX_WAIT_SECONDS`
+(600) is cancelled when a worker finally picks it up. There is no longer a `409` for a second join: it waits in the
+queue. `/jobs/<id>` and `/jobs/<id>/stop` are `login_required` and view/edit-checked like the meeting.
 
-Once the bot finishes and uploads the recording, this process's job is
-**done** - `_jobs.pop(job_id)`, so a later `GET /jobs/<id>` 404s on
+Once the bot finishes and uploads the recording, the job is
+**done** - `join_queue.finish(job_id)` deletes it, so a later `GET /jobs/<id>` 404s on
 purpose. Transcription happens elsewhere now (see "Recorder/transcriber
 split" below); the frontend already falls back to polling `GET
 /meetings/<id>` on a 404 (`rapat/[id].jsx`'s `pollMeeting()`), which reads
@@ -69,8 +70,8 @@ queue, see "Known gaps").
 
 **Recorder/transcriber split** (`pipeline/job_queue.py`, `transcriber_service.py`,
 `Dockerfile.transcriber`) - recording (Playwright+Chromium+Xvfb, one
-lightweight container per concurrent bot) and transcription (whisperx+torch,
-heavy but only 1-2 instances needed) used to share one container/process;
+lightweight container per concurrent bot) and transcription (originally local whisperx+torch, heavy;
+since 2026-10-18 it runs on Replicate and the transcriber is a light container) used to share one container/process;
 this OOM-killed a live test (`mem_limit=3g`, Chrome and whisper together
 during optimization-week load testing, see "Docker multi-worker" below) and
 is now split into two kinds of container connected by a Redis queue:
@@ -85,9 +86,9 @@ is now split into two kinds of container connected by a Redis queue:
   the recording from R2 (`storage.download_to_file()`), runs the same
   transcribe→fix→summarize→email pipeline (`pipeline/process.py`'s
   `process_recording()`, shared with `/upload`), and writes `meetings.status = "completed"/"failed"` when done.
-  Exactly 2 instances (not scaled 1:1 with bot count) so transcription's
-  RAM/CPU - the heaviest part of the whole pipeline - never exceeds 2
-  concurrent jobs regardless of how many bots are recording at once.
+  Exactly 2 instances (not scaled 1:1 with bot count) so at most 2 jobs run at
+  once regardless of how many bots are recording (each container is capped at 1 GB / 1 CPU
+  now that nothing heavy runs in it).
 - Confirmed end-to-end on a real Zoom join: recorded → uploaded → queued →
   picked up by `transcriber-2` (a *different* container than the one that
   recorded) → transcribed → summarized → `status: "completed"` in Postgres.
@@ -131,7 +132,7 @@ admin, a user in `meeting_viewers` (see below), or a teammate of the owner when
 the owner turned on "Bagikan ke Team"; anyone else gets a `404` (not `403`,
 so ids can't be probed). *Edit* (transcript, action items, KB toggle, stop
 recording, delete, share-team): owner or super admin only - teammates and
-link viewers are read-only. `meeting_viewers` is filled by `_join()` when a
+link viewers are read-only (`GET /meetings/<id>` returns `can_edit`, the detail page hides edit buttons and the editor tab without it). `meeting_viewers` is filled by `_join()` when a
 second user submits a link that already has a live/recent meeting
 (`find_meeting_by_url`): that user is handed the existing meeting instead of
 a second bot, and may then view it.
@@ -252,27 +253,24 @@ for one meeting lives under `<meeting_id>/...` (`recording.<ext>`,
 Env vars read lazily (not at import time) - `load_dotenv()` has to run
 before any local import, or the bucket name silently reads as unset.
 
-**Transcription/summarization** - `pipeline/transcribe.py` runs whisperx
-(faster-whisper + alignment + pyannote diarization) in a **child process**
-(`pipeline/transcribe_worker.py`) so the model's memory is released when it
-exits, rather than staying resident in the main Flask process between
-meetings. `pipeline/summarize.py` does two GPT-4o mini calls: a narrative
+**Transcription/summarization** - `pipeline/transcribe.py` hands the recording to
+Replicate (next paragraph); there is no local transcription any more (local whisperx and
+`transcribe_worker.py` were removed 2026-10-18, task n08). `pipeline/summarize.py` does two GPT-4o mini calls: a narrative
 pass (`executive_summary`, length scaled to the transcript so it covers the
 *whole* meeting rather than staying a fixed short paragraph) and a details
 pass (`key_decisions`, `topics_discussed`, `action_items` as JSON).
 
 **Replicate as the Whisper backend** (`pipeline/replicate_transcribe.py`, `pipeline/segments.py`) - advisor
-revision 9, built and tested 2026-10-15. With `TRANSCRIBE_BACKEND=replicate` and `REPLICATE_API_TOKEN` in `.env`,
+revision 9, built and tested 2026-10-15, the ONLY transcription path since 2026-10-18. With `REPLICATE_API_TOKEN` in `.env`,
 `transcribe()` sends the recording's presigned R2 url to `thomasmol/whisper-diarization` (version pinned in
-`REPLICATE_MODEL`, 744c4f2b..., updated June 2026) instead of running whisperx in the container. That model is
+`REPLICATE_MODEL`, 744c4f2b..., updated June 2026). That model is
 faster-whisper large-v3-turbo plus pyannote community-1 on an L40S (about US$0.001 per GPU second); it is NOT
-the WhisperX package (no wav2vec2 alignment step), but the ASR engine and the diarization model are the same
-ones the local path uses. It takes the raw browser `.webm` as is. The result goes through the same
-`segments.finish()` as the local path (re-cut from word times, hallucination filter, audio-to-video clock
-mapping, save to R2), so everything downstream is unchanged. Any Replicate failure, a missing token or a missing
-`recording_key` falls back to local whisperx (the local path stays as the safety net, so the transcriber image
-still carries torch + whisperx). `/upload` now uploads to R2 first (keeping the local file) so it can use
-Replicate too. Settings: `TRANSCRIBE_BACKEND`, `REPLICATE_API_TOKEN` (user fills it in `.env`, never in chat),
+the WhisperX package (no wav2vec2 alignment step). It takes the raw browser `.webm` as is. The result goes through
+`segments.finish()` (re-cut from word times, hallucination filter, audio-to-video clock
+mapping, save to R2). A missing token, a missing `recording_key` or any Replicate failure now FAILS the meeting
+with a clear message (no fallback; the jobs queue's crash retry still applies). The transcriber and worker images no longer carry
+whisperx; torch (CPU) stays in the worker image only for the Knowledge Base embeddings. `/upload` uploads to R2 first
+(keeping the local file, used for time mapping). Settings: `REPLICATE_API_TOKEN` (user fills it in `.env`, never in chat),
 `REPLICATE_MODEL`, `REPLICATE_LANGUAGE` (default `id`, empty = auto-detect, which can pick the wrong language on
 short clips), `EXTRA_VOCAB` is sent as the vocabulary prompt. Audio leaves the machine in this mode.
 - Measured: the 2.5 min test clip took 14 s end to end (GPU 5 s, about US$0.005, local was about 7 min); the
@@ -283,8 +281,8 @@ short clips), `EXTRA_VOCAB` is sent as the vocabulary prompt. Audio leaves the m
   the old versions are only in local backup files of that session.
 - Replicate rate limit: with less than US$5 credit the account is limited to 6 requests per minute and a burst
   of 1 (HTTP 429). `_run` retries on 429 (`_RETRY_S`), keep the credit above US$5.
-- Cost is only printed in the transcriber log (`[replicate] ... GPU Ns (~US$x)`), not tracked in the admin
-  dashboard.
+- Cost: GPU seconds of every prediction go into the `replicate_usage` table (`usage_store.log_gpu`) and the admin
+  dashboard shows the total ("Biaya Replicate", since the first logged call; earlier meetings are not backfilled).
 - Compared on the test clip against the read-aloud script (`test_script.txt`, 209 words): old local 12.0% WER,
   thomasmol 14.4%, `victor-upmeet/whisperx` (large-v3 + wav2vec2 alignment) 12.4%. The gap is a few words, so it
   is noise. `victor-upmeet` was not adopted: it rejects the raw `.webm` ("Could not determine audio duration",
@@ -306,10 +304,10 @@ share one Postgres/R2/`.env`, plus now `redis`/`transcriber-1`/
 `transcriber-2` (see "Recorder/transcriber split" above). **Only `worker-1`
 actually has a logged-in Google session right now** - `worker-2` through
 `worker-10` need `bots/google_login.py` run once per account before they're
-usable (see "Next steps"). Nothing routes a join to "whichever worker is
-free" yet - the frontend still points at one fixed `EXPO_PUBLIC_API_URL`,
-so today this only proves 10 isolated bot processes *can* run side by side,
-not that the app picks one automatically.
+usable (see "Next steps"), and `WORKER_PLATFORMS` set to `google_meet,zoom` for them (compose default is `zoom` only,
+`worker-1` overrides it). Joins are now routed through the Redis join queue (see "Meeting lifecycle"), so the
+frontend can keep pointing at one `EXPO_PUBLIC_API_URL` and a free worker picks the job. Not yet verified live with
+two real workers (tests use a fake Redis: `tests/test_join_queue.py`).
 
 `worker-test`/`worker-test-2` were a throwaway pair for load-testing during the
 optimization week (removed from the compose file since; `Dockerfile`'s `TORCH_CPU`
@@ -406,11 +404,8 @@ to `/login` live there, via `lib/auth-context.jsx`).
 
 ## Transcription/summarization notes
 
-- **Diarization needs a HuggingFace token with model access**, not just a
-  token. `HF_TOKEN` (Read-Only scope is enough) alone 403s - you also have to
-  visit https://huggingface.co/pyannote/speaker-diarization-community-1 while
-  logged in and accept its terms once. Symptom if this hasn't been done:
-  `GatedRepoError` on the first diarization call.
+- (Removed 2026-10-18 with local whisperx: the HuggingFace token and the pyannote terms step. `HF_TOKEN` is no longer
+  read anywhere, it can be deleted from `.env` and revoked.)
 - **`num_speakers` matters a lot.** Diarization clustering guesses the
   speaker count when it isn't given, which reliably under-segments - on a
   real 4-speaker test clip, unhinted diarization only found 2 speakers;
@@ -420,9 +415,6 @@ to `/login` live there, via `lib/auth-context.jsx`).
   "Perkiraan Jumlah Peserta" field the user fills in themselves - threaded
   through to `transcribe(num_speakers=...)`. Passing `1` skips diarization
   entirely (everything gets one label) and is noticeably faster.
-- **Runs on CPU** (no GPU on the dev machine) via `compute_type="int8"` -
-  reasonably fast for `WHISPER_MODEL=medium`; `large-v3` needs ~8-10GB RAM to
-  even load and is impractical without a GPU, don't reach for it by default.
 - The `fix_transcript()` prompt has to be told explicitly to only collapse
   *literally repeated* trailing phrases - an earlier looser version ("remove
   trailing filler/closing phrases") over-trimmed and deleted real closing
@@ -444,8 +436,8 @@ and "just the tab" are the same capture either way.
 
 **This reasoning only holds for one bot per virtual display.** With the
 multi-worker Docker setup, that's true by construction - each worker
-container gets its own Xvfb display - but *within* one worker, `_join()`'s
-`409` guard still matters: that one process/display can only safely run one
+container gets its own Xvfb display - but *within* one worker, the join consumer
+taking one job at a time still matters: that one process/display can only safely run one
 recording at a time, since two bots sharing a display would capture each
 other's windows (and Google Meet's sidecar shares one long-lived browser
 across joins, so it's worse there - tabs, not just windows, could get
@@ -499,7 +491,8 @@ but no full-length run has been done yet -- do a 15-minute one first):
   version. A block whose answer is cut off or empty falls back to its raw text.
   Checked against the real model on an 11,196-word transcript: 99% of the
   words and 715 of 720 lines came back.
-- Measured on a real 60-minute Google Meet (6 speakers, CPU only):
+- HISTORY (local whisperx, removed 2026-10-18; kept as the baseline the thesis compares Replicate against). Measured
+  on a real 60-minute Google Meet (6 speakers, CPU only):
   - First run, whisper `medium` int8, 2 cores, stages one after another: 4 h 33 min
     (4.5x the recording), peak RAM 4.0 GB, and `medium` MISSED about a third of the
     speech (174 vs 272 words on a 3-minute clip; whole meetings looked complete).
@@ -509,8 +502,6 @@ but no full-length run has been done yet -- do a 15-minute one first):
     the old total (556 of 1149 s). Peak RAM of a 3-minute clip already touched 6.1 GB,
     so transcribers have `mem_limit` 7g and only ONE long job should run at a time
     (`docker compose stop transcriber-2`).
-  - Per-stage `[timing]` lines are printed by `pipeline/transcribe_worker.py`; they only
-    reach the container log since `transcribe.py` stopped capturing stdout.
 - Quality fixes from that meeting: the Whisper `initial_prompt` and the fix prompt used to
   name this thesis project (Docker, RAM, Notulis...), which biases every other meeting --
   both are generic now (add names via `EXTRA_VOCAB`). Segments are re-cut from word
@@ -524,7 +515,7 @@ but no full-length run has been done yet -- do a 15-minute one first):
 - Why the highlight drifted from the video: a browser (MediaRecorder) recording stamps its
   60 ms audio packets 66 ms apart, so a 60-minute file holds only 54.5 minutes of audio.
   Whisper counts decoded samples, the video player counts container time, and the gap grew
-  linearly to 5.5 minutes. `transcribe_worker._to_container_time()` maps every segment time
+  linearly to 5.5 minutes. `segments._to_container_time()` maps every segment time
   through the audio packet table (ffprobe) before saving; the audio itself is untouched.
   Meetings transcribed before that fix have segment times in audio time (their last segment
   ends ~9% too early) and were remapped by hand once; do not remap one twice.
@@ -542,7 +533,7 @@ but no full-length run has been done yet -- do a 15-minute one first):
   video, with and without CPU stress. NOT yet seen on a real Meet/Zoom call. The
   silence-watch AudioContext was cleared as a cause (both versions measured the same).
 - Hallucination loops: a phrase repeated 3+ lines in a row (e.g. "atau bisnisnya ya?" x31) is
-  collapsed to one line by `_repeat_run_keep()` in `transcribe_worker.py`; the 60-minute
+  collapsed to one line by `repeat_run_keep()` in `segments.py`; the 60-minute
   meeting had 62 such lines, removed once from its transcript, fixed transcript and segments.
 - Known gap: the transcriber image has no chromadb, so re-processing a meeting that is in
   the Knowledge Base leaves its KB entry stale (logged as `No module named 'chromadb'`);
@@ -552,10 +543,22 @@ but no full-length run has been done yet -- do a 15-minute one first):
 
 ## Known gaps
 
-- **`worker-2` through `worker-10` aren't actually usable yet** - the
+- **`worker-2` through `worker-10` aren't actually usable yet for Meet** - the
   compose services exist, but each needs its own Google account logged in
-  once via `bots/google_login.py`, and nothing routes a join to a free
-  worker automatically (see "Docker multi-worker" above).
+  once via `bots/google_login.py` and `WORKER_PLATFORMS` extended with `google_meet` (see "Docker multi-worker" above).
+  Zoom works on any worker already.
+- **Join queue gaps.** Redis has no AOF, so queued joins are lost on a Redis crash (a queued join is only worth ~10
+  minutes anyway). A job lost between the BLPOP claim and the first `set_job` (worker crash in that instant) leaves its
+  row at its first status. Not gaps any more: a worker that dies mid-meeting is reaped (`_reap_dead_jobs` in `app.py`:
+  once at start for its own old jobs, then every ~60 s by every worker, row and job set to `failed`); the admin page
+  lists live workers (`GET /admin/workers`, from `join_queue.workers()`).
+- **Google session monitor** (task k06). A worker with `google_meet` in `WORKER_PLATFORMS` checks its saved session
+  between jobs (`_check_google_session`, `google_session_keepalive.session_alive(refresh=False)`, the file is mounted
+  read-only so it never writes): every 30 min, every 5 min while expired. Expired: the worker stops claiming and
+  advertising Meet (so `/google/join` answers 503 instead of accepting a join that must fail), the admin page marks it
+  red, and every active super admin gets one email (`mailer.send_google_session_expired_email`; with several Meet
+  workers each one mails once). Back to normal by itself after `google_login.py` is run again on the host. A check that
+  throws (network) is skipped, it does not flip the state. Not yet seen against a really expired session.
 - **Early-stop detection is untested against real screens.** `record()` now
   polls each bot's `meeting_state()` every 3s and stops on "ended" (twice in
   a row) or after `EMPTY_MEETING_MINUTES` (default 10, 0 = off) alone, but
@@ -564,11 +567,6 @@ but no full-length run has been done yet -- do a 15-minute one first):
   end-of-meeting screen. The loop logic itself is tested with a fake page;
   a miss only means the recording runs to its normal time limit. Confirm on
   the first real meeting that the host ends.
-- **`_jobs` is in-memory, per-process** - lost on restart, not shared
-  across the 10 worker processes. Only tracks the live join/record phase
-  now (see "Recorder/transcriber split"); it was never meant to survive a
-  restart mid-transcription anyway, and now doesn't need to, since Redis
-  holds that hand-off instead.
 - **`POST /upload` isn't on the transcriber queue** - it still runs
   transcribe→fix→summarize synchronously in the API process that received
   the upload (`process_recording()`), same as before the recorder/
@@ -586,6 +584,23 @@ but no full-length run has been done yet -- do a 15-minute one first):
   failed once, not retried. Nothing reads the dead-letter list yet
   (`notulis:transcription_dead`).
 
+## Decisions pending
+
+- **Local whisperx: REMOVED 2026-10-18 (task n08).** Nothing pending. Consequences to remember: transcription fails
+  when Replicate is down, the token is empty or the credit is out (keep it above US$5), audio always leaves the machine,
+  and the thesis must not claim an offline mode. The compare scripts (`tests/compare_models.py`) still mention the
+  old local result as a historical baseline only.
+
+- **Several meetings at once: DECIDED 2026-10-18, option C built** (Redis join queue, status and Stop in Redis, see
+  "Meeting lifecycle"). Still open: leaning on one Google account for all workers (users can join several Meets at
+  once) needs a real test (task n05): bots sharing one cookie file might get logged out when Google rotates cookies
+  or flags many logins from one IP; the plan is 2 to 3 accounts, Zoom needs none. Other Redis work, in priority
+  order: AOF persistence (`--appendonly yes` on the `redis` service), a view of the dead-letter list
+  `notulis:transcription_dead` (nothing reads it), a reaper for meetings whose recording worker died and for jobs
+  stuck in a dead transcriber's own list, queue length and worker status on the Statistik page, putting `/upload`
+  on the queue, and retrying transient failures (Replicate 429 or network) a few more times before failing the meeting
+  (there is no local fallback any more).
+
 ## To resume on another machine
 
 ```bash
@@ -596,9 +611,8 @@ cp .env.example .env
 ```
 
 Fill in `.env` - see `.env.example`'s own comments for where each value
-comes from: `SECRET_KEY` (session signing), `OPENAI_API_KEY`, `HF_TOKEN`
-(diarization - remember the pyannote model terms, see above),
-`DATABASE_URL` (Postgres/Supabase), `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/
+comes from: `SECRET_KEY` (session signing), `OPENAI_API_KEY`, `REPLICATE_API_TOKEN`
+(transcription), `DATABASE_URL` (Postgres/Supabase), `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/
 `R2_SECRET_ACCESS_KEY`/`R2_BUCKET_NAME` (Cloudflare R2), `XENDIT_SECRET_KEY`/
 `XENDIT_WEBHOOK_TOKEN` (billing), `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/
 `SMTP_PASSWORD` (optional - email notifications stay off if left blank).

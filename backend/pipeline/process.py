@@ -10,10 +10,10 @@ from .transcribe import transcribe
 
 
 def process_recording(local_recording_path: str, meeting_id: str, num_speakers: int | None = None, recording_key: str | None = None) -> dict:
-    """Jalankan pipeline pada file lokal (whisperx butuh file). Tiap langkah melaporkan errornya sendiri di
-    hasil, jadi langkah yang gagal tidak membuang rekaman. num_speakers adalah tebakan user dan membantu
-    diarization. recording_key (rekaman di R2) dipakai kalau transkripsi lewat Replicate. Kunci hasil: transcript,
-    fixed_transcript, summary, dan *_error untuk yang gagal."""
+    """Jalankan pipeline pada rekaman. File lokalnya dipakai untuk memetakan waktu ke jam video, transkripsinya lewat
+    Replicate dari recording_key (rekaman di R2). Tiap langkah melaporkan errornya sendiri di hasil, jadi langkah
+    yang gagal tidak membuang rekaman. num_speakers adalah tebakan user dan membantu diarization. Kunci hasil:
+    transcript, fixed_transcript, summary, dan *_error untuk yang gagal."""
     result = {}
     try:
         transcript = transcribe(local_recording_path, meeting_id, num_speakers=num_speakers, recording_key=recording_key)

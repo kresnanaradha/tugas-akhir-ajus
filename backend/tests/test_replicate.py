@@ -1,5 +1,5 @@
-"""Transkripsi lewat Replicate: pemetaan hasilnya, polling, dan kembali ke whisperx lokal kalau gagal. Replicate, R2 dan
-whisperx dipalsukan.
+"""Transkripsi lewat Replicate: pemetaan hasilnya, polling, dan gagal dengan jelas kalau tidak bisa (tidak ada transkripsi
+lokal). Replicate dan R2 dipalsukan.
 
 Jalankan: python -m tests.test_replicate   (dari backend/)"""
 import os
@@ -39,10 +39,7 @@ mapped = rt.to_segments([{"speaker": "SPEAKER_01", "start": 0, "end": 1, "text":
 assert mapped[0]["words"][0]["speaker"] == "SPEAKER_01"
 assert rt.to_segments([{"text": "x"}])[0]["speaker"] == "SPEAKER_00"
 
-# enabled(): butuh backend replicate DAN token
-for backend, token, expected in [("local", "t", False), ("replicate", "", False), ("replicate", "t", True)]:
-    os.environ["TRANSCRIBE_BACKEND"], os.environ["REPLICATE_API_TOKEN"] = backend, token
-    assert rt.enabled() is expected, (backend, token)
+os.environ["REPLICATE_API_TOKEN"] = "t"
 
 # versi diambil dari "pemilik/model:hash"
 os.environ["REPLICATE_MODEL"] = "a/b:abc123"
@@ -84,25 +81,28 @@ text = segments.finish("m1", rt.to_segments(OUTPUT["segments"]), "x.webm")
 assert text == "[SPEAKER_00] Halo semua. Selamat pagi.\n[SPEAKER_01] Pagi juga.", text
 assert [s["speaker"] for s in saved["segs"]] == ["SPEAKER_00", "SPEAKER_01"] and saved["text"] == text
 
-# transcribe(): Replicate berhasil, atau gagal lalu whisperx lokal
+# transcribe(): berhasil lewat Replicate
 rt.storage.presigned_url = lambda key, expires_in: "https://r2/" + key
+logged = []
+rt.usage_store.log_gpu = lambda mid, seconds: logged.append((mid, seconds))
 rt.requests.post = lambda url, json, headers, timeout: Resp({"status": "succeeded", "urls": {"get": "g"}, "output": OUTPUT, "metrics": {"predict_time": 10}})
-os.environ["TRANSCRIBE_BACKEND"] = "replicate"
 assert tr.transcribe("x.webm", "m1", 2, "m1/recording.webm").startswith("[SPEAKER_00]")
-
-calls = []
-
-
-def fake_local(cmd, **kw):
-    calls.append(cmd)
-    open(cmd[-1], "w", encoding="utf-8").write("lokal")
-    return type("P", (), {"returncode": 0, "stderr": ""})()
+assert logged == [("m1", 10)]  # detik GPU tercatat untuk dashboard admin
 
 
-tr.subprocess.run = fake_local
+def must_fail(fn, *needles):
+    try:
+        fn()
+    except RuntimeError as e:
+        assert all(n in str(e) for n in needles), str(e)
+    else:
+        raise AssertionError("harus gagal")
+
+
+# tidak ada transkripsi lokal: Replicate menolak, rekaman belum di R2, atau token kosong berarti gagal dengan pesan yang jelas
 rt.requests.post = lambda url, json, headers, timeout: Resp("kena limit", ok=False, status=429)
-assert tr.transcribe("x.webm", "m1", 2, "m1/recording.webm") == "lokal" and len(calls) == 1  # gagal -> lokal
-assert tr.transcribe("x.webm", "m1", 2) == "lokal" and len(calls) == 2  # tanpa recording_key -> lokal
-os.environ["TRANSCRIBE_BACKEND"] = "local"
-assert tr.transcribe("x.webm", "m1", 2, "m1/recording.webm") == "lokal" and len(calls) == 3
+must_fail(lambda: tr.transcribe("x.webm", "m1", 2, "m1/recording.webm"), "429")
+must_fail(lambda: tr.transcribe("x.webm", "m1", 2), "recording_key")
+os.environ["REPLICATE_API_TOKEN"] = ""
+must_fail(lambda: tr.transcribe("x.webm", "m1", 2, "m1/recording.webm"), "REPLICATE_API_TOKEN")
 print("ok")

@@ -5,7 +5,7 @@ FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
 # xvfb: display virtual. Bot menjalankan Chrome dengan tampilan (tab capture tidak andal tanpa tampilan, lihat CLAUDE.md) dan
 # container tidak punya monitor. Ini juga menjaga jendelanya dari layar host.
-# ffmpeg: dipakai pemuat audio whisperx.
+# ffmpeg: perekaman audio cadangan (bots/audio_backup.py) dan ffprobe untuk memetakan waktu audio ke video.
 # DEBIAN_FRONTEND=noninteractive: instalasi pulseaudio menunggu prompt debconf tanpa tty (build pernah macet 15+ menit)
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb ffmpeg pulseaudio pulseaudio-utils \
@@ -16,16 +16,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
 
 WORKDIR /app
 
-# kosong (default): whisperx menarik torch CUDA (~2.8.0+cu128) padahal mesin ini tidak punya GPU. Isi 1 untuk memasang
-# wheel CPU lebih dulu, supaya instalasi whisperx sendiri terpenuhi olehnya (pip tidak mengganti paket yang
-# sudah memenuhi). worker-1..10 tetap default
-ARG TORCH_CPU=
-# torchvision dan torchaudio juga: transformers menarik torchvision, pyannote menarik torchaudio, dan keduanya ekstensi native
-# yang dibangun untuk satu torch tertentu. Dibiarkan ke pip mereka mendapat versi yang tidak cocok ABI ("operator torchvision::nms
-# does not exist", "libtorch_cuda.so: cannot open shared object file"). 0.23.0 / 2.8.0 cocok dengan torch 2.8.0
-RUN if [ -n "$TORCH_CPU" ]; then \
-      pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu; \
-    fi
+# torch hanya untuk sentence-transformers (embedding Knowledge Base). Mesin ini tidak punya GPU, jadi wheel CPU dipasang lebih
+# dulu supaya pip tidak menarik torch CUDA yang jauh lebih besar (pip tidak mengganti paket yang sudah memenuhi syarat)
+RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \

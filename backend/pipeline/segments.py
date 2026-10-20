@@ -1,5 +1,5 @@
-"""Langkah setelah transkripsi yang sama untuk whisperx lokal dan Replicate: potong ulang segmen dari timestamp kata,
-buang halusinasi, petakan waktu ke jam video, lalu simpan transkrip dan segmen ke R2. Tidak mengimpor whisperx."""
+"""Langkah setelah transkripsi Replicate: potong ulang segmen dari timestamp kata, buang halusinasi, petakan waktu ke
+jam video, lalu simpan transkrip dan segmen ke R2."""
 
 import subprocess
 

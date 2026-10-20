@@ -23,26 +23,35 @@ _CHECK_URL = "https://myaccount.google.com/"
 _SIGNIN_MARKER = "accounts.google.com/signin"
 
 
+def session_alive(refresh: bool = True) -> bool:
+    """Apakah sesi tersimpan masih login. refresh=False tidak menulis file (di worker Docker file-nya read-only)."""
+    if not os.path.exists(AUTH_STATE_PATH):
+        return False
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
+        try:
+            context = browser.new_context(storage_state=AUTH_STATE_PATH)
+            page = context.new_page()
+            page.goto(_CHECK_URL, wait_until="domcontentloaded", timeout=30000)
+            if _SIGNIN_MARKER in page.url:
+                return False
+            if refresh:
+                context.storage_state(path=AUTH_STATE_PATH)
+            return True
+        finally:
+            browser.close()
+
+
 def main() -> int:
     if not os.path.exists(AUTH_STATE_PATH):
         print(f"No saved session at {AUTH_STATE_PATH} -- run `python -m bots.google_login` first.")
         return 1
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
-        context = browser.new_context(storage_state=AUTH_STATE_PATH)
-        page = context.new_page()
-        page.goto(_CHECK_URL, wait_until="domcontentloaded", timeout=30000)
-
-        if _SIGNIN_MARKER in page.url:
-            browser.close()
-            print(f"Session at {AUTH_STATE_PATH} has expired (redirected to sign-in) -- re-run google_login.py.")
-            return 1
-
-        context.storage_state(path=AUTH_STATE_PATH)
-        browser.close()
-        print(f"Session still alive, refreshed {AUTH_STATE_PATH}.")
-        return 0
+    if not session_alive():
+        print(f"Session at {AUTH_STATE_PATH} has expired (redirected to sign-in) -- re-run google_login.py.")
+        return 1
+    print(f"Session still alive, refreshed {AUTH_STATE_PATH}.")
+    return 0
 
 
 if __name__ == "__main__":

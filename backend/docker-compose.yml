@@ -1,35 +1,42 @@
 # Nama project sama seperti sebelum folder jadi backend/, supaya volume yang ada (cache model) dan image tetap dipakai.
 name: meeting-bot
 
-# Perekam: sampai 10 bot, satu akun Google masing-masing. Tiap worker adalah seluruh backend (image sama, Flask di 5050
-# di dalam container) dengan display Xvfb dan login sendiri, jadi penjaga satu-rekaman-sekali di
-# _join() app.py berlaku per akun, bukan untuk seluruh sistem. Mereka berbagi Postgres dan R2 lewat .env,
-# hanya file sesi Google dan port host yang berbeda.
+# Perekam: sampai 10 bot. Tiap worker adalah seluruh backend (image sama, Flask di 5050 di dalam container) dengan
+# display Xvfb dan login Google sendiri, dan satu pengambil tugas yang merekam SATU rapat sekali jalan (dua bot di satu
+# display akan merekam jendela satu sama lain). API di worker mana pun menaruh tugas join ke antrean Redis
+# (pipeline/join_queue.py) dan worker yang kosong mengambilnya, jadi frontend cukup menunjuk satu EXPO_PUBLIC_API_URL.
+# Mereka berbagi Postgres, R2, dan Redis lewat .env, hanya file sesi Google dan port host yang berbeda.
 #
 # Login tiap akun sekali di HOST (butuh layar dan orangnya), satu file sesi per worker:
 #   GOOGLE_AUTH_STATE_PATH=auth/worker-1.json python -m bots.google_login
 #   GOOGLE_AUTH_STATE_PATH=auth/worker-2.json python -m bots.google_login
+# lalu isi WORKER_PLATFORMS worker itu dengan google_meet,zoom (bawaan: zoom saja).
 #
-# Kekurangan: baru worker-1 yang login, dan belum ada yang mengarahkan join ke worker yang kosong (frontend menunjuk
-# satu EXPO_PUBLIC_API_URL), jadi ini baru membuktikan bot terpisah bisa jalan berdampingan.
+# Kekurangan: baru worker-1 yang login. Rapat yang menunggu worker kosong lebih dari JOIN_QUEUE_MAX_WAIT_SECONDS (600)
+# dibatalkan. Server yang hanya melayani API (tanpa bot) cukup diberi RECORDER=0.
+
+x-worker-env: &worker-env
+  GOOGLE_AUTH_STATE_PATH: /app/auth/google.json
+  # timestamp adalah waktu lokal tanpa zona dan frontend menampilkannya apa adanya, jadi container butuh zona waktu
+  # user (di UTC tiap rapat tampil 8 jam lebih awal)
+  TZ: Asia/Makassar
+  # antrean join dan rekaman yang selesai diserahkan ke transkriber lewat ini
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  # platform yang diambil worker ini dari antrean join. Zoom tidak butuh akun, Meet butuh sesi Google yang sudah login
+  # (auth/worker-N.json): tambahkan google_meet hanya untuk worker yang sudah login, seperti worker-1 di bawah
+  WORKER_PLATFORMS: zoom
 
 x-worker-base: &worker-base
   build: .
   env_file: .env
-  environment:
-    GOOGLE_AUTH_STATE_PATH: /app/auth/google.json
-    # timestamp adalah waktu lokal tanpa zona dan frontend menampilkannya apa adanya, jadi container butuh zona waktu
-    # user (di UTC tiap rapat tampil 8 jam lebih awal)
-    TZ: Asia/Makassar
-    # rekaman yang selesai diserahkan ke transkriber lewat ini
-    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  environment: *worker-env
   depends_on: [redis]
   restart: unless-stopped
   # /dev/shm bawaan Docker (64MB) terlalu kecil untuk buffer capture Chrome, getDisplayMedia() gagal dengan
   # "NotReadableError: Could not start video source". Saran Chrome sendiri untuk capture video adalah 2GB+
   shm_size: "2gb"
 
-# transkriber: torch (diarization) dan faster-whisper masing-masing 3 thread karena berjalan berdampingan
+# transkriber: transkripsinya di Replicate, container ini hanya menunggu hasilnya, memanggil OpenAI, dan menyimpan ke R2/Postgres
 x-transcriber-base: &transcriber-base
   build:
     context: .
@@ -37,13 +44,15 @@ x-transcriber-base: &transcriber-base
   env_file: .env
   depends_on: [redis]
   restart: unless-stopped
-  mem_limit: "7g"
-  cpus: "6.0"
-  volumes: ["hf-cache:/root/.cache/huggingface"]
+  mem_limit: "1g"
+  cpus: "1.0"
 
 services:
   worker-1:
     <<: *worker-base
+    environment:
+      <<: *worker-env
+      WORKER_PLATFORMS: google_meet,zoom
     ports: ["5050:5050"]
     volumes: ["./auth/worker-1.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-2:
@@ -91,27 +100,24 @@ services:
     restart: unless-stopped
     volumes: ["redis-data:/data"]
 
-  # Dua transkriber membatasi transkripsi 2 job sekaligus, berapa pun bot yang merekam. Satu job panjang (model turbo
-  # plus diarization paralel) mencapai ~6,1GB pada klip 3 menit dan tumbuh sesuai rapat, jadi dua job panjang tidak muat
-  # di laptop 7,7GB atau VPS 12GB: jalankan SATU untuk rapat panjang (`docker compose stop transcriber-2`).
+  # Dua transkriber memproses 2 job sekaligus, berapa pun bot yang merekam. Beratnya di Replicate dan OpenAI, bukan di
+  # sini, jadi ringan (tidak ada lagi model di container). Batas permintaan Replicate (6 per menit di bawah saldo US$5)
+  # ditangani retry di replicate_transcribe.py.
   # TRANSCRIBER_ID menamai list Redis berisi job worker yang belum selesai (job_queue.py), tidak boleh berubah.
   transcriber-1:
     <<: *transcriber-base
     environment:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       TRANSCRIBER_ID: transcriber-1
-      OMP_NUM_THREADS: "3"
-      WHISPER_THREADS: "3"
   transcriber-2:
     <<: *transcriber-base
     environment:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       TRANSCRIBER_ID: transcriber-2
-      OMP_NUM_THREADS: "3"
-      WHISPER_THREADS: "3"
 
-# model whisper, alignment, dan pyannote disimpan di sini supaya selamat saat container dibuat ulang. Volume bernama, bukan
-# bind mount: ada di disk WSL2, jauh lebih cepat untuk file model besar daripada bind mount Windows. Dipakai bersama semua
+# model embedding Knowledge Base (sentence-transformers) disimpan di sini supaya selamat saat container dibuat ulang. Volume
+# bernama, bukan bind mount: ada di disk WSL2, jauh lebih cepat untuk file model besar daripada bind mount Windows.
+# Dipakai bersama semua worker
 volumes:
   hf-cache:
   redis-data:

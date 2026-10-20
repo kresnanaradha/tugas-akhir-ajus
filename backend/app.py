@@ -18,9 +18,10 @@ from flask import Flask, Response, jsonify, redirect, request, session
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.exceptions import RequestEntityTooLarge
 
+from bots import google_session_keepalive
 from bots.google_meet import GoogleMeetBot
 from bots.zoom import ZoomBot
-from pipeline import admin_stats, artifacts, auth_store, billing_store, job_queue, knowledge_base, mailer, report_pdf, report_stats, storage, team_store
+from pipeline import admin_stats, artifacts, auth_store, billing_store, job_queue, join_queue, knowledge_base, mailer, report_pdf, report_stats, storage, team_store
 from pipeline.meetings_store import (
     add_viewer,
     count_own_this_month,
@@ -289,9 +290,8 @@ MEETING_URL_PATTERNS = {
 MEETING_PLATFORM_LABEL = {"google_meet": "Google Meet", "zoom": "Zoom"}
 
 
-# job join yang sedang jalan, di memori (hilang saat restart). phase: starting | processing | failed
-_jobs: dict[str, dict] = {}
-_jobs_lock = threading.Lock()
+# status job (queued, joining, recording, stopping, processing, failed) ada di Redis, lihat pipeline/join_queue.py
+_BOT_CLASSES = {"google_meet": GoogleMeetBot, "zoom": ZoomBot}
 
 
 def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int | None):
@@ -299,8 +299,7 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
     try:
         local_recording_path = bot.join()
     except Exception as e:
-        with _jobs_lock:
-            _jobs[job_id].update(phase="failed", error=str(e))
+        join_queue.set_job(job_id, status="failed", error=str(e))
         update_meeting(job_id, status="failed")
         return
     # waktu yang dipakai merekam, bukan seluruh proses join (browser mulai, menunggu di lobi)
@@ -309,8 +308,7 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
     else:
         duration_minutes = round((time.time() - started_at) / 60, 1)
 
-    with _jobs_lock:
-        _jobs[job_id]["phase"] = "processing"
+    join_queue.set_job(job_id, status="processing")
 
     # unggah, lalu serahkan ke transkriber lewat Redis (whisper satu container dengan chrome
     # kehabisan memori)
@@ -328,8 +326,7 @@ def _run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int
         job_queue.enqueue_transcription(job_id, recording_key, num_speakers)
 
     # buang job-nya supaya GET /jobs/<id> 404, frontend lalu memantau baris rapatnya
-    with _jobs_lock:
-        _jobs.pop(job_id, None)
+    join_queue.finish(job_id)
 
 
 def _send_unprocessed_email(owner_id: str, meeting_id: str, title: str, duration_minutes: float, weekly: dict) -> None:
@@ -389,7 +386,7 @@ def _check_meeting_quota(user_id: str) -> str | None:
     return None
 
 
-def _join(bot_cls, platform: str, title: str):
+def _join(platform: str, title: str):
     data = request.get_json(force=True) or {}
     url = data.get("url")
     name = data.get("name") or "Notulis Bot"
@@ -422,19 +419,22 @@ def _join(bot_cls, platform: str, title: str):
     caps = [c for c in (MAX_DURATION_MIN, plan_cap) if c is not None]
     max_duration = min(caps) if caps else None
 
+    # tolak langsung kalau tidak ada worker hidup untuk platform ini, daripada menunggu sampai tugasnya kedaluwarsa
+    if not join_queue.has_worker(platform):
+        return jsonify({"error": f"Tidak ada perekam {MEETING_PLATFORM_LABEL[platform]} yang aktif. Coba lagi sebentar lagi."}), 503
+
     job_id = uuid.uuid4().hex
-    # perubahan status disimpan ke baris rapat supaya daftar bisa menampilkan "Sedang Merekam"
-    bot = bot_cls(url, name, max_duration, on_status_change=lambda status: update_meeting(job_id, status=status))
-    with _jobs_lock:
-        # satu bot per display, dua bot akan merekam jendela satu sama lain
-        if any(j["phase"] in ("starting", "processing") for j in _jobs.values()):
-            return jsonify({"error": "Rapat lain sedang direkam. Tunggu sampai selesai sebelum memulai yang baru."}), 409
-        _jobs[job_id] = {"phase": "starting", "bot": bot, "error": None}
-
     start_meeting(job_id, platform, title, estimated_participants=num_speakers, url=url, user_id=session["user_id"])
-
-    # join() menunggu sampai rapat selesai, jadi dijalankan di thread dan frontend memantau /jobs/<id>
-    threading.Thread(target=_run_join_job, args=(job_id, bot, platform, title, num_speakers), daemon=True).start()
+    # worker kosong yang mengambilnya (_join_worker_loop), frontend memantau /jobs/<id>
+    try:
+        join_queue.enqueue({
+            "job_id": job_id, "platform": platform, "url": url, "name": name, "max_duration": max_duration,
+            "title": title, "num_speakers": num_speakers,
+        })
+    except Exception as e:
+        update_meeting(job_id, status="failed")
+        print(f"[join] could not queue {job_id}: {e}")
+        return jsonify({"error": "Antrean join tidak bisa dijangkau. Coba lagi sebentar lagi."}), 503
 
     return jsonify({"job_id": job_id})
 
@@ -445,22 +445,15 @@ def job_status(job_id):
     record = get_meeting(job_id)
     if record is not None and not _can_view_meeting(record):
         return jsonify({"error": "Job not found"}), 404
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            return jsonify({"error": "Job not found"}), 404
-        phase = job["phase"]
-
-        if phase == "starting":
-            bot = job["bot"]
-            resp = {"status": bot.status}  # "joining" | "recording" | "stopping"
-            if bot.status == "recording" and bot.record_started_at:
-                resp["elapsed_seconds"] = int(time.time() - bot.record_started_at)
-            return jsonify(resp)
-
-        if phase == "processing":
-            return jsonify({"status": "processing"})
-        return jsonify({"status": "failed", "error": job["error"]})
+    job = join_queue.get_job(job_id)
+    if job is None:
+        return jsonify({"error": "Job not found"}), 404
+    if job["status"] == "failed":
+        return jsonify({"status": "failed", "error": job.get("error")})
+    resp = {"status": job["status"]}  # queued | joining | recording | stopping | processing
+    if job["status"] == "recording" and job.get("started_at"):
+        resp["elapsed_seconds"] = int(time.time() - float(job["started_at"]))
+    return jsonify(resp)
 
 
 @app.post("/jobs/<job_id>/stop")
@@ -470,24 +463,127 @@ def job_stop(job_id):
     record = get_meeting(job_id)
     if record is not None and not _can_edit_meeting(record):
         return jsonify(_NOT_OWNER[0]), _NOT_OWNER[1]
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None or job["phase"] != "starting":
-            return jsonify({"error": "Job not found or no longer recording"}), 404
-        job["bot"].stop_event.set()
+    job = join_queue.get_job(job_id)
+    if job is None or job["status"] not in ("queued", *join_queue.LIVE):
+        return jsonify({"error": "Job not found or no longer recording"}), 404
+    join_queue.request_stop(job_id)  # worker yang merekam membacanya, lihat _join_worker_loop
     return jsonify({"status": "stopping"})
 
 
 @app.post("/google/join")
 @login_required
 def google_join():
-    return _join(GoogleMeetBot, "google_meet", "Rapat Google Meet")
+    return _join("google_meet", "Rapat Google Meet")
 
 
 @app.post("/zoom/join")
 @login_required
 def zoom_join():
-    return _join(ZoomBot, "zoom", "Rapat Zoom")
+    return _join("zoom", "Rapat Zoom")
+
+
+def _on_bot_status(job_id: str, status: str) -> None:
+    update_meeting(job_id, status=status)  # supaya daftar rapat bisa menampilkan "Sedang Merekam"
+    fields = {"status": status}
+    if status == "recording":
+        fields["started_at"] = time.time()
+    join_queue.set_job(job_id, **fields)
+
+
+def _reap_dead_jobs(include_self: bool = False) -> None:
+    """Rapat yang worker perekamnya mati di tengah jalan: tandai gagal (job di Redis dan barisnya), supaya tidak
+    "merekam" selamanya. Aman dijalankan oleh banyak worker sekaligus."""
+    for job_id in join_queue.orphans(include_self):
+        join_queue.set_job(job_id, status="failed", error="Worker perekam berhenti di tengah rapat")
+        update_meeting(job_id, status="failed")
+        print(f"[join-worker] rapat {job_id} ditandai gagal, worker perekamnya mati")
+
+
+def _check_google_session() -> None:
+    """Cek sesi Google worker ini (hanya saat menganggur). Habis: Meet berhenti diambil dan super admin diberi email
+    sekali. Pulih (google_login.py dijalankan lagi): Meet diambil lagi."""
+    try:
+        expired = not google_session_keepalive.session_alive(refresh=False)
+    except Exception as e:
+        print(f"[join-worker] cek sesi Google gagal, dilewati: {e}")  # jaringan atau file, belum tentu sesi habis
+        return
+    if expired and not join_queue.google_expired:
+        print(f"[join-worker] sesi Google {join_queue.WORKER_ID} habis, Meet berhenti diambil")
+        for admin in auth_store.list_users():
+            if admin["role"] == "super_admin" and admin["active"]:
+                try:
+                    mailer.send_google_session_expired_email(admin["email"], join_queue.WORKER_ID)
+                except Exception as e:
+                    print(f"[join-worker] email sesi Google gagal: {e}")
+    elif not expired and join_queue.google_expired:
+        print(f"[join-worker] sesi Google {join_queue.WORKER_ID} pulih")
+    join_queue.google_expired = expired
+
+
+def _join_worker_loop() -> None:
+    """Ambil tugas join dari Redis satu per satu: satu bot per display, dua bot akan merekam jendela satu sama lain.
+    Thread kecil menjaga detak worker dan meneruskan sinyal Stop (di Redis) ke bot yang sedang merekam."""
+    current = {"job_id": None, "bot": None}
+
+    def keep_alive():
+        ticks = 0
+        while True:
+            try:
+                join_queue.heartbeat(current["job_id"] is not None)
+                bot = current["bot"]
+                if bot is not None and join_queue.stop_requested(current["job_id"]):
+                    bot.stop_event.set()
+                ticks += 1
+                if ticks % 30 == 0:  # tiap ~60 detik
+                    _reap_dead_jobs()
+            except Exception as e:
+                print(f"[join-worker] heartbeat failed: {e}")  # gangguan Redis tidak boleh mematikan worker
+            time.sleep(2)
+
+    try:
+        _reap_dead_jobs(include_self=True)  # job milik worker ini sebelum restart tidak mungkin masih jalan
+    except Exception as e:
+        print(f"[join-worker] reap saat start gagal: {e}")
+    threading.Thread(target=keep_alive, daemon=True).start()
+    print(f"[join-worker] {join_queue.WORKER_ID} menunggu tugas untuk {', '.join(join_queue.PLATFORMS)}")
+    next_session_check = 0.0
+    while True:
+        # sesi Google dicek antar tugas (bukan saat merekam): 30 menit sekali, 5 menit sekali selagi habis
+        if "google_meet" in join_queue.PLATFORMS and time.time() >= next_session_check:
+            _check_google_session()
+            next_session_check = time.time() + (300 if join_queue.google_expired else 1800)
+        try:
+            job = join_queue.claim(timeout=5)
+        except Exception as e:
+            print(f"[join-worker] queue read failed, retrying: {e}")
+            time.sleep(2)
+            continue
+        if job is None:
+            continue
+        job_id = job["job_id"]
+        try:
+            if join_queue.stop_requested(job_id):
+                join_queue.set_job(job_id, status="failed", error="Dibatalkan sebelum bot bergabung")
+                update_meeting(job_id, status="failed")
+            elif time.time() - job["enqueued_at"] > join_queue.MAX_WAIT_S:
+                join_queue.set_job(job_id, status="failed", error="Tidak ada perekam yang kosong, coba lagi")
+                update_meeting(job_id, status="failed")
+            else:
+                bot = _BOT_CLASSES[job["platform"]](
+                    job["url"], job["name"], job["max_duration"], on_status_change=lambda s, j=job_id: _on_bot_status(j, s)
+                )
+                current.update(job_id=job_id, bot=bot)
+                join_queue.set_job(job_id, status="joining", worker=join_queue.WORKER_ID)
+                _run_join_job(job_id, bot, job["platform"], job["title"], job["num_speakers"])
+        except Exception as e:
+            print(f"[join-worker] unhandled error on {job_id}: {e}")
+            try:
+                join_queue.set_job(job_id, status="failed", error=str(e))
+                update_meeting(job_id, status="failed")
+            except Exception as inner:
+                print(f"[join-worker] could not mark {job_id} failed: {inner}")
+        finally:
+            current.update(job_id=None, bot=None)
 
 
 @app.get("/meetings")
@@ -549,6 +645,7 @@ def meeting_detail(meeting_id):
             record["file_size_bytes"] = info["size"]
             record["file_extension"] = os.path.splitext(record["recording"])[1].lstrip(".")
 
+    record["can_edit"] = _can_edit_meeting(record)  # frontend menyembunyikan tombol ubah untuk penonton
     return jsonify(record)
 
 
@@ -760,7 +857,7 @@ def upload():
     if ext not in UPLOAD_EXTENSIONS:
         return jsonify({"error": f"unsupported file type '{ext}', expected one of {sorted(UPLOAD_EXTENSIONS)}"}), 400
 
-    # file disimpan lokal dulu (whisperx lokal butuh file), lalu naik ke R2 sebelum diproses supaya Replicate bisa membacanya
+    # file disimpan lokal dulu (dipakai untuk memetakan waktu), lalu naik ke R2 sebelum diproses supaya Replicate bisa membacanya
     out_dir = Path(os.getenv("RECORDINGS_DIR", "recordings")) / "videos"
     out_dir.mkdir(parents=True, exist_ok=True)
     meeting_id = f"Upload_{int(time.time())}"
@@ -794,6 +891,17 @@ def upload():
 def admin_stats_route():
     """Jumlah rapat, MRR, biaya OpenAI, penyimpanan R2, dan jumlah user untuk dashboard admin."""
     return jsonify(admin_stats.get_stats())
+
+
+@app.get("/admin/workers")
+@super_admin_required
+def admin_workers():
+    """Worker perekam yang hidup (detak Redis), kosong kalau Redis tidak terjangkau."""
+    try:
+        return jsonify(sorted(join_queue.workers(), key=lambda w: w["id"]))
+    except Exception as e:
+        print(f"[admin] workers: {e}")
+        return jsonify([])
 
 
 @app.get("/admin/users")
@@ -1230,6 +1338,9 @@ def share_meeting_with_team(meeting_id):
 
 
 if __name__ == "__main__":
+    # RECORDER=0 menjalankan API saja (tanpa bot), untuk server yang tidak merekam
+    if os.getenv("RECORDER", "1") != "0":
+        threading.Thread(target=_join_worker_loop, daemon=True).start()
     # threaded supaya polling /jobs/<id> jalan saat ada join. 5050 karena ada yang terus memakai
     # 5000, 0.0.0.0 supaya port mapping docker bisa menjangkaunya
     app.run(host="0.0.0.0", port=5050, threaded=True)

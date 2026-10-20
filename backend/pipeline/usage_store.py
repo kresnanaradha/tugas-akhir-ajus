@@ -16,6 +16,18 @@ CREATE TABLE IF NOT EXISTS api_usage (
 );
 """
 register_schema(_TABLE_SQL)
+register_schema(
+    """
+CREATE TABLE IF NOT EXISTS replicate_usage (
+    id SERIAL PRIMARY KEY,
+    meeting_id TEXT,
+    gpu_seconds REAL NOT NULL,
+    created_at TIMESTAMP NOT NULL
+);
+"""
+)
+
+GPU_USD_PER_SECOND = 0.000975  # GPU L40S di Replicate, cek replicate.com/pricing kalau terlihat janggal
 
 # USD per 1 juta token, ditulis langsung (OpenAI tidak punya API harga). Cek openai.com/api/pricing kalau terlihat janggal
 _PRICING_PER_1M_USD = {
@@ -36,6 +48,36 @@ def log_usage(meeting_id: str | None, call_type: str, model: str, usage) -> None
         conn.commit()
 
     with_conn(_do)
+
+
+def log_gpu(meeting_id: str | None, gpu_seconds: float) -> None:
+    """Catat detik GPU satu prediksi Replicate (`metrics.predict_time`)."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO replicate_usage (meeting_id, gpu_seconds, created_at) VALUES (%s, %s, %s)",
+                (meeting_id, gpu_seconds, datetime.now()),
+            )
+        conn.commit()
+
+    with_conn(_do)
+
+
+def gpu_cost() -> dict:
+    """{"total_usd", "call_count", "since"}, bentuk sama dengan total_cost(). Hanya transkripsi sejak pencatatan ini ada."""
+
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(gpu_seconds), 0), COUNT(*), MIN(created_at) FROM replicate_usage")
+            return cur.fetchone()
+
+    seconds, count, since = with_conn(_do)
+    return {
+        "total_usd": round(float(seconds) * GPU_USD_PER_SECOND, 4),
+        "call_count": count,
+        "since": since.strftime("%Y-%m-%dT%H:%M:%S") if since else None,
+    }
 
 
 def total_cost() -> dict:

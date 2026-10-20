@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { getAdminExportUrl, getAdminStats } from "@/lib/api";
+import { getAdminExportUrl, getAdminStats, getAdminWorkers } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
@@ -37,9 +37,11 @@ export default function AdminScreen() {
   const [status, setStatus] = useState("loading"); // loading | error | done
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
+  const [workers, setWorkers] = useState([]);
 
   useEffect(() => {
     if (user?.role !== "super_admin") return;
+    getAdminWorkers().then(setWorkers).catch(() => {}); // pelengkap, kegagalannya tidak menutup halaman
     getAdminStats()
       .then((data) => {
         setStats(data);
@@ -148,6 +150,11 @@ export default function AdminScreen() {
                 delta={stats.openai_cost.since ? `sejak ${new Date(stats.openai_cost.since).toLocaleDateString("id-ID")}` : "belum ada data"}
               />
               <StatCard value={stats.openai_cost.call_count} label="Jumlah Panggilan API" />
+              <StatCard
+                value={`$${stats.replicate_cost.total_usd.toFixed(4)}`}
+                label="Biaya Replicate (Transkripsi)"
+                delta={stats.replicate_cost.since ? `sejak ${new Date(stats.replicate_cost.since).toLocaleDateString("id-ID")}` : "belum ada data"}
+              />
               <StatCard value={formatBytes(stats.storage_bytes)} label="Penyimpanan R2 Terpakai" />
             </View>
           </>
@@ -177,6 +184,20 @@ export default function AdminScreen() {
             </View>
           </>
         )}
+
+        <Text style={styles.sectionLabel}>Perekam (Worker)</Text>
+        <View style={styles.chartCard}>
+          {workers.length === 0 ? (
+            <Text style={styles.description}>Tidak ada worker perekam yang aktif.</Text>
+          ) : (
+            workers.map((w) => (
+              <Text key={w.id} style={[styles.teamMeta, w.google_expired && { color: colors.danger }]}>
+                {w.id}: {w.busy ? "sedang merekam" : "kosong"} · {w.platforms.join(", ") || "tidak ada platform"}
+                {w.google_expired ? " · sesi Google habis, jalankan google_login.py" : ""}
+              </Text>
+            ))
+          )}
+        </View>
 
         <Text style={styles.sectionLabel}>Manajemen Pengguna</Text>
         <UserManagement currentUserId={user?.id} />

@@ -57,5 +57,6 @@ def get_stats() -> dict:
         "plan_counts": plan_counts,
         "mrr_idr": mrr_idr,
         "openai_cost": usage_store.total_cost(),
+        "replicate_cost": usage_store.gpu_cost(),
         "storage_bytes": storage_bytes,
     }

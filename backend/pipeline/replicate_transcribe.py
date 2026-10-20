@@ -1,29 +1,18 @@
 """Transkripsi lewat Replicate (thomasmol/whisper-diarization: Whisper large-v3-turbo + pyannote community-1 di GPU).
-Replicate mengunduh rekaman dari url R2 bertanda tangan, jadi tidak ada file yang kita unggah. Hasilnya melewati
-langkah akhir yang sama dengan whisperx lokal (segments.finish)."""
+Replicate mengunduh rekaman dari url R2 bertanda tangan, jadi tidak ada file yang kita unggah. Hasilnya dirapikan
+oleh segments.finish."""
 
 import os
 import time
 
 import requests
 
-from . import segments, storage
+from . import segments, storage, usage_store
 
 _API = "https://api.replicate.com/v1"
 _POLL_S = 5
 _RETRY_S = 5  # jeda antar percobaan saat kena batas permintaan (429)
 _MAX_WAIT_S = 3 * 3600
-_USD_PER_SECOND = 0.000975  # GPU L40S, untuk perkiraan biaya di log
-
-
-def enabled() -> bool:
-    """TRANSCRIBE_BACKEND=replicate dan tokennya terisi. Tanpa token tetap pakai whisperx lokal, dengan peringatan."""
-    if os.getenv("TRANSCRIBE_BACKEND", "local").strip().lower() != "replicate":
-        return False
-    if not os.getenv("REPLICATE_API_TOKEN"):
-        print("[replicate] TRANSCRIBE_BACKEND=replicate tapi REPLICATE_API_TOKEN kosong, pakai whisperx lokal", flush=True)
-        return False
-    return True
 
 
 def _version() -> str:
@@ -32,7 +21,7 @@ def _version() -> str:
 
 
 def to_segments(output_segments: list[dict]) -> list[dict]:
-    """Segmen Replicate (speaker, text, start, end, words[word, start, end, speaker]) ke bentuk whisperx yang dipakai
+    """Segmen Replicate (speaker, text, start, end, words[word, start, end, speaker]) ke bentuk yang dipakai
     segments.finish. Pembicara yang kosong jatuh ke milik segmennya, lalu SPEAKER_00."""
     out = []
     for seg in output_segments:
@@ -81,12 +70,18 @@ def _run(file_url: str, num_speakers: int | None) -> dict:
 
 def transcribe(local_recording_path: str, meeting_id: str, recording_key: str, num_speakers: int | None = None) -> str:
     """Transkripsi rekaman yang sudah ada di R2 (recording_key). File lokalnya hanya dipakai untuk memetakan waktu."""
+    if not os.getenv("REPLICATE_API_TOKEN"):
+        raise RuntimeError("REPLICATE_API_TOKEN kosong di .env, transkripsi tidak bisa berjalan")
     t0 = time.time()
     url = storage.presigned_url(recording_key, expires_in=6 * 3600)
     prediction = _run(url, num_speakers)
     seconds = (prediction.get("metrics") or {}).get("predict_time") or 0
+    try:
+        usage_store.log_gpu(meeting_id, seconds)
+    except Exception as e:
+        print(f"[replicate] biaya tidak tercatat: {e}")  # pencatatan tidak boleh menggagalkan transkripsi
     print(
-        f"[replicate] selesai dalam {time.time() - t0:.0f}s, GPU {seconds:.0f}s (~US${seconds * _USD_PER_SECOND:.3f}), "
+        f"[replicate] selesai dalam {time.time() - t0:.0f}s, GPU {seconds:.0f}s (~US${seconds * usage_store.GPU_USD_PER_SECOND:.3f}), "
         f"{prediction['output'].get('num_speakers')} pembicara, bahasa {prediction['output'].get('language')}",
         flush=True,
     )

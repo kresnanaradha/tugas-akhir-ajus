@@ -3,6 +3,7 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -39,6 +40,8 @@ from pipeline.summarize import compare_meetings, short_summary, summarize
 from pipeline.xendit_client import create_subscription_session, deactivate_recurring_plan
 
 app = Flask(__name__)
+# thread untuk membaca objek R2 secara paralel di halaman detail rapat
+_R2_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="r2")
 # menandatangani cookie sesi, wajib ada supaya tidak ada default yang gampang ditebak
 app.secret_key = os.environ["SECRET_KEY"]
 # kosong atau 0 = tanpa batas, rekaman berhenti sendiri (host keluar, bot sendirian, hening)
@@ -503,7 +506,7 @@ def _check_google_session() -> None:
     """Cek sesi Google worker ini (hanya saat menganggur). Habis: Meet berhenti diambil dan super admin diberi email
     sekali. Pulih (google_login.py dijalankan lagi): Meet diambil lagi."""
     try:
-        expired = not google_session_keepalive.session_alive(refresh=False)
+        expired = not google_session_keepalive.session_alive()  # menulis cookie yang baru dirotasi Google ke file sesi
     except Exception as e:
         print(f"[join-worker] cek sesi Google gagal, dilewati: {e}")  # jaringan atau file, belum tentu sesi habis
         return
@@ -635,12 +638,20 @@ def meeting_detail(meeting_id):
 
     # rapat yang masih direkam belum punya apa-apa di R2
     if record["recording"]:
-        record["transcript"] = artifacts.load_transcript(meeting_id)
-        record["fixed_transcript"] = artifacts.load_fixed_transcript(meeting_id)
-        record["summary"] = artifacts.load_summary(meeting_id)
-        record["segments"] = artifacts.load_segments(meeting_id)  # tidak ada untuk rekaman lama
+        # lima objek R2 dibaca bersamaan (tiap satu 0,1 sampai 0,45 detik, dulu berurutan). Klien boto3 dibuat dulu di sini
+        # karena pembuatan klien dari beberapa thread sekaligus tidak aman
+        storage._get_client()
+        futures = {
+            "transcript": _R2_POOL.submit(artifacts.load_transcript, meeting_id),
+            "fixed_transcript": _R2_POOL.submit(artifacts.load_fixed_transcript, meeting_id),
+            "summary": _R2_POOL.submit(artifacts.load_summary, meeting_id),
+            "segments": _R2_POOL.submit(artifacts.load_segments, meeting_id),  # tidak ada untuk rekaman lama
+        }
+        info_future = _R2_POOL.submit(storage.head, record["recording"])
+        for key, future in futures.items():
+            record[key] = future.result()
 
-        info = storage.head(record["recording"])
+        info = info_future.result()
         if info:
             record["file_size_bytes"] = info["size"]
             record["file_extension"] = os.path.splitext(record["recording"])[1].lstrip(".")
@@ -1059,16 +1070,24 @@ def perbandingan_analisis():
 @app.post("/meetings/<meeting_id>/process")
 @login_required
 def meeting_process_now(meeting_id):
-    """Kirim rekaman yang disimpan tanpa AI (status "limited") ke transkriber, kalau paket atau minggu ini
-    sekarang cukup untuk seluruh rapat."""
+    """Kirim rekaman ke transkriber: yang disimpan tanpa AI (status "limited") atau yang pemrosesannya gagal ("failed",
+    proses ulang). Kuota mingguan Free tetap berlaku untuk rekaman bot, upload tidak terkena kuota mingguan."""
     record, error = _load_meeting(meeting_id, edit=True)
     if error:
         return error
-    if record["status"] != "limited":
+    if record["status"] not in ("limited", "failed"):
         return jsonify({"error": "Rapat ini tidak menunggu pemrosesan"}), 409
-    weekly = _weekly_quota(record["user_id"]) if record.get("user_id") else None
-    if weekly and (record.get("duration_minutes") or 0) > weekly["remaining"]:
-        return jsonify({"error": f"Sisa kuota minggu ini {weekly['remaining']:g} menit, rapat ini {record['duration_minutes']:g} menit. Upgrade ke Pro untuk memprosesnya."}), 402
+    if not record.get("recording"):
+        return jsonify({"error": "Rapat ini tidak punya rekaman untuk diproses (bot gagal bergabung)"}), 409
+    duration = record.get("duration_minutes") or 0
+    weekly = _weekly_quota(record["user_id"]) if record.get("user_id") and record.get("url") else None
+    if weekly:
+        remaining = weekly["remaining"]
+        # rapat gagal minggu ini sudah ikut terhitung di "used", jangan ditagih dua kali
+        if record["status"] == "failed" and datetime.strptime(record["created_at"], "%Y-%m-%dT%H:%M:%S") >= _week_start():
+            remaining += duration
+        if duration > remaining:
+            return jsonify({"error": f"Sisa kuota minggu ini {remaining:g} menit, rapat ini {duration:g} menit. Upgrade ke Pro untuk memprosesnya."}), 402
     update_meeting(meeting_id, status="processing")
     job_queue.enqueue_transcription(meeting_id, record["recording"], record.get("estimated_participants"))
     return jsonify({"status": "processing"})

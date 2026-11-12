@@ -26,7 +26,13 @@ const NAV_GROUPS = [
   },
   { label: "Kolaborasi", items: [{ href: "/team", label: "Team", icon: "users" }] },
 ];
-const ADMIN_GROUP = { label: "Sistem", items: [{ href: "/admin", label: "Statistik", icon: "shield" }] };
+const ADMIN_GROUP = {
+  label: "Sistem",
+  items: [
+    { href: "/admin", label: "Statistik", icon: "shield" },
+    { href: "/pengguna", label: "Manajemen Pengguna", icon: "user-check" },
+  ],
+};
 
 // Sebuah halaman juga dihitung sebagai halaman item menunya kalau bersarang di bawahnya
 // (/rapat/baru, /rapat/<id>, /team/gabung/<token> ...).
@@ -90,7 +96,7 @@ function PlanCard({ pathname }) {
 export function Sidebar() {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
-  // hanya super admin yang melihat tautan Statistik, backend menolak yang lain juga
+  // hanya super admin yang melihat tautan Statistik dan Manajemen Pengguna, backend menolak yang lain juga
   const groups = user?.role === "super_admin" ? [...NAV_GROUPS, ADMIN_GROUP] : NAV_GROUPS;
 
   function handleLogout() {

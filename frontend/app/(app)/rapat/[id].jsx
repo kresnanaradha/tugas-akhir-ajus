@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -19,6 +20,7 @@ import { buildEditorState, formatBytes, formatElapsed, joinTranscriptLines, meet
 import { BackLink } from "@/components/BackLink";
 import { StatCard } from "@/components/StatCard";
 import { StatusPill } from "@/components/StatusPill";
+import { ConfirmModal } from "@/components/ConfirmModal";
 import { useAuth } from "@/lib/auth-context";
 
 function SpeakerBadge({ speaker }) {
@@ -155,6 +157,12 @@ function PulsingDot() {
   return <Animated.View style={[styles.pulseDot, { opacity }]} />;
 }
 
+const POKOK_LINES = 9; // baris yang tampil saat diciutkan kalau tinggi kolom kiri belum terukur (layar sempit)
+const POKOK_LONG_CHARS = 900; // di bawah ini teksnya pendek, tombol tidak perlu
+const POKOK_LINE_HEIGHT = 21; // sama dengan lineHeight styles.summaryText
+// tinggi kartu di luar teksnya: padding atas bawah + border + ikon header + jarak + tombol + jarak
+const POKOK_CHROME = spacing.lg * 2 + 2 + 30 + spacing.sm + 18 + spacing.sm;
+
 export default function MeetingDetailScreen() {
   const { id } = useLocalSearchParams();
   const { user } = useAuth();
@@ -165,6 +173,18 @@ export default function MeetingDetailScreen() {
   const [currentTime, setCurrentTime] = useState(0);
   const videoRef = useRef(null);
   const [activeTab, setActiveTab] = useState("ringkasan");
+  // layar lebar: topik, keputusan, dan action item di kiri, ringkasan di kanan. Layar sempit ditumpuk, ringkasan dulu
+  const wideSummary = useWindowDimensions().width >= 1100;
+  // Pokok Pembahasan bisa sangat panjang dan menarik kolom kiri jadi kosong, jadi diciutkan dulu
+  const [pokokOpen, setPokokOpen] = useState(false);
+  const pokokLong = (meeting?.summary?.executive_summary || "").length > POKOK_LONG_CHARS;
+  // layar lebar: terciut sampai dasar kartunya sejajar dengan dasar kolom kiri (Action Items)
+  const [sideH, setSideH] = useState(0);
+  const [ringH, setRingH] = useState(0);
+  const pokokLines =
+    wideSummary && sideH && ringH
+      ? Math.max(4, Math.floor((sideH - ringH - spacing.md - POKOK_CHROME) / POKOK_LINE_HEIGHT))
+      : POKOK_LINES;
 
   // State job langsung (hanya relevan saat meeting.status salah satu dari LIVE_STATUSES)
   const [liveStatus, setLiveStatus] = useState(null); // null kalau sudah selesai/tidak live
@@ -526,7 +546,7 @@ export default function MeetingDetailScreen() {
                   <Feather name="video" size={12} color={colors.inkSoft} />
                   <Text style={styles.platformBadgeLabel}>{PLATFORM_LABEL[meeting.platform] || meeting.platform}</Text>
                 </View>
-                {!isLive && !confirmDelete && user?.team_id && meeting.user_id === user.id && (
+                {!isLive && user?.team_id && meeting.user_id === user.id && (
                   <Pressable
                     style={[styles.smallButton, meeting.shared_with_team && styles.kbButtonOn, { marginLeft: "auto" }]}
                     onPress={handleToggleShareTeam}
@@ -538,7 +558,7 @@ export default function MeetingDetailScreen() {
                     </Text>
                   </Pressable>
                 )}
-                {!isLive && !confirmDelete && canEdit && (
+                {!isLive && canEdit && (
                   <Pressable
                     style={[styles.smallButton, !(user?.team_id && meeting.user_id === user?.id) && { marginLeft: "auto" }]}
                     onPress={() => setConfirmDelete(true)}
@@ -547,18 +567,19 @@ export default function MeetingDetailScreen() {
                     <Text style={[styles.smallButtonLabel, { color: colors.danger }]}>Hapus Rapat</Text>
                   </Pressable>
                 )}
-                {confirmDelete && (
-                  <View style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                    {!!deleteError && <Text style={styles.errorText}>{deleteError}</Text>}
-                    <Text style={styles.actionItemMeta}>Hapus permanen beserta rekaman dan transkrip?</Text>
-                    <Pressable style={[styles.smallButton, styles.smallButtonDanger]} onPress={handleDeleteMeeting} disabled={deleting}>
-                      <Text style={[styles.smallButtonLabel, { color: "#fff" }]}>{deleting ? "Menghapus..." : "Ya, hapus"}</Text>
-                    </Pressable>
-                    <Pressable style={styles.smallButton} onPress={() => setConfirmDelete(false)} disabled={deleting}>
-                      <Text style={styles.smallButtonLabel}>Batal</Text>
-                    </Pressable>
-                  </View>
-                )}
+                <ConfirmModal
+                  visible={confirmDelete}
+                  icon="trash-2"
+                  title="Hapus rapat ini?"
+                  body="Rapat beserta rekaman, transkrip, dan ringkasannya akan dihapus permanen dan tidak bisa dikembalikan."
+                  error={deleteError}
+                  confirmLabel="Ya, Hapus"
+                  busy={deleting}
+                  onCancel={() => setConfirmDelete(false)}
+                  onConfirm={handleDeleteMeeting}
+                />
+
+
               </View>
               <Text style={styles.title}>{meeting.title}</Text>
               <View style={styles.metaRow}>
@@ -678,6 +699,32 @@ export default function MeetingDetailScreen() {
               </View>
             )}
 
+            {/* Pemrosesan gagal tapi rekamannya tersimpan: bisa diproses ulang (kuota paket dicek di server) */}
+            {!isLive && !isLiveFailed && meeting.status === "failed" && !!meeting.recording && canEdit && (
+              <View style={styles.liveCard}>
+                <View style={styles.liveFailedRow}>
+                  <Feather name="alert-circle" size={20} color={colors.danger} />
+                  <Text style={[styles.summaryText, { flex: 1 }]}>
+                    Pemrosesan rapat ini gagal, tetapi rekamannya masih tersimpan. Klik Proses Ulang untuk membuat
+                    transkrip dan ringkasan lagi.
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm }}>
+                  <Pressable style={styles.smallButton} onPress={handleProcessNow} disabled={processBusy}>
+                    <Feather name="refresh-cw" size={12} color={colors.ink} />
+                    <Text style={styles.smallButtonLabel}>{processBusy ? "Memulai..." : "Proses Ulang"}</Text>
+                  </Pressable>
+                  {!!processError && <Text style={styles.errorText}>{processError}</Text>}
+                  {processError.includes("Upgrade") && (
+                    <Pressable style={styles.kbButton} onPress={() => router.push("/billing")}>
+                      <Feather name="zap" size={13} color={colors.ink} />
+                      <Text style={styles.kbButtonLabel}>Upgrade ke Pro</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+            )}
+
             {/* Selesai - tab Ringkasan AI / Transkrip / Rekaman */}
             {!isLive && !isLiveFailed && meeting.status !== "limited" && (
               <>
@@ -708,29 +755,29 @@ export default function MeetingDetailScreen() {
                 {activeTab === "ringkasan" &&
                   (meeting.summary ? (
                     <View style={styles.section}>
-                      {canEdit && (
-                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.sm }}>
-                          {!!kbError && <Text style={styles.errorText}>{kbError}</Text>}
-                          <Pressable
-                            style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
-                            onPress={handleToggleKb}
-                            disabled={kbSaving}
-                          >
-                            <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
-                            <Text style={styles.kbButtonLabel}>
-                              {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      )}
-
-                      <View style={styles.summaryCard}>
+                      {/* row-reverse: kolom pertama di JSX (ringkasan) jatuh di kanan, kolom kedua (topik dkk) di kiri */}
+                      <View style={[styles.summaryGrid, wideSummary && styles.summaryGridWide]}>
+                      <View style={[styles.summaryMain, wideSummary && { flex: 3 }]}>
+                      <View style={styles.summaryCard} onLayout={(e) => setRingH(e.nativeEvent.layout.height)}>
                         <View style={styles.summaryCardHeader}>
                           <View style={styles.iconWrap}>
                             <Feather name="file-text" size={16} color={colors.goldDeep} />
                           </View>
                           <Text style={[styles.summaryCardLabel, { flex: 1 }]}>Ringkasan</Text>
+                          {canEdit && (
+                            <Pressable
+                              style={[styles.kbButton, meeting.in_kb && styles.kbButtonOn]}
+                              onPress={handleToggleKb}
+                              disabled={kbSaving}
+                            >
+                              <Feather name={meeting.in_kb ? "check" : "plus"} size={13} color={colors.ink} />
+                              <Text style={styles.kbButtonLabel}>
+                                {kbSaving ? "Menyimpan..." : meeting.in_kb ? "Ada di Knowledge Base" : "Simpan ke Knowledge Base"}
+                              </Text>
+                            </Pressable>
+                          )}
                         </View>
+                        {!!kbError && <Text style={[styles.errorText, { marginBottom: spacing.sm }]}>{kbError}</Text>}
                         {meeting.summary.short_summary ? (
                           <Text style={styles.summaryText}>{meeting.summary.short_summary}</Text>
                         ) : (
@@ -747,35 +794,47 @@ export default function MeetingDetailScreen() {
                         )}
                       </View>
 
-                      <View style={styles.summaryCard}>
+                      <View style={[styles.summaryCard, wideSummary && { flex: 1 }]}>
                         <View style={styles.summaryCardHeader}>
                           <View style={styles.iconWrap}>
                             <Feather name="zap" size={16} color={colors.goldDeep} />
                           </View>
                           <Text style={[styles.summaryCardLabel, { flex: 1 }]}>Pokok Pembahasan Rapat</Text>
                         </View>
-                        <Text style={styles.summaryText}>{meeting.summary.executive_summary}</Text>
+                        <Text style={styles.summaryText} numberOfLines={pokokOpen || !pokokLong ? undefined : pokokLines}>
+                          {meeting.summary.executive_summary}
+                        </Text>
+                        {pokokLong && (
+                          <Pressable style={styles.expandButton} onPress={() => setPokokOpen((v) => !v)}>
+                            <Text style={styles.expandLabel}>{pokokOpen ? "Ciutkan" : "Lihat selengkapnya"}</Text>
+                            <Feather name={pokokOpen ? "chevron-up" : "chevron-down"} size={14} color={colors.goldDeep} />
+                          </Pressable>
+                        )}
                       </View>
 
-                      <View style={styles.twoCol}>
-                        <View style={styles.colCard}>
-                          <Text style={styles.colTitle}>Keputusan Utama</Text>
-                          {meeting.summary.key_decisions?.map((d, i) => (
-                            <View key={i} style={styles.decisionRow}>
-                              <Feather name="check-circle" size={14} color={colors.success} />
-                              <Text style={styles.decisionText}>{d}</Text>
-                            </View>
-                          ))}
-                        </View>
-                        <View style={styles.colCard}>
-                          <Text style={styles.colTitle}>Topik Dibahas</Text>
-                          {meeting.summary.topics_discussed?.map((t, i) => (
-                            <View key={i} style={styles.topicRow}>
-                              <Text style={styles.topicIndex}>{i + 1}</Text>
-                              <Text style={styles.topicText}>{t}</Text>
-                            </View>
-                          ))}
-                        </View>
+                      </View>
+
+                      <View
+                        style={[styles.summarySide, wideSummary && { flex: 2, alignSelf: "flex-start" }]}
+                        onLayout={(e) => setSideH(e.nativeEvent.layout.height)}
+                      >
+                      <View style={styles.sideCard}>
+                        <Text style={styles.colTitle}>Topik Dibahas</Text>
+                        {meeting.summary.topics_discussed?.map((t, i) => (
+                          <View key={i} style={styles.topicRow}>
+                            <Text style={styles.topicIndex}>{i + 1}</Text>
+                            <Text style={styles.topicText}>{t}</Text>
+                          </View>
+                        ))}
+                      </View>
+                      <View style={styles.sideCard}>
+                        <Text style={styles.colTitle}>Keputusan Utama</Text>
+                        {meeting.summary.key_decisions?.map((d, i) => (
+                          <View key={i} style={styles.decisionRow}>
+                            <Feather name="check-circle" size={14} color={colors.success} />
+                            <Text style={styles.decisionText}>{d}</Text>
+                          </View>
+                        ))}
                       </View>
 
                       <View style={styles.actionItemsCard}>
@@ -824,6 +883,8 @@ export default function MeetingDetailScreen() {
                           )
                         )}
                         {editingItem === "new" && renderItemForm("new")}
+                      </View>
+                      </View>
                       </View>
                     </View>
                   ) : (
@@ -1208,7 +1269,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.lg,
   },
-  summaryCardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+  summaryCardHeader: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
   iconWrap: {
     width: 30,
     height: 30,
@@ -1231,12 +1292,15 @@ const styles = StyleSheet.create({
   kbButtonOn: { backgroundColor: colors.goldSoft, borderColor: colors.gold },
   kbButtonLabel: { ...type.small, fontWeight: "600", color: colors.ink },
   summaryText: { ...type.body, color: colors.inkSoft, lineHeight: 21 },
+  expandButton: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: spacing.sm },
+  expandLabel: { ...type.small, fontWeight: "700", color: colors.goldDeep },
 
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  twoCol: { flexDirection: "row", flexWrap: "wrap", gap: spacing.lg },
-  colCard: {
-    flex: 1,
-    minWidth: 260,
+  summaryGrid: { gap: spacing.md },
+  summaryGridWide: { flexDirection: "row-reverse", gap: spacing.lg },
+  summaryMain: { gap: spacing.md },
+  summarySide: { gap: spacing.md },
+  sideCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,

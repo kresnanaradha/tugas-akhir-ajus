@@ -45,4 +45,35 @@ assert c["updates"][-1]["status"] == "processing" and c["queued"]
 # Paket tanpa batas (tanpa kuota mingguan): selalu diproses.
 c = run(500, None)
 assert c["updates"][-1]["status"] == "processing" and c["queued"]
+
+
+# POST /meetings/<id>/process: proses ulang rapat gagal, dengan kuota yang sama.
+def process(status, minutes, remaining, recording="k", url="https://zoom.us/j/1", this_week=True):
+    queued = []
+    created = app._week_start() + app.timedelta(hours=1 if this_week else -1)
+    record = {"id": "m", "user_id": "u1", "status": status, "duration_minutes": minutes, "recording": recording,
+              "url": url, "estimated_participants": None, "created_at": created.strftime("%Y-%m-%dT%H:%M:%S")}
+    app._load_meeting = lambda mid, edit=False: (record, None)
+    app._user_is_active = lambda uid: True
+    app.update_meeting = lambda *a, **kw: None
+    app.job_queue.enqueue_transcription = lambda *a: queued.append(a)
+    app._weekly_quota = lambda uid: None if remaining is None else {"limit": 60, "used": 60 - remaining, "remaining": remaining}
+    client = app.app.test_client()
+    with client.session_transaction() as s:
+        s["user_id"], s["role"] = "u1", "user"
+    return client.post("/meetings/m/process").status_code, bool(queued)
+
+
+# rapat gagal minggu ini (30 menit) sudah terhitung di "used": sisa 10 + 30 sendiri = 40, muat
+assert process("failed", 30, 10) == (200, True)
+# rapat gagal minggu lalu tidak terhitung minggu ini: 30 > sisa 10, ditolak
+assert process("failed", 30, 10, this_week=False) == (402, False)
+# upload (tanpa url) tidak terkena kuota mingguan
+assert process("failed", 30, 0, url=None) == (200, True)
+# gagal bergabung, tidak ada rekaman
+assert process("failed", 0, 60, recording=None) == (409, False)
+# rapat selesai tidak bisa diproses ulang lewat sini
+assert process("completed", 5, 60) == (409, False)
+# paket tanpa batas
+assert process("failed", 500, None) == (200, True)
 print("ok")

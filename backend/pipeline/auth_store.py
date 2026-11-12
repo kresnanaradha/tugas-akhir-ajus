@@ -1,10 +1,9 @@
 import uuid
 from datetime import datetime
 
-import psycopg2.extras
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from .db import register_schema, with_conn
+from .db import execute, fetch_all, fetch_one, fetch_value, register_schema
 
 _TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -58,18 +57,11 @@ def create_user(email: str, password: str, name: str, role: str = "user") -> dic
         "created_at": datetime.now(),
     }
 
-    def _do(conn):
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO users (id, email, password_hash, name, role, created_at)
-                VALUES (%(id)s, %(email)s, %(password_hash)s, %(name)s, %(role)s, %(created_at)s)
-                """,
-                record,
-            )
-        conn.commit()
-
-    with_conn(_do)
+    execute(
+        "INSERT INTO users (id, email, password_hash, name, role, created_at) "
+        "VALUES (%(id)s, %(email)s, %(password_hash)s, %(name)s, %(role)s, %(created_at)s)",
+        record,
+    )
     return _public(record)
 
 
@@ -80,18 +72,13 @@ def get_user(user_id: str) -> dict | None:
 
 def list_users() -> list[dict]:
     """Semua user beserta jumlah rapat yang dimiliki, terbaru dulu (UI admin)."""
-
-    def _do(conn):
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "SELECT u.*, (SELECT COUNT(*) FROM meetings m WHERE m.user_id = u.id) AS meeting_count "
-                "FROM users u ORDER BY u.created_at DESC"
-            )
-            return [dict(r) for r in cur.fetchall()]
-
+    rows = fetch_all(
+        "SELECT u.*, (SELECT COUNT(*) FROM meetings m WHERE m.user_id = u.id) AS meeting_count "
+        "FROM users u ORDER BY u.created_at DESC"
+    )
     return [
         {**_public(r), "meeting_count": r["meeting_count"], "created_at": r["created_at"].strftime("%Y-%m-%dT%H:%M:%S")}
-        for r in with_conn(_do)
+        for r in rows
     ]
 
 
@@ -120,47 +107,21 @@ def update_user(
         if v is not None
     }
     if fields:
-
-        def _do(conn):
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"UPDATE users SET {', '.join(f'{c} = %s' for c in fields)} WHERE id = %s", (*fields.values(), user_id)
-                )
-            conn.commit()
-
-        with_conn(_do)
+        execute(f"UPDATE users SET {', '.join(f'{c} = %s' for c in fields)} WHERE id = %s", (*fields.values(), user_id))
     return get_user(user_id)
 
 
 def get_row_by_email(email: str) -> dict | None:
     """Baris mentah dengan password_hash, untuk pemakaian internal (token reset, login)."""
-
-    def _do(conn):
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE email = %s", (email.strip().lower(),))
-            row = cur.fetchone()
-        return dict(row) if row else None
-
-    return with_conn(_do)
+    return fetch_one("SELECT * FROM users WHERE email = %s", (email.strip().lower(),))
 
 
 def get_row(user_id: str) -> dict | None:
-    def _do(conn):
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-            row = cur.fetchone()
-        return dict(row) if row else None
-
-    return with_conn(_do)
+    return fetch_one("SELECT * FROM users WHERE id = %s", (user_id,))
 
 
 def set_password(user_id: str, password: str) -> None:
-    def _do(conn):
-        with conn.cursor() as cur:
-            cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (generate_password_hash(password), user_id))
-        conn.commit()
-
-    with_conn(_do)
+    execute("UPDATE users SET password_hash = %s WHERE id = %s", (generate_password_hash(password), user_id))
 
 
 def is_active(user_id: str) -> bool:
@@ -169,12 +130,7 @@ def is_active(user_id: str) -> bool:
 
 
 def count_users() -> int:
-    def _do(conn):
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM users")
-            return cur.fetchone()[0]
-
-    return with_conn(_do)
+    return fetch_value("SELECT COUNT(*) FROM users")
 
 
 def verify_login(email: str, password: str) -> dict | None:

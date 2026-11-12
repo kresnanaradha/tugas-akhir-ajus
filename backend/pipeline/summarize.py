@@ -214,9 +214,10 @@ def _speaker_note(transcript: str) -> str:
 
 
 def _summary_user_message(transcript: str) -> str:
-    """Jumlah kata plus panjang target (60% dari transkrip, 250 sampai 1200 kata) supaya ringkasan tumbuh sesuai rapat."""
+    """Jumlah kata plus panjang target (60% dari transkrip, paling banyak 1200 kata) supaya ringkasan tumbuh sesuai rapat.
+    Tanpa batas bawah besar: dulu minimal 250 kata, rapat 29 kata dipaksa jadi 250 kata dan modelnya mengarang isi."""
     words = len(transcript.split())
-    target = max(250, min(1200, int(words * 0.6)))
+    target = max(20, min(1200, int(words * 0.6)))
     return f"{_speaker_note(transcript)}Transcript length: {words} words. Write executive_summary of about {target} words.\n\n{transcript}"
 
 

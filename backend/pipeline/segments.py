@@ -1,6 +1,7 @@
 """Langkah setelah transkripsi Replicate: potong ulang segmen dari timestamp kata, buang halusinasi, petakan waktu ke
 jam video, lalu simpan transkrip dan segmen ke R2."""
 
+import bisect
 import subprocess
 
 from . import artifacts
@@ -38,14 +39,24 @@ def _to_container_time(segments: list[dict], path: str) -> list[dict]:
     table = _container_times(path)
     if table is None:
         return segments
-    import numpy as np
-
     decoded, pts = table
     for seg in segments:
         for key in ("start", "end"):
             if seg.get(key) is not None:
-                seg[key] = round(float(np.interp(seg[key], decoded, pts)), 3)
+                seg[key] = round(_interp(seg[key], decoded, pts), 3)
     return segments
+
+
+def _interp(x: float, xs: list[float], ys: list[float]) -> float:
+    """Interpolasi linier seperti numpy.interp (di luar rentang dipaku ke ujung). Tanpa numpy karena image transkriber
+    tidak membawanya."""
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    i = bisect.bisect_right(xs, x)
+    x0, x1 = xs[i - 1], xs[i]
+    return ys[i - 1] if x1 == x0 else ys[i - 1] + (ys[i] - ys[i - 1]) * (x - x0) / (x1 - x0)
 
 
 _SENTENCE_END = (".", "?", "!")

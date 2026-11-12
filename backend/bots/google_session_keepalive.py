@@ -19,12 +19,11 @@ load_dotenv()
 AUTH_STATE_PATH = os.getenv("GOOGLE_AUTH_STATE_PATH", "auth/google.json")
 # lebih ringan dari url Meet (tanpa izin kamera, tanpa UI join), halaman apa pun yang membuktikan sesi masih login cukup
 _CHECK_URL = "https://myaccount.google.com/"
-# sesi mati berakhir di form sign in, semua domain login Google mengalihkan lewat accounts.google.com
-_SIGNIN_MARKER = "accounts.google.com/signin"
+
 
 
 def session_alive(refresh: bool = True) -> bool:
-    """Apakah sesi tersimpan masih login. refresh=False tidak menulis file (di worker Docker file-nya read-only)."""
+    """Apakah sesi tersimpan masih login. refresh=True juga menulis cookie terbaru ke file (file sesi worker tidak lagi read-only)."""
     if not os.path.exists(AUTH_STATE_PATH):
         return False
 
@@ -34,7 +33,9 @@ def session_alive(refresh: bool = True) -> bool:
             context = browser.new_context(storage_state=AUTH_STATE_PATH)
             page = context.new_page()
             page.goto(_CHECK_URL, wait_until="domcontentloaded", timeout=30000)
-            if _SIGNIN_MARKER in page.url:
+            # sesi hidup tetap di myaccount.google.com, sesi mati dialihkan ke accounts.google.com atau google.com/account/about,
+            # jadi yang dicek tempat tinggalnya, bukan alamat halaman login (alamatnya berubah-ubah, penanda lama meleset)
+            if "myaccount.google.com" not in page.url:
                 return False
             if refresh:
                 context.storage_state(path=AUTH_STATE_PATH)

@@ -6,7 +6,9 @@ import json
 import time
 
 import app as server
+from pipeline import auth_store, meetings_store
 from pipeline import join_queue as q
+from routes import common
 
 
 class FakeRedis:
@@ -104,9 +106,9 @@ q.PLATFORMS = ["zoom"]
 q.heartbeat(True)
 
 # endpoint /jobs dan stop, dipalsukan lewat job di Redis palsu
-server.auth_store.is_active = lambda uid: True
-server.get_meeting = lambda mid: None
-server.update_meeting = lambda *a, **k: None
+auth_store.is_active = lambda uid: True
+meetings_store.get_meeting = lambda mid: None
+meetings_store.update_meeting = lambda *a, **k: None
 c = server.app.test_client()
 with c.session_transaction() as s:
     s["user_id"], s["role"] = "owner", "user"
@@ -122,10 +124,10 @@ assert c.post("/jobs/b/stop").status_code == 404  # sudah tidak merekam
 assert c.get("/jobs/nope").status_code == 404
 
 # join: ditolak (503) kalau tidak ada worker untuk platform itu, selain itu tugasnya masuk antrean
-server.start_meeting = lambda *a, **k: None
-server.find_meeting_by_url = lambda url: None
-server._check_meeting_quota = lambda uid: None
-server._plan_limits = lambda uid: {"max_duration_minutes": None}
+meetings_store.start_meeting = lambda *a, **k: None
+meetings_store.find_meeting_by_url = lambda url: None
+common.check_meeting_quota = lambda uid: None
+common.plan_limits = lambda uid: {"max_duration_minutes": None}
 meet_url = {"url": "https://meet.google.com/abc-defg-hij"}
 assert c.post("/google/join", json=meet_url).status_code == 503
 assert c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"}).status_code == 200

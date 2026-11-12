@@ -10,6 +10,14 @@ pyannote) + GPT-4o mini backend, React Native (Expo, web target) frontend. Join-
 from [screenappai/meeting-bot](https://github.com/screenappai/meeting-bot)
 (MIT).
 
+Backend code layout (split 2026-11-13 so each part can be read alone): `app.py` only creates the Flask app and
+registers one Blueprint per feature from `routes/` (`auth`, `recording` = join/jobs/upload, `meetings`, `reports` =
+Laporan + Perbandingan, `admin`, `billing`, `teams`); `routes/common.py` holds login/access checks, plan quotas and
+config; `join_worker.py` is the recorder loop. Route modules call stores as `meetings_store.get_meeting(...)` so tests
+patch the store module once. Frontend: `rapat/[id].jsx` loads/polls the meeting and renders the header; each tab is
+in `components/rapat/` (`RingkasanTab`, `TranskripTab`, `EditorTab`, `LiveStatusCard`, shared `styles.js`), and the
+editor state lives in `hooks/useTranscriptEditor.js` so unsaved edits survive switching tabs.
+
 Full backend setup/run/test instructions: `backend/README.md`. This file
 is project status - what's done, what's next, what to watch out for.
 
@@ -39,14 +47,14 @@ roles (`user`, `super_admin`). `login_required`/`super_admin_required`
 decorators guard almost every route now (a handful of intentionally-public
 ones below). Users have an `active` flag: deactivating replaces deleting,
 since old meetings point at `users.id` - a deactivated user is rejected at
-login and their live session is cut within 30s (`_active_cache` in `app.py`).
+login and their live session is cut within 30s (`active_cache` in `routes/common.py`).
 A user also optionally belongs to one team (`users.team_id`/`team_role`,
 NULL = no team) - see "Team" below.
 
 **Meeting lifecycle** (join queue, task n04, built 2026-10-18) - `POST /google/join` /
 `/zoom/join` validate, create the meeting row, and push a job onto a Redis queue per platform
 (`pipeline/join_queue.py`, `notulis:join_jobs:<platform>`); they return `{job_id}` immediately, or `503` when no live
-worker supports that platform. Every worker container runs one join consumer (`_join_worker_loop` in `app.py`,
+worker supports that platform. Every worker container runs one join consumer (`join_worker_loop` in `join_worker.py`,
 started from `__main__`, off with `RECORDER=0`) that takes ONE job at a time (two bots on one display would record
 each other's windows) and only from the platforms in its `WORKER_PLATFORMS` (Meet needs a logged-in Google session,
 Zoom needs no account). Job state (`queued|joining|recording|stopping|processing|failed`, `started_at`, `worker`) and
@@ -75,7 +83,7 @@ since 2026-10-18 it runs on Replicate and the transcriber is a light container) 
 this OOM-killed a live test (`mem_limit=3g`, Chrome and whisper together
 during optimization-week load testing, see "Docker multi-worker" below) and
 is now split into two kinds of container connected by a Redis queue:
-- A recorder (`_run_join_job` in `app.py`) uploads the finished recording to
+- A recorder (`run_join_job` in `join_worker.py`) uploads the finished recording to
   R2, sets `meetings.status = "processing"`, and pushes
   `{meeting_id, recording_key, num_speakers}` onto Redis
   (`job_queue.enqueue_transcription()`) instead of transcribing itself.
@@ -126,13 +134,13 @@ still recording/processing (`409`); deletes the R2 folder, the Knowledge
 Base chunks, then the DB row, in that order so a failure never leaves an
 orphaned reference.
 
-**Meeting access** (`_can_view_meeting` / `_can_edit_meeting` in `app.py`) -
+**Meeting access** (`can_view_meeting` / `can_edit_meeting` in `routes/common.py`) -
 *view* (detail, recording, `GET /jobs/<id>`, comparison PDF): owner, super
 admin, a user in `meeting_viewers` (see below), or a teammate of the owner when
 the owner turned on "Bagikan ke Team"; anyone else gets a `404` (not `403`,
 so ids can't be probed). *Edit* (transcript, action items, KB toggle, stop
 recording, delete, share-team): owner or super admin only - teammates and
-link viewers are read-only (`GET /meetings/<id>` returns `can_edit`, the detail page hides edit buttons and the editor tab without it). `meeting_viewers` is filled by `_join()` when a
+link viewers are read-only (`GET /meetings/<id>` returns `can_edit`, the detail page hides edit buttons and the editor tab without it). `meeting_viewers` is filled by `_join()` (`routes/recording.py`) when a
 second user submits a link that already has a live/recent meeting
 (`find_meeting_by_url`): that user is handed the existing meeting instead of
 a second bot, and may then view it.
@@ -149,7 +157,7 @@ that nudge was unreliable (the model kept reverting to "Pembicara N" for
 **Action items** - `POST /meetings/<id>/action-items/<index>/toggle`
 (`{done: bool}`, explicit value not a blind flip) and `PUT
 /meetings/<id>/action-items` (replace the whole list - covers edit/add/
-remove in one call). Both take `_summary_lock` (a single process-wide lock)
+remove in one call). Both take `_summary_lock` (`routes/meetings.py`) (a single process-wide lock)
 around the read-modify-write of `summary.json`, because two quick toggles
 used to both read the same stale copy and the second write silently erased
 the first.
@@ -212,9 +220,9 @@ server-to-server callback respectively); everything else under `/billing/*`
 is `login_required` and scoped to `session["user_id"]` (every call site
 passes it explicitly - `billing_store`'s `DEFAULT_ACCOUNT_ID` is now just an
 unused fallback for a caller that doesn't pass its own id). `PLAN_LIMITS`
-(meetings/month, recording minutes/week) is enforced in `app.py`'s
-`_check_meeting_quota()`/`_join()`; Knowledge Base access is gated the same
-way via `_kb_allowed()`.
+(meetings/month, recording minutes/week) is enforced in `routes/common.py`'s
+`check_meeting_quota()` (called from `_join()` and `/upload`); Knowledge Base access is gated the same
+way via `kb_allowed()`.
 
 **Team** (`pipeline/team_store.py`, `/teams/*`) - one team per user (not a
 Slack-style multi-workspace setup): `teams` (id, name, owner_id) and
@@ -265,7 +273,7 @@ Supabase SQL Editor after `001_cek_yatim.sql`, a read-only orphan check; both sa
 its OpenAI/Replicate cost rows that the admin dashboard sums. RLS is ON for all 8 tables with no
 policies: that blocks Supabase's REST Data API (anon key could otherwise read `users.password_hash`),
 and the backend is unaffected because it connects as `postgres` (BYPASSRLS). Tenant isolation is still
-done in Flask (`_can_view_meeting`/`_can_edit_meeting`), not RLS, so do not claim RLS as the isolation
+done in Flask (`can_view_meeting`/`can_edit_meeting`), not RLS, so do not claim RLS as the isolation
 mechanism in the thesis. Checked live: upload of a test clip logged its usage rows, deleting that meeting
 kept the rows with `meeting_id` NULL. A usage insert for a meeting id that does not exist now fails the FK
 (the callers already swallow it with a log line). A fresh database no longer needs the migration: `pipeline/db.py` (`_INTEGRITY_SQL`, run after the
@@ -494,10 +502,10 @@ but no full-length run has been done yet -- do a 15-minute one first):
   an AudioContext analyser in the recorded page, RMS > 0.003, checked in
   `bots/base.py`) / Stop Rekam, so a stuck bot records until one of those fires
   (~270 MB per hour in R2). Free has a weekly pool of 60 minutes of AI processing
-  (bot joins only, not uploads, `_weekly_quota()` in `app.py`, reset every Sunday 08:00 server
+  (bot joins only, not uploads, `weekly_quota()` in `routes/common.py`, reset every Sunday 08:00 server
   time, WITA) but is NOT stopped at 60 minutes: a Free recording stops only at a 180 minute
   technical ceiling (`PLAN_LIMITS["free"]["max_duration_minutes"]`) and a join is never refused for
-  quota. When a recording ends, `_run_join_job` compares its length with what is left of the week:
+  quota. When a recording ends, `join_worker.run_join_job` compares its length with what is left of the week:
   if it fits it is queued for transcription as usual, if it is longer (all or nothing, e.g. 20 min
   processed, then 45 min with 40 left) it is uploaded and kept whole with `status = "limited"`
   ("Belum Diproses"), not queued, and the owner gets `mailer.send_meeting_unprocessed_email`.
@@ -578,11 +586,11 @@ but no full-length run has been done yet -- do a 15-minute one first):
   Zoom works on any worker already.
 - **Join queue gaps.** Redis has no AOF, so queued joins are lost on a Redis crash (a queued join is only worth ~10
   minutes anyway). A job lost between the BLPOP claim and the first `set_job` (worker crash in that instant) leaves its
-  row at its first status. Not gaps any more: a worker that dies mid-meeting is reaped (`_reap_dead_jobs` in `app.py`:
+  row at its first status. Not gaps any more: a worker that dies mid-meeting is reaped (`_reap_dead_jobs` in `join_worker.py`:
   once at start for its own old jobs, then every ~60 s by every worker, row and job set to `failed`); the admin page
   lists live workers (`GET /admin/workers`, from `join_queue.workers()`).
 - **Google session monitor** (task k06). A worker with `google_meet` in `WORKER_PLATFORMS` checks its saved session
-  between jobs (`_check_google_session`, `google_session_keepalive.session_alive()`, which writes the cookies Google just
+  between jobs (`join_worker._check_google_session`, `google_session_keepalive.session_alive()`, which writes the cookies Google just
   rotated back to the file; `GoogleMeetBot.join` also saves the session after each recording, 2026-11-12): every 30 min, every 5 min while expired. Expired: the worker stops claiming and
   advertising Meet (so `/google/join` answers 503 instead of accepting a join that must fail), the admin page marks it
   red, and every active super admin gets one email (`mailer.send_google_session_expired_email`; with several Meet

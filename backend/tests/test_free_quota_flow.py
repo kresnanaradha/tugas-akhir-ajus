@@ -1,9 +1,14 @@
-"""_run_join_job memutuskan antara "antre untuk AI" dan "simpan tanpa diproses" dari
+"""join_worker.run_join_job memutuskan antara "antre untuk AI" dan "simpan tanpa diproses" dari
 sisa menit Free minggu ini. Semua di luar keputusan itu dipalsukan, jadi ini
 tidak menyentuh database, R2, Redis, dan tidak mengirim email.
 
 Jalankan: python -m tests.test_free_quota_flow   (dari backend/)"""
+from datetime import timedelta
+
 import app
+import join_worker
+from pipeline import job_queue, join_queue, meetings_store, storage
+from routes import common
 
 
 class FakeBot:
@@ -18,15 +23,15 @@ class FakeBot:
 
 def run(minutes, remaining):
     calls = {"updates": [], "queued": [], "emails": []}
-    app.storage.upload_recording = lambda path, job_id: "key"
-    app.update_meeting = lambda job_id, **kw: calls["updates"].append(kw)
-    app.get_meeting = lambda job_id: {"user_id": "u1"}
-    app._weekly_quota = lambda uid: None if remaining is None else {"limit": 60, "used": 60 - remaining, "remaining": remaining}
-    app.job_queue.enqueue_transcription = lambda *a: calls["queued"].append(a)
-    app._send_unprocessed_email = lambda *a: calls["emails"].append(a)
-    app.join_queue.set_job = lambda *a, **kw: None
-    app.join_queue.finish = lambda *a: None
-    app._run_join_job("j", FakeBot(minutes), "zoom", "T", None)
+    storage.upload_recording = lambda path, job_id: "key"
+    meetings_store.update_meeting = lambda job_id, **kw: calls["updates"].append(kw)
+    meetings_store.get_meeting = lambda job_id: {"user_id": "u1"}
+    common.weekly_quota = lambda uid: None if remaining is None else {"limit": 60, "used": 60 - remaining, "remaining": remaining}
+    job_queue.enqueue_transcription = lambda *a: calls["queued"].append(a)
+    join_worker.send_unprocessed_email = lambda *a: calls["emails"].append(a)
+    join_queue.set_job = lambda *a, **kw: None
+    join_queue.finish = lambda *a: None
+    join_worker.run_join_job("j", FakeBot(minutes), "zoom", "T", None)
     return calls
 
 
@@ -50,14 +55,14 @@ assert c["updates"][-1]["status"] == "processing" and c["queued"]
 # POST /meetings/<id>/process: proses ulang rapat gagal, dengan kuota yang sama.
 def process(status, minutes, remaining, recording="k", url="https://zoom.us/j/1", this_week=True):
     queued = []
-    created = app._week_start() + app.timedelta(hours=1 if this_week else -1)
+    created = common.week_start() + timedelta(hours=1 if this_week else -1)
     record = {"id": "m", "user_id": "u1", "status": status, "duration_minutes": minutes, "recording": recording,
               "url": url, "estimated_participants": None, "created_at": created.strftime("%Y-%m-%dT%H:%M:%S")}
-    app._load_meeting = lambda mid, edit=False: (record, None)
-    app._user_is_active = lambda uid: True
-    app.update_meeting = lambda *a, **kw: None
-    app.job_queue.enqueue_transcription = lambda *a: queued.append(a)
-    app._weekly_quota = lambda uid: None if remaining is None else {"limit": 60, "used": 60 - remaining, "remaining": remaining}
+    common.load_meeting = lambda mid, edit=False: (record, None)
+    common.user_is_active = lambda uid: True
+    meetings_store.update_meeting = lambda *a, **kw: None
+    job_queue.enqueue_transcription = lambda *a: queued.append(a)
+    common.weekly_quota = lambda uid: None if remaining is None else {"limit": 60, "used": 60 - remaining, "remaining": remaining}
     client = app.app.test_client()
     with client.session_transaction() as s:
         s["user_id"], s["role"] = "u1", "user"

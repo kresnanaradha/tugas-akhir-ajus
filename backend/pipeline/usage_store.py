@@ -1,8 +1,6 @@
 from datetime import datetime
 
-import psycopg2.extras
-
-from .db import register_schema, with_conn
+from .db import execute, fetch_all, fetch_one, register_schema
 
 _TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS api_usage (
@@ -38,41 +36,27 @@ _PRICING_PER_1M_USD = {
 def log_usage(meeting_id: str | None, call_type: str, model: str, usage) -> None:
     """Catat pemakaian token (`response.usage`) dari satu panggilan OpenAI."""
 
-    def _do(conn):
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO api_usage (meeting_id, call_type, model, prompt_tokens, completion_tokens, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (meeting_id, call_type, model, usage.prompt_tokens, usage.completion_tokens, datetime.now()),
-            )
-        conn.commit()
-
-    with_conn(_do)
+    execute(
+        "INSERT INTO api_usage (meeting_id, call_type, model, prompt_tokens, completion_tokens, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (meeting_id, call_type, model, usage.prompt_tokens, usage.completion_tokens, datetime.now()),
+    )
 
 
 def log_gpu(meeting_id: str | None, gpu_seconds: float) -> None:
     """Catat detik GPU satu prediksi Replicate (`metrics.predict_time`)."""
 
-    def _do(conn):
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO replicate_usage (meeting_id, gpu_seconds, created_at) VALUES (%s, %s, %s)",
-                (meeting_id, gpu_seconds, datetime.now()),
-            )
-        conn.commit()
-
-    with_conn(_do)
+    execute(
+        "INSERT INTO replicate_usage (meeting_id, gpu_seconds, created_at) VALUES (%s, %s, %s)",
+        (meeting_id, gpu_seconds, datetime.now()),
+    )
 
 
 def gpu_cost() -> dict:
     """{"total_usd", "call_count", "since"}, bentuk sama dengan total_cost(). Hanya transkripsi sejak pencatatan ini ada."""
 
-    def _do(conn):
-        with conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(SUM(gpu_seconds), 0), COUNT(*), MIN(created_at) FROM replicate_usage")
-            return cur.fetchone()
-
-    seconds, count, since = with_conn(_do)
+    row = fetch_one("SELECT COALESCE(SUM(gpu_seconds), 0) AS seconds, COUNT(*) AS n, MIN(created_at) AS since FROM replicate_usage")
+    seconds, count, since = row["seconds"], row["n"], row["since"]
     return {
         "total_usd": round(float(seconds) * GPU_USD_PER_SECOND, 4),
         "call_count": count,
@@ -84,15 +68,10 @@ def total_cost() -> dict:
     """{"total_usd", "call_count", "since"}. `since` adalah panggilan pertama yang tercatat: panggilan lama tidak punya data
     token dan tidak diperkirakan, jadi dashboard menulis "sejak <tanggal>", bukan mengklaim sepanjang waktu."""
 
-    def _do(conn):
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "SELECT model, SUM(prompt_tokens) AS pt, SUM(completion_tokens) AS ct, "
-                "COUNT(*) AS n, MIN(created_at) AS since FROM api_usage GROUP BY model"
-            )
-            return cur.fetchall()
-
-    rows = with_conn(_do)
+    rows = fetch_all(
+        "SELECT model, SUM(prompt_tokens) AS pt, SUM(completion_tokens) AS ct, "
+        "COUNT(*) AS n, MIN(created_at) AS since FROM api_usage GROUP BY model"
+    )
     total_usd = 0.0
     call_count = 0
     since = None

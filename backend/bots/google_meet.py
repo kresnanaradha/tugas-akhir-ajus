@@ -86,6 +86,11 @@ class GoogleMeetBot(MeetBotBase):
             try:
                 out_path = self.record()
             finally:
+                # Google merotasi cookie sesi tiap beberapa jam, snapshot lama jadi basi kalau tidak disimpan kembali
+                try:
+                    context.storage_state(path=auth_state_path)
+                except Exception as e:
+                    print(f"[google-meet] gagal menyimpan sesi: {e}")
                 browser.close()
             return out_path
 

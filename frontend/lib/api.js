@@ -1,7 +1,16 @@
 // pembungkus tipis untuk API backend (backend/app.py). EXPO_PUBLIC_API_URL mengarahkannya ke backend yang di-deploy, defaultnya lokal
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5050";
 
-async function handleResponse(res) {
+// satu-satunya tempat yang memanggil fetch. credentials: "include" supaya cookie sesi selalu ikut. body objek dikirim
+// sebagai JSON, FormData (upload) apa adanya. Respons bukan 2xx dilempar sebagai Error dengan .status
+async function api(path, method = "GET", body) {
+  const isJson = body !== undefined && !(body instanceof FormData);
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    credentials: "include",
+    headers: isJson ? { "Content-Type": "application/json" } : undefined,
+    body: isJson ? JSON.stringify(body) : body,
+  });
   const data = await res.json();
   if (!res.ok) {
     const err = new Error(data.error || `Request gagal (${res.status})`);
@@ -11,204 +20,8 @@ async function handleResponse(res) {
   return data;
 }
 
-// credentials: "include" di setiap panggilan supaya cookie sesi selalu ikut
-function apiFetch(path, options) {
-  return fetch(`${API_BASE_URL}${path}`, { ...options, credentials: "include" });
-}
-
-// {id, email, name, role: "user"|"super_admin"}
-export async function register(email, password, name) {
-  const res = await apiFetch("/auth/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name }),
-  });
-  return handleResponse(res);
-}
-
-export async function login(email, password) {
-  const res = await apiFetch("/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  return handleResponse(res);
-}
-
-export async function forgotPassword(email) {
-  const res = await apiFetch("/auth/forgot", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
-  return handleResponse(res);
-}
-
-export async function resetPassword(token, password) {
-  const res = await apiFetch("/auth/reset", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, password }),
-  });
-  return handleResponse(res);
-}
-
-export async function logout() {
-  const res = await apiFetch("/auth/logout", { method: "POST" });
-  return handleResponse(res);
-}
-
-// User yang sedang login, atau melempar error (401) kalau tidak ada - dipakai pemanggil
-// untuk memutuskan apakah dialihkan ke /login.
-export async function getMe() {
-  const res = await apiFetch("/auth/me");
-  return handleResponse(res);
-}
-
-// "hapus akun" menonaktifkan (rapat menunjuk ke user) dan membersihkan sesi
-export async function deactivateAccount() {
-  const res = await apiFetch("/auth/me/deactivate", { method: "POST" });
-  return handleResponse(res);
-}
-
-// Edit profil sendiri (name, email, phone, email_notifications -
-// kirim hanya yang berubah) - lihat PATCH /auth/me.
-export async function updateProfile(fields) {
-  const res = await apiFetch("/auth/me", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(fields),
-  });
-  return handleResponse(res);
-}
-
-// Ganti password sendiri, butuh password saat ini - lihat
-// POST /auth/me/password.
-export async function changePassword(currentPassword, newPassword) {
-  const res = await apiFetch("/auth/me/password", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-  });
-  return handleResponse(res);
-}
-
-// menjalankan pipeline pada file yang sudah direkam, bisa memakan menit. numSpeakers adalah tebakan pengunggah, membantu diarization
-export async function uploadAudio(file, numSpeakers) {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (numSpeakers) formData.append("num_speakers", numSpeakers);
-  const res = await apiFetch("/upload", { method: "POST", body: formData });
-  return handleResponse(res);
-}
-
-// memulai join di latar belakang dan langsung mengembalikan job_id (bot tinggal selama rapat berjalan). Pantau
-// getJobStatus(jobId), stopJob(jobId) mengakhiri rekaman lebih awal
-export async function startJoinMeeting(platform, url, name, numSpeakers) {
-  const endpoint = platform === "zoom" ? "/zoom/join" : "/google/join";
-  const res = await apiFetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, name, num_speakers: numSpeakers || null }),
-  });
-  return handleResponse(res);
-}
-
-// {status: "queued"|"joining"|"recording"|"stopping"|"processing"|"failed",
-// elapsed_seconds?, error?} - lihat GET /jobs/<id> di app.py. 404 berarti job selesai atau sudah tidak ada di Redis.
-export async function getJobStatus(jobId) {
-  const res = await apiFetch(`/jobs/${encodeURIComponent(jobId)}`);
-  return handleResponse(res);
-}
-
-// Mengakhiri rekaman lebih awal - pipeline tetap jalan sesudahnya atas apa yang
-// sudah terekam, sama seperti kalau durasi maksimum tercapai.
-export async function stopJob(jobId) {
-  const res = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/stop`, { method: "POST" });
-  return handleResponse(res);
-}
-
-// Rapat yang sudah direkam (terbaru dulu) - lihat GET /meetings.
-export async function listMeetings() {
-  const res = await apiFetch("/meetings");
-  return handleResponse(res);
-}
-
-// Detail lengkap satu rapat lama - transcript/fixed_transcript/summary dibaca
-// dari R2 (lihat GET /meetings/<id> di app.py).
-export async function getMeeting(id) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}`);
-  return handleResponse(res);
-}
-
-// menyimpan transkrip yang dikoreksi dan membuat ulang ringkasan darinya. lineSpeakers / lineTexts (satu per baris, urutan sama dengan
-// segments.json) juga memperbaiki pembicara dan teks di segments.json supaya tab Transkrip menampilkan koreksinya.
-// Mengembalikan {fixed_transcript, summary, segments?} atau {fixed_transcript, summary_error}
-export async function updateTranscript(id, transcript, lineSpeakers, lineTexts) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/transcript`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcript, line_speakers: lineSpeakers, line_texts: lineTexts }),
-  });
-  return handleResponse(res);
-}
-
-// mengirim rekaman yang disimpan tanpa AI (status "limited") ke transkriber
-export async function processMeeting(id) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/process`, { method: "POST" });
-  return handleResponse(res);
-}
-
-// menambahkan ringkasan singkat ke rapat yang diringkas sebelum kolom itu ada, mengembalikan ringkasan baru
-export async function generateShortSummary(id) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/short-summary`, { method: "POST" });
-  return handleResponse(res);
-}
-
-// mengatur status selesai satu action item (nilai yang diinginkan, bukan membalik, supaya klik cepat tidak saling membatalkan)
-export async function toggleActionItem(id, index, done) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items/${index}/toggle`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ done }),
-  });
-  return handleResponse(res);
-}
-
-// Mengganti seluruh daftar action item ({task, assignee, due, done}[]) - satu
-// panggilan untuk edit, tambah, dan hapus. Lihat PUT /meetings/<id>/action-items.
-export async function replaceActionItems(id, items) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/action-items`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items }),
-  });
-  return handleResponse(res);
-}
-
-// Menghapus rapat permanen (file R2, potongan KB, baris DB) - hanya pemilik atau
-// super admin, ditolak selagi masih merekam/memproses.
-export async function deleteMeeting(id) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
-  return handleResponse(res);
-}
-
-// Memasukkan/mengeluarkan rapat dari Knowledge Base (hanya ringkasan eksekutif +
-// keputusan utama yang diindeks) - lihat POST /meetings/<id>/knowledge-base.
-export async function setKnowledgeBase(id, enabled) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/knowledge-base`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  return handleResponse(res);
-}
-
-// langganan saat ini {id, plan, status, current_period_end}. Selalu mengembalikan sesuatu (Free tanpa baris adalah default)
-export async function getBillingStatus() {
-  const res = await apiFetch("/billing/status");
-  return handleResponse(res);
-}
+const enc = encodeURIComponent;
+const meeting = (id) => `/meetings/${enc(id)}`;
 
 // kartu paket di sidebar mendengarkan event ini, jadi diperbarui begitu ada yang bisa mengubah paket
 // (masuk atau keluar team, membatalkan) tanpa menunggu pindah halaman
@@ -218,198 +31,104 @@ const changesPlan = async (promise) => {
   return result;
 };
 
-export async function cancelPendingCheckout() {
-  const res = await apiFetch("/billing/checkout/cancel", { method: "POST" });
-  return changesPlan(handleResponse(res));
-}
+// --- akun. {id, email, name, role: "user"|"super_admin"}
+export const register = (email, password, name) => api("/auth/register", "POST", { email, password, name });
+export const login = (email, password) => api("/auth/login", "POST", { email, password });
+export const forgotPassword = (email) => api("/auth/forgot", "POST", { email });
+export const resetPassword = (token, password) => api("/auth/reset", "POST", { token, password });
+export const logout = () => api("/auth/logout", "POST");
+// user yang sedang login, atau melempar error 401 (pemanggil lalu mengalihkan ke /login)
+export const getMe = () => api("/auth/me");
+// "hapus akun" menonaktifkan (rapat menunjuk ke user) dan membersihkan sesi
+export const deactivateAccount = () => api("/auth/me/deactivate", "POST");
+// kirim hanya yang berubah: name, email, phone, email_notifications
+export const updateProfile = (fields) => api("/auth/me", "PATCH", fields);
+export const changePassword = (currentPassword, newPassword) =>
+  api("/auth/me/password", "POST", { current_password: currentPassword, new_password: newPassword });
 
-// memulai checkout Xendit untuk "pro" atau "team" dan mengembalikan {checkout_url} untuk tujuan redirect. Paket baru berubah setelah
-// webhook mengonfirmasi pembayaran
-export async function startCheckout(plan) {
-  const res = await apiFetch("/billing/checkout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan }),
-  });
-  return handleResponse(res);
+// --- rekam dan unggah
+// menjalankan pipeline pada file yang sudah direkam, bisa memakan menit. numSpeakers adalah tebakan pengunggah, membantu diarization
+export function uploadAudio(file, numSpeakers) {
+  const form = new FormData();
+  form.append("file", file);
+  if (numSpeakers) form.append("num_speakers", numSpeakers);
+  return api("/upload", "POST", form);
 }
+// memasukkan join ke antrean dan langsung mengembalikan {job_id}. Pantau getJobStatus, stopJob mengakhiri rekaman lebih awal
+export const startJoinMeeting = (platform, url, name, numSpeakers) =>
+  api(platform === "zoom" ? "/zoom/join" : "/google/join", "POST", { url, name, num_speakers: numSpeakers || null });
+// {status: "queued"|"joining"|"recording"|"stopping"|"processing"|"failed", elapsed_seconds?, error?}. 404 berarti job selesai
+export const getJobStatus = (jobId) => api(`/jobs/${enc(jobId)}`);
+// pipeline tetap jalan atas apa yang sudah terekam, sama seperti kalau durasi maksimum tercapai
+export const stopJob = (jobId) => api(`/jobs/${enc(jobId)}/stop`, "POST");
 
-// Membatalkan langganan berbayar saat ini (turun ke Free di akhir periode).
-export async function cancelSubscription() {
-  const res = await apiFetch("/billing/cancel", { method: "POST" });
-  return changesPlan(handleResponse(res));
-}
+// --- rapat
+export const listMeetings = () => api("/meetings");
+// transcript, fixed_transcript, summary, segments dibaca dari R2
+export const getMeeting = (id) => api(meeting(id));
+// simpan transkrip yang dikoreksi lalu ringkas ulang. lineSpeakers / lineTexts (satu per baris, urutan sama dengan segments.json)
+// ikut memperbaiki tab Transkrip. Mengembalikan {fixed_transcript, summary, segments?} atau {fixed_transcript, summary_error}
+export const updateTranscript = (id, transcript, lineSpeakers, lineTexts) =>
+  api(`${meeting(id)}/transcript`, "POST", { transcript, line_speakers: lineSpeakers, line_texts: lineTexts });
+// kirim rekaman ke transkriber: yang disimpan tanpa AI ("limited") atau proses ulang yang gagal ("failed")
+export const processMeeting = (id) => api(`${meeting(id)}/process`, "POST");
+// ringkasan singkat untuk rapat yang diringkas sebelum kolom itu ada, mengembalikan ringkasan baru
+export const generateShortSummary = (id) => api(`${meeting(id)}/short-summary`, "POST");
+// nilai yang diinginkan, bukan membalik, supaya klik cepat tidak saling membatalkan
+export const toggleActionItem = (id, index, done) => api(`${meeting(id)}/action-items/${index}/toggle`, "POST", { done });
+// ganti seluruh daftar ({task, assignee, due, done}[]): satu panggilan untuk edit, tambah, dan hapus
+export const replaceActionItems = (id, items) => api(`${meeting(id)}/action-items`, "PUT", { items });
+// hapus permanen (R2, Knowledge Base, DB). Hanya pemilik atau super admin, ditolak selagi merekam/memproses
+export const deleteMeeting = (id) => api(meeting(id), "DELETE");
+// hanya ringkasan eksekutif dan keputusan utama yang diindeks
+export const setKnowledgeBase = (id, enabled) => api(`${meeting(id)}/knowledge-base`, "POST", { enabled });
+export const shareMeetingWithTeam = (id, enabled) => api(`${meeting(id)}/share-team`, "POST", { enabled });
+// URL untuk <video> atau tautan unduh, bukan diambil sebagai JSON
+export const getRecordingUrl = (id) => `${API_BASE_URL}${meeting(id)}/recording`;
+// {answer, results}: answer satu paragraf dari potongan yang cocok (null kalau gagal atau kosong), results potongannya
+// {meeting_id, meeting_title, meeting_created_at, meeting_platform, kind, text, similarity}
+export const searchKnowledgeBase = (query) => api(`/knowledge-base/search?q=${enc(query)}`);
 
-// URL file rekaman rapat - untuk pemutaran <video>/<audio> atau tautan
-// unduh langsung, bukan diambil sebagai JSON. Lihat GET /meetings/<id>/recording.
-export function getRecordingUrl(id) {
-  return `${API_BASE_URL}/meetings/${encodeURIComponent(id)}/recording`;
-}
+// --- billing. Free tanpa baris tetap mengembalikan status
+export const getBillingStatus = () => api("/billing/status");
+// checkout Xendit untuk "pro" atau "team", mengembalikan {checkout_url}. Paket berubah setelah webhook mengonfirmasi pembayaran
+export const startCheckout = (plan) => api("/billing/checkout", "POST", { plan });
+export const cancelPendingCheckout = () => changesPlan(api("/billing/checkout/cancel", "POST"));
+// turun ke Free di akhir periode
+export const cancelSubscription = () => changesPlan(api("/billing/cancel", "POST"));
 
-// angka dashboard admin (403 untuk selain super admin)
-export async function getAdminStats() {
-  const res = await apiFetch("/admin/stats");
-  return handleResponse(res);
-}
-
-// Manajemen user super admin - lihat /admin/users* di app.py.
-export async function listUsers() {
-  return handleResponse(await apiFetch("/admin/users"));
-}
-
-export async function createUser({ name, email, password, role }) {
-  const res = await apiFetch("/admin/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email, password, role }),
-  });
-  return handleResponse(res);
-}
-
-// fields: salah satu dari {name, role, active} - menonaktifkan menggantikan menghapus.
-export async function updateUser(id, fields) {
-  const res = await apiFetch(`/admin/users/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(fields),
-  });
-  return handleResponse(res);
-}
-
-export async function resetUserPassword(id, password) {
-  const res = await apiFetch(`/admin/users/${encodeURIComponent(id)}/reset-password`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  });
-  return handleResponse(res);
-}
-
-// URL laporan PDF resmi - untuk tautan/anchor biasa, bukan diambil sebagai
-// JSON (browser yang menangani unduhan). Lihat GET /admin/export.
+// --- super admin (403 untuk yang lain)
+export const getAdminStats = () => api("/admin/stats");
 // worker perekam yang hidup: [{id, platforms, busy, google_expired}]
-export async function getAdminWorkers() {
-  const res = await apiFetch("/admin/workers");
-  return handleResponse(res);
-}
+export const getAdminWorkers = () => api("/admin/workers");
+export const getAdminExportUrl = () => `${API_BASE_URL}/admin/export`;
+export const listUsers = () => api("/admin/users");
+export const createUser = ({ name, email, password, role }) => api("/admin/users", "POST", { name, email, password, role });
+// fields: name, role, atau active (menonaktifkan menggantikan menghapus)
+export const updateUser = (id, fields) => api(`/admin/users/${enc(id)}`, "PATCH", fields);
+export const resetUserPassword = (id, password) => api(`/admin/users/${enc(id)}/reset-password`, "POST", { password });
 
-export function getAdminExportUrl() {
-  return `${API_BASE_URL}/admin/export`;
-}
+// --- laporan dan perbandingan
+// bentuk sama dengan getAdminStats, hanya untuk rapat user ini
+export const getReportStats = () => api("/reports/stats");
+// pemakaian team si pemanggil, null kalau tidak punya team
+export const getReportTeam = () => api("/reports/team");
+// panggilan terpisah karena lambat saat cache dingin
+export const getReportActionItems = () => api("/reports/action-items");
+export const getReportExportUrl = () => `${API_BASE_URL}/reports/export`;
+export const getComparisonAnalysis = (a, b) => api(`/perbandingan/analisis?a=${enc(a)}&b=${enc(b)}`);
+export const getComparisonExportUrl = (a, b) => `${API_BASE_URL}/perbandingan/export?a=${enc(a)}&b=${enc(b)}`;
 
-// statistik rapat milik user ini, bentuk sama dengan getAdminStats() untuk rapat mereka saja
-export async function getReportStats() {
-  const res = await apiFetch("/reports/stats");
-  return handleResponse(res);
-}
-
-// semua action item di seluruh rapat user ini, panggilan terpisah karena lambat saat dingin
-// pemakaian team si pemanggil, null kalau mereka tidak punya team
-export async function getReportTeam() {
-  const res = await apiFetch("/reports/team");
-  return handleResponse(res);
-}
-
-export async function getReportActionItems() {
-  return handleResponse(await apiFetch("/reports/action-items"));
-}
-
-// URL laporan PDF milik user sendiri - untuk tautan/anchor biasa, bukan diambil
-// sebagai JSON (browser yang menangani unduhan). Lihat GET /reports/export.
-export function getReportExportUrl() {
-  return `${API_BASE_URL}/reports/export`;
-}
-
-// URL ekspor PDF halaman Perbandingan Rapat - lihat GET /perbandingan/export.
-export async function getComparisonAnalysis(a, b) {
-  const res = await apiFetch(`/perbandingan/analisis?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
-  return handleResponse(res);
-}
-
-export function getComparisonExportUrl(meetingIdA, meetingIdB) {
-  return `${API_BASE_URL}/perbandingan/export?a=${encodeURIComponent(meetingIdA)}&b=${encodeURIComponent(meetingIdB)}`;
-}
-
-// Team si pemanggil + daftar anggota, atau null kalau tidak punya - lihat GET /teams/me.
-export async function getMyTeam() {
-  return handleResponse(await apiFetch("/teams/me"));
-}
-
-export async function createTeam(name) {
-  const res = await apiFetch("/teams", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  return handleResponse(res);
-}
-
-export async function renameTeam(teamId, name) {
-  const res = await apiFetch(`/teams/${encodeURIComponent(teamId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  return handleResponse(res);
-}
-
-// Hanya admin. `email` opsional - hilangkan untuk mendapat tautan yang bisa dibagikan tanpa
-// mengirim email. Mengembalikan {token, invite_url, expires_at}.
-export async function inviteToTeam(email) {
-  const res = await apiFetch("/teams/invite", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email || null }),
-  });
-  return handleResponse(res);
-}
-
-// {team_name} untuk ditampilkan halaman gabung sebelum user memutuskan.
-export async function previewTeamInvite(token) {
-  return handleResponse(await apiFetch(`/teams/invite/${encodeURIComponent(token)}`));
-}
-
-export async function joinTeam(token) {
-  const res = await apiFetch("/teams/join", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
-  });
-  return changesPlan(handleResponse(res));
-}
-
-// Keluar mandiri (peran apa pun) - efek di server sama dengan admin
-// mengeluarkan user yang sama lewat removeTeamMember().
-export async function leaveTeam() {
-  return changesPlan(handleResponse(await apiFetch("/teams/leave", { method: "POST" })));
-}
-
-export async function removeTeamMember(userId) {
-  return handleResponse(await apiFetch(`/teams/members/${encodeURIComponent(userId)}`, { method: "DELETE" }));
-}
-
-export async function updateTeamMemberRole(userId, role) {
-  const res = await apiFetch(`/teams/members/${encodeURIComponent(userId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role }),
-  });
-  return handleResponse(res);
-}
-
-// Opt in berbagi ke team per rapat - lihat POST /meetings/<id>/share-team.
-export async function shareMeetingWithTeam(id, enabled) {
-  const res = await apiFetch(`/meetings/${encodeURIComponent(id)}/share-team`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  return handleResponse(res);
-}
-
-// Pencarian Knowledge Base: {answer, results}. `answer` adalah satu paragraf singkat dari potongan yang cocok (null kalau gagal atau
-// tidak ada yang cocok), `results` adalah potongan itu {meeting_id, meeting_title, meeting_created_at, meeting_platform, kind, text, similarity}
-export async function searchKnowledgeBase(query) {
-  const res = await apiFetch(`/knowledge-base/search?q=${encodeURIComponent(query)}`);
-  return handleResponse(res);
-}
+// --- team
+// team si pemanggil beserta anggotanya, atau null
+export const getMyTeam = () => api("/teams/me");
+export const createTeam = (name) => api("/teams", "POST", { name });
+export const renameTeam = (teamId, name) => api(`/teams/${enc(teamId)}`, "PATCH", { name });
+// hanya admin. Tanpa email: hanya tautan, tidak ada email terkirim. Mengembalikan {token, invite_url, expires_at}
+export const inviteToTeam = (email) => api("/teams/invite", "POST", { email: email || null });
+// {team_name} untuk halaman gabung sebelum user memutuskan
+export const previewTeamInvite = (token) => api(`/teams/invite/${enc(token)}`);
+export const joinTeam = (token) => changesPlan(api("/teams/join", "POST", { token }));
+export const leaveTeam = () => changesPlan(api("/teams/leave", "POST"));
+export const removeTeamMember = (userId) => api(`/teams/members/${enc(userId)}`, "DELETE");
+export const updateTeamMemberRole = (userId, role) => api(`/teams/members/${enc(userId)}`, "PATCH", { role });

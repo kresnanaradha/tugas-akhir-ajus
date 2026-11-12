@@ -54,43 +54,43 @@ services:
       <<: *worker-env
       WORKER_PLATFORMS: google_meet,zoom
     ports: ["5050:5050"]
-    volumes: ["./auth/worker-1.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-1.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-2:
     <<: *worker-base
     ports: ["5051:5050"]
-    volumes: ["./auth/worker-2.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-2.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-3:
     <<: *worker-base
     ports: ["5052:5050"]
-    volumes: ["./auth/worker-3.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-3.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-4:
     <<: *worker-base
     ports: ["5053:5050"]
-    volumes: ["./auth/worker-4.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-4.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-5:
     <<: *worker-base
     ports: ["5054:5050"]
-    volumes: ["./auth/worker-5.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-5.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-6:
     <<: *worker-base
     ports: ["5055:5050"]
-    volumes: ["./auth/worker-6.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-6.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-7:
     <<: *worker-base
     ports: ["5056:5050"]
-    volumes: ["./auth/worker-7.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-7.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-8:
     <<: *worker-base
     ports: ["5057:5050"]
-    volumes: ["./auth/worker-8.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-8.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-9:
     <<: *worker-base
     ports: ["5058:5050"]
-    volumes: ["./auth/worker-9.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-9.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-10:
     <<: *worker-base
     ports: ["5059:5050"]
-    volumes: ["./auth/worker-10.json:/app/auth/google.json:ro", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["./auth/worker-10.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
 
   # antrean antara perekam dan transkriber (pipeline/job_queue.py). Diberi password walau tidak ada
   # `ports:` (hanya jaringan compose ini yang menjangkaunya), kalau-kalau ada port mapping yang tertambah karena salah di VPS sungguhan

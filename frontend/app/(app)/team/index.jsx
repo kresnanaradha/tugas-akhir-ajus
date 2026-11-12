@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { StatCard } from "@/components/StatCard";
+import { ConfirmModal } from "@/components/ConfirmModal";
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import {
   createTeam,
@@ -341,27 +342,15 @@ function TeamView({ team, members, isAdmin, myId, onRefresh }) {
         </View>
       </View>
 
-      <Modal visible={confirmLeaveOpen} transparent animationType="fade" onRequestClose={() => setConfirmLeaveOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalIconWrap}>
-              <Feather name="alert-triangle" size={20} color={colors.danger} />
-            </View>
-            <Text style={styles.modalTitle}>Keluar dari team?</Text>
-            <Text style={styles.modalBody}>
-              Anda tidak akan lagi melihat rapat yang dibagikan teammate. Rapat Anda sendiri tetap aman.
-            </Text>
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalCancelButton} onPress={() => setConfirmLeaveOpen(false)} disabled={leaving}>
-                <Text style={styles.modalCancelLabel}>Batal</Text>
-              </Pressable>
-              <Pressable style={styles.modalConfirmButton} onPress={handleLeave} disabled={leaving}>
-                {leaving ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.modalConfirmLabel}>Ya, Keluar</Text>}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <ConfirmModal
+        visible={confirmLeaveOpen}
+        title="Keluar dari team?"
+        body="Anda tidak akan lagi melihat rapat yang dibagikan teammate. Rapat Anda sendiri tetap aman."
+        confirmLabel="Ya, Keluar"
+        busy={leaving}
+        onCancel={() => setConfirmLeaveOpen(false)}
+        onConfirm={handleLeave}
+      />
     </>
   );
 }
@@ -570,14 +559,4 @@ const styles = StyleSheet.create({
   benefitTitle: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
   benefitBody: { ...type.small, color: colors.inkFaint, lineHeight: 17, marginTop: 1 },
 
-  modalOverlay: { flex: 1, backgroundColor: "rgba(27,31,43,0.45)", alignItems: "center", justifyContent: "center", padding: spacing.lg },
-  modalCard: { maxWidth: 360, width: "100%", backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, alignItems: "center", gap: spacing.sm },
-  modalIconWrap: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.dangerSoft, alignItems: "center", justifyContent: "center", marginBottom: spacing.xs },
-  modalTitle: { ...type.h2, color: colors.ink, textAlign: "center" },
-  modalBody: { ...type.body, color: colors.inkSoft, textAlign: "center", lineHeight: 19 },
-  modalActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, alignSelf: "stretch" },
-  modalCancelButton: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingVertical: 11, alignItems: "center" },
-  modalCancelLabel: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
-  modalConfirmButton: { flex: 1, backgroundColor: colors.danger, borderRadius: radius.sm, paddingVertical: 11, alignItems: "center" },
-  modalConfirmLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.white },
 });

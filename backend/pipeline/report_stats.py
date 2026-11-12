@@ -3,10 +3,8 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import psycopg2.extras
-
 from . import artifacts, auth_store, team_store
-from .db import with_conn
+from .db import fetch_all
 from .meetings_store import counts_by_period, daily_counts, list_meetings, platform_counts, total_duration_minutes
 
 # user_id -> (waktu_hitung, rekap). Membaca semua summary.json dari R2 itu lambat, jadi dibaca
@@ -79,26 +77,22 @@ def team_usage(user_id: str) -> dict | None:
     if team is None:
         return None
 
-    def _do(conn):
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT u.id, u.name, u.team_role AS role,
-                       COUNT(m.id) AS meetings,
-                       COUNT(m.id) FILTER (WHERE m.created_at >= date_trunc('month', CURRENT_DATE)) AS this_month,
-                       COUNT(m.id) FILTER (WHERE m.shared_with_team) AS shared,
-                       COALESCE(SUM(m.duration_minutes), 0) AS minutes
-                FROM users u
-                LEFT JOIN meetings m ON m.user_id = u.id AND m.status <> 'failed'
-                WHERE u.team_id = %s
-                GROUP BY u.id, u.name, u.team_role
-                ORDER BY meetings DESC, u.name
-                """,
-                (team["id"],),
-            )
-            return [dict(r) for r in cur.fetchall()]
-
-    members = [{**r, "minutes": round(float(r["minutes"]), 1)} for r in with_conn(_do)]
+    rows = fetch_all(
+        """
+        SELECT u.id, u.name, u.team_role AS role,
+               COUNT(m.id) AS meetings,
+               COUNT(m.id) FILTER (WHERE m.created_at >= date_trunc('month', CURRENT_DATE)) AS this_month,
+               COUNT(m.id) FILTER (WHERE m.shared_with_team) AS shared,
+               COALESCE(SUM(m.duration_minutes), 0) AS minutes
+        FROM users u
+        LEFT JOIN meetings m ON m.user_id = u.id AND m.status <> 'failed'
+        WHERE u.team_id = %s
+        GROUP BY u.id, u.name, u.team_role
+        ORDER BY meetings DESC, u.name
+        """,
+        (team["id"],),
+    )
+    members = [{**r, "minutes": round(float(r["minutes"]), 1)} for r in rows]
     return {
         "team": {"id": team["id"], "name": team["name"]},
         "totals": {

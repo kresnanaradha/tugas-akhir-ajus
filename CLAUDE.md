@@ -245,6 +245,9 @@ summary and a link to the meeting. No-op if `SMTP_HOST`/`SMTP_USER`/
 same pattern as this app's other optional integrations. A send failure is
 logged and swallowed, never fails the pipeline.
 
+**Database helpers** - every store query goes through `pipeline/db.py`'s `execute` / `fetch_one` / `fetch_all` /
+`fetch_value` (rows as dicts, shared connection and lock, autocommit). Use them instead of a raw `with_conn` block.
+
 **Storage (R2)** - `pipeline/storage.py` (boto3 S3 client against
 Cloudflare R2's endpoint) / `pipeline/artifacts.py` (meeting-id-keyed
 convenience layer: `save_transcript`/`load_summary`/etc). Every artifact
@@ -252,6 +255,26 @@ for one meeting lives under `<meeting_id>/...` (`recording.<ext>`,
 `transcript.txt`, `fixed_transcript.txt`, `segments.json`, `summary.json`).
 Env vars read lazily (not at import time) - `load_dotenv()` has to run
 before any local import, or the bucket name silently reads as unset.
+
+**Database integrity (FK + RLS, applied 2026-11-08)** - the `CREATE TABLE IF NOT EXISTS` in the
+stores has no foreign keys, so they live in `backend/migrations/001_fk_rls.sql` (run once in the
+Supabase SQL Editor after `001_cek_yatim.sql`, a read-only orphan check; both safe to re-run). 10 FKs:
+`meetings.user_id`, `meeting_viewers` (meeting CASCADE, user CASCADE), `subscriptions.id` (CASCADE),
+`users.team_id` (SET NULL), `teams.owner_id`, `team_invites` (team CASCADE, created_by), and
+`api_usage`/`replicate_usage.meeting_id` as **SET NULL on purpose**: deleting a meeting must not erase
+its OpenAI/Replicate cost rows that the admin dashboard sums. RLS is ON for all 8 tables with no
+policies: that blocks Supabase's REST Data API (anon key could otherwise read `users.password_hash`),
+and the backend is unaffected because it connects as `postgres` (BYPASSRLS). Tenant isolation is still
+done in Flask (`_can_view_meeting`/`_can_edit_meeting`), not RLS, so do not claim RLS as the isolation
+mechanism in the thesis. Checked live: upload of a test clip logged its usage rows, deleting that meeting
+kept the rows with `meeting_id` NULL. A usage insert for a meeting id that does not exist now fails the FK
+(the callers already swallow it with a log line). A fresh database no longer needs the migration: `pipeline/db.py` (`_INTEGRITY_SQL`, run after the
+CREATE TABLEs on first connect) adds the same 10 FKs (as NOT VALID, so orphan rows never block startup;
+the migration's VALIDATE is what checks old rows) and enables RLS, skipping what exists and tables the
+process has not created (the transcriber has no team tables). Tested on a scratch Postgres: partial,
+full and repeat starts, an orphan row, and FK rejection of a new bad insert. Keep the FK list in
+`db.py` and `001_fk_rls.sql` in sync; images must be rebuilt for workers to pick it up. New tables
+get RLS + FKs by extending `_INTEGRITY_SQL`.
 
 **Transcription/summarization** - `pipeline/transcribe.py` hands the recording to
 Replicate (next paragraph); there is no local transcription any more (local whisperx and
@@ -299,7 +322,7 @@ short clips), `EXTRA_VOCAB` is sent as the vocabulary prompt. Audio leaves the m
 `docker-entrypoint.sh`) - 10 independent worker (recorder) services
 (`worker-1` through `worker-10`), each the full backend image in its own
 container with its own Xvfb virtual display, its own Google account/session
-(`auth/worker-N.json`, mounted read-only), and its own host port; all
+(`auth/worker-N.json`, mounted writable so refreshed cookies persist), and its own host port; all
 share one Postgres/R2/`.env`, plus now `redis`/`transcriber-1`/
 `transcriber-2` (see "Recorder/transcriber split" above). **Only `worker-1`
 actually has a logged-in Google session right now** - `worker-2` through
@@ -340,6 +363,11 @@ to `/login` live there, via `lib/auth-context.jsx`).
   summary / transcript (video synced to segments) / an editor tab (rename
   speakers, move a mis-attributed line, edit text, re-run the summary);
   editable action items; a "Simpan ke Knowledge Base" toggle; delete.
+  Summary tab (advisor's sketch, Nov 2026): on a wide window (>= 1100 px) two columns, left =
+  Topik Dibahas / Keputusan Utama / Action Items, right = Ringkasan (with the Knowledge Base
+  button in its header) and Pokok Pembahasan Rapat; narrower windows stack it, summary first.
+  Pokok Pembahasan collapses ("Lihat selengkapnya") to the line count that makes its card end
+  level with the left column (measured with `onLayout`, `POKOK_*` constants at the top of the file).
 - `app/(app)/rapat/baru.jsx` / `rapat/upload.jsx` - start a join or upload
   an existing recording; both show "Rapat Terbaru" and either the bot's
   join steps or the upload's processing steps in a side column.
@@ -349,8 +377,10 @@ to `/login` live there, via `lib/auth-context.jsx`).
   stats, real charts, PDF export.
 - `app/(app)/perbandingan.jsx` - pick two meetings, see them side by side,
   export the same comparison as a PDF.
-- `app/(app)/admin.jsx` - system-wide stats (super admin only) plus a user
-  management panel (add, change role, reset password, (de)activate).
+- `app/(app)/admin.jsx` - system-wide stats (super admin only, sidebar "Statistik"),
+  including live workers. `app/(app)/pengguna.jsx` - the user management panel (add,
+  change role, reset password, (de)activate), its own sidebar item "Manajemen Pengguna"
+  below Statistik (it used to sit at the bottom of the Statistik page).
 - `app/(app)/pengaturan.jsx` - profile self-service only (name/email/phone/password/
   notifications/logout/deactivate).
 - `app/(app)/billing.jsx` - Xendit subscription plans (Free/Pro/Team), upgrade/
@@ -364,7 +394,9 @@ to `/login` live there, via `lib/auth-context.jsx`).
   Team" toggle lives in `rapat/[id].jsx` instead (owner-only, next to
   Hapus Rapat); a teammate's shared meeting shows a "Dibagikan Team" badge
   in `components/MeetingRow.jsx`.
-- `lib/api.js` - the only place that talks to the backend.
+- `lib/api.js` - the only place that talks to the backend: one `api(path, method, body)` helper (cookie, JSON or
+  FormData, error with `.status`) and one line per endpoint. `components/ConfirmModal.jsx` is the shared
+  confirm dialog (delete meeting, deactivate account, leave team, downgrade).
 - `lib/auth-context.jsx` - current-user state + the redirect-to-`/login`
   gate for everything under `(app)/`.
 - `constants/theme.js` - design tokens (colors, spacing, type, radius)
@@ -380,13 +412,12 @@ to `/login` live there, via `lib/auth-context.jsx`).
   transcribe → fix → summarize, with diarization) confirmed end-to-end.
   Google blocks anonymous automated joins and blocks a Playwright-driven
   login regardless of stealth patches, so the bot never logs in itself: a
-  human signs into a dedicated Chrome sidecar (`--remote-debugging-port=9222`),
-  and the bot attaches to that already-authenticated session over CDP. That
-  sidecar must be launched with `--auto-accept-this-tab-capture` too (added
-  to the launch command in README) - without it, every recording pauses on a
-  manual "Allow this tab to be seen?" permission dialog since the sidecar
-  isn't a Playwright-launched browser and doesn't inherit any args from
-  `zoom.py`'s `launch()` call.
+  human logs in once in a real Chrome via `bots/google_login.py` (on the host),
+  which saves the session to `auth/worker-N.json`; each join loads it as
+  Playwright `storage_state` in a fresh browser (launched with
+  `--auto-accept-this-tab-capture`, else every recording pauses on "Allow this
+  tab to be seen?"). The old CDP sidecar (`chrome-profile/`, port 9222) is gone.
+  On PowerShell set the path with `$env:GOOGLE_AUTH_STATE_PATH = "auth/worker-1.json"` first.
 - **Zoom: working, tested end-to-end** for join + record. Transcribe/
   summarize reuse the exact same functions Google Meet already confirmed
   working, but haven't been separately re-verified through a live Zoom run
@@ -439,9 +470,7 @@ multi-worker Docker setup, that's true by construction - each worker
 container gets its own Xvfb display - but *within* one worker, the join consumer
 taking one job at a time still matters: that one process/display can only safely run one
 recording at a time, since two bots sharing a display would capture each
-other's windows (and Google Meet's sidecar shares one long-lived browser
-across joins, so it's worse there - tabs, not just windows, could get
-captured across each other). True per-worker concurrency would need real
+other's windows. True per-worker concurrency would need real
 per-job display isolation, which isn't built.
 
 ### Playwright version pin
@@ -553,8 +582,8 @@ but no full-length run has been done yet -- do a 15-minute one first):
   once at start for its own old jobs, then every ~60 s by every worker, row and job set to `failed`); the admin page
   lists live workers (`GET /admin/workers`, from `join_queue.workers()`).
 - **Google session monitor** (task k06). A worker with `google_meet` in `WORKER_PLATFORMS` checks its saved session
-  between jobs (`_check_google_session`, `google_session_keepalive.session_alive(refresh=False)`, the file is mounted
-  read-only so it never writes): every 30 min, every 5 min while expired. Expired: the worker stops claiming and
+  between jobs (`_check_google_session`, `google_session_keepalive.session_alive()`, which writes the cookies Google just
+  rotated back to the file; `GoogleMeetBot.join` also saves the session after each recording, 2026-11-12): every 30 min, every 5 min while expired. Expired: the worker stops claiming and
   advertising Meet (so `/google/join` answers 503 instead of accepting a join that must fail), the admin page marks it
   red, and every active super admin gets one email (`mailer.send_google_session_expired_email`; with several Meet
   workers each one mails once). Back to normal by itself after `google_login.py` is run again on the host. A check that
@@ -619,9 +648,9 @@ comes from: `SECRET_KEY` (session signing), `OPENAI_API_KEY`, `REPLICATE_API_TOK
 The `users`/`meetings`/etc. tables are created automatically on first
 connect, nothing to migrate by hand.
 
-For Google Meet, also start the signed-in Chrome sidecar (README has the
-exact command, including `--auto-accept-this-tab-capture` - and a warning to
-use a separate Google account, not your personal one). Zoom needs no extra
+For Google Meet, log the bot's Google account in once with
+`python -m bots.google_login` (README; use a separate Google account, not
+your personal one). Zoom needs no extra
 setup. To run the Docker multi-worker setup instead of a bare `python
 app.py`, see the comments at the top of `docker-compose.yml`.
 

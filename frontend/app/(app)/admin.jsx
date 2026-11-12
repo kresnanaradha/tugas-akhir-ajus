@@ -9,7 +9,6 @@ import { useAuth } from "@/lib/auth-context";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
-import { UserManagement } from "@/components/UserManagement";
 
 // satu warna tetap per paket, ide yang sama dengan warna platform di laporan.jsx
 const PLAN_COLORS = { free: colors.inkFaint, pro: colors.info, team: colors.success };
@@ -198,9 +197,6 @@ export default function AdminScreen() {
             ))
           )}
         </View>
-
-        <Text style={styles.sectionLabel}>Manajemen Pengguna</Text>
-        <UserManagement currentUserId={user?.id} />
       </View>
     </ScrollView>
   );

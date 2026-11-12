@@ -1,10 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { cancelPendingCheckout, cancelSubscription, getBillingStatus, startCheckout } from "@/lib/api";
+import { ConfirmModal } from "@/components/ConfirmModal";
 
 // harga dari PLAN_PRICES di app.py (yang ditagih checkout), batasnya mengikuti billing_store.PLAN_LIMITS. Jaga tetap sama
 const PLANS = [
@@ -272,28 +273,14 @@ export default function BillingScreen() {
         </View>
       </View>
 
-      <Modal visible={confirmDowngradeOpen} transparent animationType="fade" onRequestClose={() => setConfirmDowngradeOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalIconWrap}>
-              <Feather name="alert-triangle" size={20} color={colors.danger} />
-            </View>
-            <Text style={styles.modalTitle}>Turunkan ke Free?</Text>
-            <Text style={styles.modalBody}>
-              Langganan gak akan diperpanjang lagi, tapi Anda tetap bisa pakai paket ini sampai periode yang sudah dibayar
-              habis bukan langsung berhenti sekarang.
-            </Text>
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalCancelButton} onPress={() => setConfirmDowngradeOpen(false)}>
-                <Text style={styles.modalCancelLabel}>Batal</Text>
-              </Pressable>
-              <Pressable style={styles.modalConfirmButton} onPress={handleCancel}>
-                <Text style={styles.modalConfirmLabel}>Ya, Turunkan</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <ConfirmModal
+        visible={confirmDowngradeOpen}
+        title="Turunkan ke Free?"
+        body="Langganan gak akan diperpanjang lagi, tapi Anda tetap bisa pakai paket ini sampai periode yang sudah dibayar habis bukan langsung berhenti sekarang."
+        confirmLabel="Ya, Turunkan"
+        onCancel={() => setConfirmDowngradeOpen(false)}
+        onConfirm={handleCancel}
+      />
     </ScrollView>
   );
 }
@@ -400,49 +387,4 @@ const styles = StyleSheet.create({
   membersTitle: { ...type.h2, color: colors.ink, marginBottom: 4 },
   membersBody: { ...type.body, color: colors.inkFaint, lineHeight: 20 },
 
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(27,31,43,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.lg,
-  },
-  modalCard: {
-    maxWidth: 360,
-    width: "100%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  modalIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.sm,
-    backgroundColor: colors.dangerSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.xs,
-  },
-  modalTitle: { ...type.h2, color: colors.ink, textAlign: "center" },
-  modalBody: { ...type.body, color: colors.inkSoft, textAlign: "center", lineHeight: 19 },
-  modalActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, alignSelf: "stretch" },
-  modalCancelButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: 11,
-    alignItems: "center",
-  },
-  modalCancelLabel: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
-  modalConfirmButton: {
-    flex: 1,
-    backgroundColor: colors.danger,
-    borderRadius: radius.sm,
-    paddingVertical: 11,
-    alignItems: "center",
-  },
-  modalConfirmLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.white },
 });

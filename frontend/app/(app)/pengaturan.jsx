@@ -1,12 +1,13 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { changePassword, deactivateAccount, logout as apiLogout, updateProfile } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { initialsOf } from "@/lib/format";
+import { ConfirmModal } from "@/components/ConfirmModal";
 
 // satu kolom teks dengan tombol Simpan dan umpan balik sendiri, dipakai untuk Nama / Email / Nomor Telepon. Mengandaikan initialValue
 // sudah dimuat (layout hanya merender setelah user ada). allowEmpty membuat kolom opsional seperti telepon bisa dikosongkan
@@ -270,38 +271,16 @@ function ProfileCard() {
         </Pressable>
       </View>
 
-      <Modal
+      <ConfirmModal
         visible={confirmDeactivateOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setConfirmDeactivateOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalIconWrap}>
-              <Feather name="alert-triangle" size={20} color={colors.danger} />
-            </View>
-            <Text style={styles.modalTitle}>Nonaktifkan akun?</Text>
-            <Text style={styles.modalBody}>
-              Anda akan langsung keluar dan tidak bisa login lagi. Rapat yang sudah Anda rekam tetap tersimpan; hubungi
-              admin kalau suatu saat ingin mengaktifkan kembali.
-            </Text>
-            {!!deactivateError && <Text style={styles.errorText}>{deactivateError}</Text>}
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalCancelButton} onPress={() => setConfirmDeactivateOpen(false)} disabled={deactivating}>
-                <Text style={styles.modalCancelLabel}>Batal</Text>
-              </Pressable>
-              <Pressable style={styles.modalConfirmButton} onPress={handleDeactivate} disabled={deactivating}>
-                {deactivating ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <Text style={styles.modalConfirmLabel}>Ya, Nonaktifkan</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        title="Nonaktifkan akun?"
+        body="Anda akan langsung keluar dan tidak bisa login lagi. Rapat yang sudah Anda rekam tetap tersimpan; hubungi admin kalau suatu saat ingin mengaktifkan kembali."
+        error={deactivateError}
+        confirmLabel="Ya, Nonaktifkan"
+        busy={deactivating}
+        onCancel={() => setConfirmDeactivateOpen(false)}
+        onConfirm={handleDeactivate}
+      />
     </View>
   );
 }
@@ -394,49 +373,4 @@ const styles = StyleSheet.create({
   smallButtonDisabled: { opacity: 0.5 },
   smallButtonLabel: { ...type.small, fontWeight: "700", color: colors.ink },
 
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(27,31,43,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.lg,
-  },
-  modalCard: {
-    maxWidth: 360,
-    width: "100%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  modalIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.sm,
-    backgroundColor: colors.dangerSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.xs,
-  },
-  modalTitle: { ...type.h2, color: colors.ink, textAlign: "center" },
-  modalBody: { ...type.body, color: colors.inkSoft, textAlign: "center", lineHeight: 19 },
-  modalActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, alignSelf: "stretch" },
-  modalCancelButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: 11,
-    alignItems: "center",
-  },
-  modalCancelLabel: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
-  modalConfirmButton: {
-    flex: 1,
-    backgroundColor: colors.danger,
-    borderRadius: radius.sm,
-    paddingVertical: 11,
-    alignItems: "center",
-  },
-  modalConfirmLabel: { ...type.bodyMedium, fontWeight: "700", color: colors.white },
 });

@@ -2,37 +2,31 @@
 satu putaran query (kebanyakan murah), bukan frontend membuat 5
 panggilan terpisah. Lihat GET /admin/stats di app.py."""
 
-import psycopg2.extras
-
 from . import auth_store, billing_store, storage, usage_store
-from .db import with_conn
+from .db import fetch_all
 from .meetings_store import counts_by_period, daily_counts
 
 
 def teams_usage() -> list[dict]:
     """Per team: anggota dan total rapat milik anggotanya (join gagal
     dikecualikan, hitungannya sama dengan report_stats.team_usage), yang paling ramai dulu."""
-    def _do(conn):
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT t.id, t.name, o.name AS owner_name,
-                       COUNT(DISTINCT u.id) AS members,
-                       COUNT(m.id) AS meetings,
-                       COUNT(m.id) FILTER (WHERE m.created_at >= date_trunc('month', CURRENT_DATE)) AS this_month,
-                       COUNT(m.id) FILTER (WHERE m.shared_with_team) AS shared,
-                       COALESCE(SUM(m.duration_minutes), 0) AS minutes
-                FROM teams t
-                LEFT JOIN users o ON o.id = t.owner_id
-                LEFT JOIN users u ON u.team_id = t.id
-                LEFT JOIN meetings m ON m.user_id = u.id AND m.status <> 'failed'
-                GROUP BY t.id, t.name, o.name
-                ORDER BY meetings DESC, t.name
-                """
-            )
-            return [{**r, "minutes": round(float(r["minutes"]), 1)} for r in cur.fetchall()]
-
-    return with_conn(_do)
+    rows = fetch_all(
+        """
+        SELECT t.id, t.name, o.name AS owner_name,
+               COUNT(DISTINCT u.id) AS members,
+               COUNT(m.id) AS meetings,
+               COUNT(m.id) FILTER (WHERE m.created_at >= date_trunc('month', CURRENT_DATE)) AS this_month,
+               COUNT(m.id) FILTER (WHERE m.shared_with_team) AS shared,
+               COALESCE(SUM(m.duration_minutes), 0) AS minutes
+        FROM teams t
+        LEFT JOIN users o ON o.id = t.owner_id
+        LEFT JOIN users u ON u.team_id = t.id
+        LEFT JOIN meetings m ON m.user_id = u.id AND m.status <> 'failed'
+        GROUP BY t.id, t.name, o.name
+        ORDER BY meetings DESC, t.name
+        """
+    )
+    return [{**r, "minutes": round(float(r["minutes"]), 1)} for r in rows]
 
 
 def get_stats() -> dict:

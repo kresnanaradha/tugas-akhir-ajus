@@ -11,7 +11,7 @@ import chromadb
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 
-from . import usage_store
+from . import prompts, usage_store
 
 # multibahasa sengaja: transkrip berbahasa Indonesia dengan istilah Inggris
 _MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
@@ -147,17 +147,6 @@ def search(query: str, meeting_ids: list[str], top_k: int = 5) -> list[dict]:
     return matches[:top_k]
 
 
-_ANSWER_SYSTEM_PROMPT = (
-    "You answer a question about a team's past meetings using ONLY the excerpts "
-    "given below, each tagged with which meeting it's from. Do not use any "
-    "outside knowledge and do not invent meetings, people, dates, or facts not "
-    "present in the excerpts. Write a short, direct answer (2-4 sentences), in "
-    "the same language as the question, naturally mentioning which meeting(s) "
-    "it's based on. If the excerpts genuinely don't answer the question, say so "
-    "plainly instead of guessing - do not pad with a vague answer."
-)
-
-
 def answer(query: str, results: list[dict]) -> str | None:
     """Satu jawaban singkat dari hasil yang sudah diambil (masing-masing dengan meeting_title dan text). None kalau tidak ada
     bahan jawaban atau panggilannya gagal, potongan mentahnya tetap berguna. Sekali jalan, tanpa riwayat."""
@@ -169,7 +158,7 @@ def answer(query: str, results: list[dict]) -> str | None:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": _ANSWER_SYSTEM_PROMPT},
+                {"role": "system", "content": prompts.KB_ANSWER},
                 {"role": "user", "content": f"Excerpts:\n{context}\n\nQuestion: {query}"},
             ],
         )

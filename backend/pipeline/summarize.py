@@ -5,7 +5,7 @@ import re
 
 from openai import OpenAI
 
-from . import artifacts, meetings_store, usage_store
+from . import artifacts, meetings_store, prompts, usage_store
 
 _MODEL = "gpt-4o-mini"
 
@@ -21,80 +21,6 @@ def _known_terms() -> str:
     extra = os.getenv("EXTRA_VOCAB", "").strip()
     return _KNOWN_TERMS + (", " + extra if extra else "")
 
-
-_FIX_SYSTEM_PROMPT = (
-    "You correct obvious speech-to-text errors in a meeting transcript (mostly "
-    "Indonesian with some English terms): misheard or misspelled words, wrong "
-    "spellings of names, garbled technical terms. Never change the meaning or "
-    "the style, and never remove or add content. Every input line starts with "
-    "its number, then a tab. Return ONLY the lines that need a correction, as "
-    'JSON: {"fixes": [{"n": <line number>, "text": <the whole corrected line, '
-    "keeping its [SPEAKER_xx] label>}]}. A line that is fine must not appear. "
-    "When in doubt, leave the line out. Keep the same language."
-)
-
-# ditambahkan saat dipanggil supaya EXTRA_VOCAB dibaca segar
-_FIX_NAMES_PROMPT = (
-    " Names of people are often misheard too. If a word is clearly a garbled "
-    "person's name given the context (for example someone being assigned a "
-    "task) and it sounds like a name in the known list below, use that "
-    "spelling. If a name appears with slightly different spellings, make them "
-    "consistent. If it does not sound like anything in the list, keep it as-is "
-    "rather than guessing. Known terms and names: {terms}."
-)
-
-# narasi dan data terstruktur punya prompt pendek sendiri: satu prompt besar membuat gpt-4o-mini
-# mengikuti aturannya tidak konsisten
-_NARRATIVE_PROMPT = (
-    "You write the executive summary of a meeting transcript, in the same "
-    "language as the transcript. Give a complete, dense account of everything "
-    "discussed in the WHOLE meeting as several paragraphs separated by a "
-    "blank line, one paragraph per topic in the order it came up. Cover every "
-    "point raised, not just the conclusions: what was reported or proposed "
-    "and by whom, the reasons, problems, numbers, names and dates, the "
-    "outcome, each decision. Never drop a reported result or figure (before "
-    "and after values, percentages, sizes, durations, counts, dates) because "
-    "it seems minor. The user message gives the transcript's word count and "
-    "a target length: write about that many words, complete rather than "
-    "short, but never pad and never add anything that is not in the "
-    "transcript. Do not mention greetings, thanks or the meeting ending; stop "
-    "at the last substantive point. Speakers appear as labels like "
-    "SPEAKER_02: write them only as 'Pembicara 2' (same number) and never "
-    "guess which label is which person. A label that is a real name instead "
-    "(e.g. [Kresna]) was confirmed by the user: use that exact name for that "
-    "speaker, everywhere they are mentioned. When the transcript itself names "
-    "someone being assigned something (e.g. 'Diva, tolong kamu...'), use "
-    "that name for that assignment. Plain text only, no headings or bullets."
-)
-
-_DETAILS_PROMPT = (
-    "You extract structured data from a meeting transcript, in the same "
-    "language as the transcript. Respond with JSON containing exactly these "
-    "keys: key_decisions (an array of strings: every decision actually made, "
-    "including small ones, each with what was decided and, if stated, why; "
-    "task assignments do not belong here), topics_discussed (an array of "
-    "strings: every distinct subject covered, 4 to 8 short items), and "
-    "action_items (an array of objects, each with exactly: task, a string "
-    "with the concrete action; assignee, a real person's name or null: use "
-    "the name when the transcript itself says who does it (e.g. 'Diva, "
-    "tolong kamu yang kerjakan'), or when a speaker whose label is a real "
-    "name (e.g. [Kresna]) commits to it themselves; otherwise null, never "
-    "'Pembicara N' or a SPEAKER label; due, a string or null, only if a deadline or date was "
-    "explicitly said). List every commitment or request "
-    "made in the transcript, including ones nobody was assigned (assignee "
-    "null), and nothing that was not committed to."
-)
-
-# panggilan ketiga, ringkasan singkat untuk sekilas lihat (narasi berupa satu paragraf per topik)
-_SHORT_PROMPT = (
-    "You write a short summary of a meeting transcript, in the same language as "
-    "the transcript: 2 to 4 sentences, at most about 70 words, saying what the "
-    "meeting was about and its main outcome or decisions. No greetings, no "
-    "mention of the meeting ending, nothing that is not in the transcript. If a "
-    "speaker has to be mentioned, write 'Pembicara N' for a label like SPEAKER_0N, "
-    "or the exact name for a label that is a real name; prefer not to mention "
-    "speakers at all. Plain text, one paragraph."
-)
 
 _SPEAKER_LABEL = re.compile(r"(?i)^(?:pembicara|speaker)[ _]?0*(\d+)$")
 _SPEAKER_INLINE = re.compile(r"(?i)\b(?:speaker[ _]|pembicara )0*(\d+)\b")
@@ -143,7 +69,7 @@ def _fix_chunk(client: OpenAI, text: str, meeting_id: str, part: int, parts: int
     mengembalikan baris yang diubah menurut nomornya dan masing-masing dicek terhadap baris yang diklaim diperbaiki."""
     lines = text.split(chr(10))
     numbered = chr(10).join(f"{i}{chr(9)}{ln}" for i, ln in enumerate(lines, start=1))
-    system = _FIX_SYSTEM_PROMPT + _FIX_NAMES_PROMPT.format(terms=_known_terms())
+    system = prompts.FIX_TRANSCRIPT + prompts.FIX_NAMES.format(terms=_known_terms())
     response = client.chat.completions.create(
         model=_MODEL,
         temperature=0.2,
@@ -229,7 +155,7 @@ def short_summary(transcript: str, meeting_id: str | None) -> str:
         model=_MODEL,
         temperature=0.2,
         messages=[
-            {"role": "system", "content": _SHORT_PROMPT},
+            {"role": "system", "content": prompts.SHORT_SUMMARY},
             {"role": "user", "content": _speaker_note(transcript) + transcript},
         ],
     )
@@ -237,23 +163,6 @@ def short_summary(transcript: str, meeting_id: str | None) -> str:
         _log_usage(meeting_id, "summarize_short", response)
     text = response.choices[0].message.content.strip()
     return _SPEAKER_INLINE.sub(lambda m: f"Pembicara {int(m.group(1))}", text)
-
-
-_COMPARE_PROMPT = (
-    "You compare two meetings from their summaries, in Indonesian. Return JSON with: "
-    "'about_a' and 'about_b' (one plain sentence each, starting 'Rapat A membahas ...' "
-    "and 'Rapat B membahas ...', saying what that meeting was about), "
-    "'similarities' (list of up to 4 short sentences about what both meetings share: "
-    "topics, goals, people, decisions), 'differences' (list of up to 4 short sentences "
-    "about what is different or only in one of them, say which one: Rapat A or Rapat B), "
-    "'progress' (list of up to 3 short sentences about follow-up or change from A to B, "
-    "such as an action item or decision that moved on; empty list if the meetings are "
-    "unrelated), and 'conclusion' (2 to 3 sentences, the overall comparison). Use only "
-    "what the summaries say, invent nothing. If the two meetings are about unrelated "
-    "things, say that plainly instead of forcing a link. If one summary is empty, an "
-    "apology or has no topics, decisions or action items, leave similarities and "
-    "progress empty and say in the conclusion that it has too little content to compare."
-)
 
 
 def _compare_block(label: str, meeting: dict, summary: dict) -> str:
@@ -275,7 +184,7 @@ def compare_meetings(meeting_a: dict, summary_a: dict, meeting_b: dict, summary_
         temperature=0.2,
         response_format={"type": "json_object"},
         messages=[
-            {"role": "system", "content": _COMPARE_PROMPT},
+            {"role": "system", "content": prompts.COMPARE_MEETINGS},
             {"role": "user", "content": _compare_block("Rapat A", meeting_a, summary_a) + "\n\n" + _compare_block("Rapat B", meeting_b, summary_b)},
         ],
     )
@@ -304,7 +213,7 @@ def _build_summary(transcript: str, meeting_id: str | None) -> dict:
         model=_MODEL,
         temperature=0.2,
         messages=[
-            {"role": "system", "content": _NARRATIVE_PROMPT},
+            {"role": "system", "content": prompts.NARRATIVE_SUMMARY},
             {"role": "user", "content": _summary_user_message(transcript)},
         ],
     )
@@ -313,7 +222,7 @@ def _build_summary(transcript: str, meeting_id: str | None) -> dict:
         temperature=0.2,
         response_format={"type": "json_object"},
         messages=[
-            {"role": "system", "content": _DETAILS_PROMPT},
+            {"role": "system", "content": prompts.SUMMARY_DETAILS},
             {"role": "user", "content": _speaker_note(transcript) + transcript},
         ],
     )

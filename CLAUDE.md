@@ -16,7 +16,11 @@ Laporan + Perbandingan, `admin`, `billing`, `teams`); `routes/common.py` holds l
 config; `join_worker.py` is the recorder loop. Route modules call stores as `meetings_store.get_meeting(...)` so tests
 patch the store module once. Frontend: `rapat/[id].jsx` loads/polls the meeting and renders the header; each tab is
 in `components/rapat/` (`RingkasanTab`, `TranskripTab`, `EditorTab`, `LiveStatusCard`, shared `styles.js`), and the
-editor state lives in `hooks/useTranscriptEditor.js` so unsaved edits survive switching tabs.
+editor state lives in `hooks/useTranscriptEditor.js` so unsaved edits survive switching tabs. Same pattern for
+`team/index.jsx` (`components/team/`: `CreateTeam`, `TeamView`) and `perbandingan.jsx` (`components/perbandingan/`:
+`HeadColumn`, `SectionCard`, `CompareRow`, `AnalysisCard`). Every text sent to GPT-4o mini lives in
+`pipeline/prompts.py` (fix transcript, narrative, details, short summary, comparison, Knowledge Base answer); the
+code that builds the user message and calls the model stays in `summarize.py` / `knowledge_base.py`.
 
 Full backend setup/run/test instructions: `backend/README.md`. This file
 is project status - what's done, what's next, what to watch out for.

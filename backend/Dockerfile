@@ -3,7 +3,7 @@
 # `playwright install chromium` di bawah hanya mengunduh browsernya (tanpa --with-deps)
 FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
-# xvfb: display virtual. Bot menjalankan Chrome dengan tampilan (tab capture tidak andal tanpa tampilan, lihat CLAUDE.md) dan
+# xvfb: display virtual. Bot menjalankan Chrome dengan tampilan (tab capture tidak andal tanpa tampilan) dan
 # container tidak punya monitor. Ini juga menjaga jendelanya dari layar host.
 # ffmpeg: perekaman audio cadangan (bots/audio_backup.py) dan ffprobe untuk memetakan waktu audio ke video.
 # DEBIAN_FRONTEND=noninteractive: instalasi pulseaudio menunggu prompt debconf tanpa tty (build pernah macet 15+ menit)

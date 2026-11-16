@@ -3,8 +3,7 @@
 Flask API plus the bots. A bot joins a Google Meet or Zoom call as a guest (Playwright), records the tab,
 and the recording is transcribed with speaker labels (Whisper plus pyannote on Replicate), cleaned up and summarized (GPT-4o mini). On
 top of that sits the rest of the product: login and roles, meeting history, a Knowledge Base, PDF reports,
-Xendit billing, teams and the admin dashboard. `../CLAUDE.md` is the status file (what is built, what to watch
-out for), this one is how to run it.
+Xendit billing, teams and the admin dashboard. This file is how to run it.
 
 Join flow adapted from [screenappai/meeting-bot](https://github.com/screenappai/meeting-bot) (MIT license).
 

@@ -55,8 +55,8 @@ export function uploadAudio(file, numSpeakers) {
   return api("/upload", "POST", form);
 }
 // memasukkan join ke antrean dan langsung mengembalikan {job_id}. Pantau getJobStatus, stopJob mengakhiri rekaman lebih awal
-export const startJoinMeeting = (platform, url, name, numSpeakers) =>
-  api(platform === "zoom" ? "/zoom/join" : "/google/join", "POST", { url, name, num_speakers: numSpeakers || null });
+export const startJoinMeeting = (platform, url, numSpeakers) =>
+  api(platform === "zoom" ? "/zoom/join" : "/google/join", "POST", { url, num_speakers: numSpeakers || null });
 // {status: "queued"|"joining"|"recording"|"stopping"|"processing"|"failed", elapsed_seconds?, error?}. 404 berarti job selesai
 export const getJobStatus = (jobId) => api(`/jobs/${enc(jobId)}`);
 // pipeline tetap jalan atas apa yang sudah terekam, sama seperti kalau durasi maksimum tercapai

@@ -41,7 +41,7 @@ def _send_shared_result(meeting_id: str, user_id: str) -> None:
 def _join(platform: str, title: str):
     data = request.get_json(force=True) or {}
     url = data.get("url")
-    name = data.get("name") or "Notulis Bot"
+    name = "Notulis Bot"  # nama bot tetap, tidak bisa diubah dari klien
     # tebakan opsional untuk diarization, abaikan kalau aneh
     try:
         num_speakers = int(data["num_speakers"]) if data.get("num_speakers") else None

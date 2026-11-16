@@ -25,7 +25,6 @@ const STEPS = [
 export default function BuatRapatScreen() {
   const [platform, setPlatform] = useState("google_meet");
   const [url, setUrl] = useState("");
-  const [name, setName] = useState("Notulis Bot");
   const [numSpeakers, setNumSpeakers] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -42,12 +41,7 @@ export default function BuatRapatScreen() {
     setSubmitting(true);
     setError("");
     try {
-      const { job_id } = await startJoinMeeting(
-        platform,
-        url.trim(),
-        name.trim() || "Notulis Bot",
-        numSpeakers ? Number(numSpeakers) : null
-      );
+      const { job_id } = await startJoinMeeting(platform, url.trim(), numSpeakers ? Number(numSpeakers) : null);
       // bergabung, merekam, dan memproses ditampilkan di halaman rapat (ia memantau GET /jobs/<id>), form ini hanya memulai
       // job lalu menyerahkannya
       router.replace(`/rapat/${job_id}`);
@@ -103,15 +97,6 @@ export default function BuatRapatScreen() {
               editable={!submitting}
             />
             {!urlLooksValid && <Text style={styles.errorText}>{MEETING_URL_HINTS[platform]}</Text>}
-
-            <Text style={styles.label}>NAMA BOT</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholderTextColor={colors.inkFaint}
-              editable={!submitting}
-            />
 
             <Text style={styles.label}>PERKIRAAN JUMLAH PESERTA (OPSIONAL)</Text>
             <TextInput

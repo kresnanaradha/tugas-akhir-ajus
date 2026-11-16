@@ -133,4 +133,18 @@ assert len(mails) == 4  # alamat lain tidak terpengaruh
 # Redis mati: pembatas dilewati, login tetap bisa
 join_queue._get_client = lambda: (_ for _ in ()).throw(RuntimeError("redis mati"))
 assert login("a@b.c", "benar").status_code == 200
+
+# /upload langsung kembali dengan id rapat dan mengantre ke transkriber (tidak memproses di request)
+import io
+from pipeline import job_queue
+
+queued = []
+common.check_meeting_quota = lambda uid: None
+meetings_store.start_meeting = lambda *a, **k: None
+storage.upload_recording = lambda path, mid, keep_local=False: f"{mid}/recording.mp3"
+job_queue.enqueue_transcription = lambda *a: queued.append(a)
+r = client_as("owner").post("/upload", data={"file": (io.BytesIO(b"abc"), "rapat.mp3"), "num_speakers": "3"})
+body = r.get_json()
+assert r.status_code == 200 and body["status"] == "processing" and body["meeting_id"].startswith("Upload_")
+assert queued == [(body["meeting_id"], body["meeting_id"] + "/recording.mp3", 3)]
 print("ok")

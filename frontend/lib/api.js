@@ -11,7 +11,7 @@ async function api(path, method = "GET", body) {
     headers: isJson ? { "Content-Type": "application/json" } : undefined,
     body: isJson ? JSON.stringify(body) : body,
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({})); // proxy (Cloudflare) bisa membalas HTML, mis. 413 atau 524
   if (!res.ok) {
     const err = new Error(data.error || `Request gagal (${res.status})`);
     err.status = res.status;

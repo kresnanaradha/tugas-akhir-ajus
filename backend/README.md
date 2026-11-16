@@ -19,7 +19,7 @@ Join flow adapted from [screenappai/meeting-bot](https://github.com/screenappai/
 
 A join goes onto a Redis queue and a free worker takes it. A recording is uploaded to R2 when it ends and queued
 in Redis again, a transcriber picks it up (separate container, it only waits for Replicate and calls OpenAI).
-`POST /upload` skips the queue and runs the pipeline in the API process. Transcription needs `REPLICATE_API_TOKEN`,
+`POST /upload` stores the file in R2 and queues it the same way (it returns the meeting id at once, the meeting page shows "processing"). Transcription needs `REPLICATE_API_TOKEN`,
 there is no local fallback.
 
 ## Setup

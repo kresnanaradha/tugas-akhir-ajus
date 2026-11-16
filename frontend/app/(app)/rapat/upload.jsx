@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -7,11 +8,12 @@ import { listMeetings, uploadAudio } from "@/lib/api";
 import { formatMeetingDate } from "@/lib/format";
 import { usePipelineRun } from "@/hooks/usePipelineRun";
 import { BackLink } from "@/components/BackLink";
-import { PipelineResult } from "@/components/PipelineResult";
 import { MeetingRow } from "@/components/MeetingRow";
 
 // Sama dengan UPLOAD_EXTENSIONS di backend/app.py.
 const ACCEPTED = ".mp3,.wav,.m4a,.mp4,.webm,.ogg";
+// Cloudflare (di depan API) menolak body di atas 100 MB (413), jadi dicek di sini dengan pesan yang jelas
+const MAX_UPLOAD_MB = 100;
 
 const FEATURES = [
   {
@@ -31,9 +33,17 @@ export default function UploadRapatScreen() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [numSpeakers, setNumSpeakers] = useState("");
   const inputRef = useRef(null);
-  const { status, result, error, run, reset } = usePipelineRun(() =>
+  const [sizeError, setSizeError] = useState("");
+  const router = useRouter();
+  const { status, result, error, run } = usePipelineRun(() =>
     uploadAudio(file, numSpeakers ? Number(numSpeakers) : null)
   );
+
+  // server hanya menyimpan file lalu mengantre ke transkriber: pemrosesan jalan di server walau halaman ditutup,
+  // dan halaman rapat menampilkan statusnya
+  useEffect(() => {
+    if (status === "done" && result?.meeting_id) router.replace(`/rapat/${result.meeting_id}`);
+  }, [status, result]);
 
   const [recent, setRecent] = useState(null); // null = memuat
   useEffect(() => {
@@ -44,12 +54,13 @@ export default function UploadRapatScreen() {
 
   function handleFiles(fileList) {
     const picked = fileList?.[0];
-    if (picked) setFile(picked);
-  }
-
-  function handleDone() {
-    reset();
-    setFile(null);
+    if (!picked) return;
+    if (picked.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      setSizeError(`File ${Math.round(picked.size / 1024 / 1024)} MB melebihi batas ${MAX_UPLOAD_MB} MB. Kecilkan dulu (mis. ubah ke MP3).`);
+      return;
+    }
+    setSizeError("");
+    setFile(picked);
   }
 
   return (
@@ -60,15 +71,11 @@ export default function UploadRapatScreen() {
         <Text style={styles.title}>Upload Rapat</Text>
         <Text style={styles.subtitle}>Upload rekaman rapat untuk ditranskripsi dan diringkas otomatis oleh AI.</Text>
 
-        {status === "done" && result ? (
-          <View style={styles.card}>
-            <PipelineResult result={result} onDone={handleDone} />
-          </View>
-        ) : status === "loading" ? (
+        {status === "loading" || status === "done" ? (
           <View style={[styles.card, styles.loadingBox]}>
             <ActivityIndicator color={colors.gold} size="large" />
             <Text style={styles.loadingText}>
-              Memproses transkripsi & ringkasan... bisa beberapa menit tergantung durasi file.
+              Mengunggah file... Setelah selesai, transkripsi dan ringkasan berjalan di server dan statusnya tampil di halaman rapat.
             </Text>
           </View>
         ) : (
@@ -114,7 +121,7 @@ export default function UploadRapatScreen() {
                 </View>
               </div>
 
-              {status === "error" && <Text style={styles.errorText}>{error}</Text>}
+              {(sizeError || status === "error") && <Text style={styles.errorText}>{sizeError || error}</Text>}
 
               {file && (
                 <>

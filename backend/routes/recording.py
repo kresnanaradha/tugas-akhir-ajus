@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, session
 
-from pipeline import artifacts, join_queue, meetings_store, process, storage
+from pipeline import artifacts, job_queue, join_queue, meetings_store, process, storage
 
 from . import common
 from .common import login_required
@@ -140,7 +140,7 @@ def job_stop(job_id):
 @bp.post("/upload")
 @login_required
 def upload():
-    """Transkripsi dan ringkas rekaman yang tidak dibuat oleh bot."""
+    """Simpan rekaman yang tidak dibuat oleh bot lalu antrekan ke transkriber. Mengembalikan {meeting_id} untuk dipantau."""
     file = request.files.get("file")
     if not file or not file.filename:
         return jsonify({"error": "file is required (multipart/form-data field 'file')"}), 400
@@ -170,13 +170,10 @@ def upload():
     recording_key = storage.upload_recording(local_recording_path, meeting_id, keep_local=True)
     meetings_store.update_meeting(meeting_id, status="processing", recording=recording_key)
 
-    result = process.process_recording(local_recording_path, meeting_id, num_speakers, recording_key)
+    # transkripsi dikerjakan transkriber lewat antrean (lama, bisa menit), request ini selesai begitu rekaman tersimpan
+    job_queue.enqueue_transcription(meeting_id, recording_key, num_speakers)
     try:
         os.remove(local_recording_path)
     except OSError:
         pass
-    result["status"] = "done"
-    result["recording"] = recording_key
-    final_status = "failed" if result.get("transcript_error") else "completed"
-    meetings_store.update_meeting(meeting_id, status=final_status, recording=recording_key)
-    return jsonify(result)
+    return jsonify({"meeting_id": meeting_id, "status": "processing"})

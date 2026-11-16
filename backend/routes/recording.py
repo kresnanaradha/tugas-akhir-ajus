@@ -3,14 +3,14 @@
 
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, session
 
-from pipeline import join_queue, meetings_store, storage
-from pipeline.process import process_recording
+from pipeline import artifacts, join_queue, meetings_store, process, storage
 
 from . import common
 from .common import login_required
@@ -32,6 +32,12 @@ MEETING_URL_PATTERNS = {
 MEETING_PLATFORM_LABEL = {"google_meet": "Google Meet", "zoom": "Zoom"}
 
 
+def _send_shared_result(meeting_id: str, user_id: str) -> None:
+    summary = artifacts.load_summary(meeting_id)
+    if summary:
+        process.notify_meeting_ready(meeting_id, summary, only_user_id=user_id)
+
+
 def _join(platform: str, title: str):
     data = request.get_json(force=True) or {}
     url = data.get("url")
@@ -51,8 +57,11 @@ def _join(platform: str, title: str):
     # kirim bot kedua
     existing = meetings_store.find_meeting_by_url(url)
     if existing:
-        if existing.get("user_id") != session["user_id"]:
-            meetings_store.add_viewer(existing["id"], session["user_id"])
+        is_new_viewer = existing.get("user_id") != session["user_id"] and meetings_store.add_viewer(existing["id"], session["user_id"])
+        # rapat yang masih berjalan: emailnya menyusul saat ringkasan selesai (process.notify_meeting_ready). Yang sudah
+        # selesai tidak akan diproses lagi, jadi hasilnya dikirim sekarang
+        if is_new_viewer and existing["status"] == "completed":
+            threading.Thread(target=_send_shared_result, args=(existing["id"], session["user_id"]), daemon=True).start()
         return jsonify({"job_id": existing["id"], "shared": True})
 
     quota_error = common.check_meeting_quota(session["user_id"])
@@ -161,7 +170,7 @@ def upload():
     recording_key = storage.upload_recording(local_recording_path, meeting_id, keep_local=True)
     meetings_store.update_meeting(meeting_id, status="processing", recording=recording_key)
 
-    result = process_recording(local_recording_path, meeting_id, num_speakers, recording_key)
+    result = process.process_recording(local_recording_path, meeting_id, num_speakers, recording_key)
     try:
         os.remove(local_recording_path)
     except OSError:

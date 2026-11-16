@@ -21,8 +21,9 @@ mailer.send_meeting_ready_email("a@b.c", evil, "baris 1\nbaris 2", "http://u/rap
 mailer.send_password_reset_email("a@b.c", evil, "http://u/reset/t")
 mailer.send_meeting_unprocessed_email("a@b.c", evil, evil, 65, 40, 60, "http://u/rapat/1", "http://u/billing")
 mailer.send_team_invite_email("a@b.c", evil, evil, "http://u/team/gabung/t")
+mailer.send_meeting_ready_email("a@b.c", evil, "x", "http://u/rapat/1", shared=True)
 
-assert len(sent) == 4
+assert len(sent) == 5
 for to, subject, text, body in sent:
     assert to == "a@b.c" and subject and text
     assert "&lt;b&gt;x&lt;/b&gt; &amp; y" in body or "http://u/reset/t" in body  # di-escape, atau tidak ada teks user selain nama
@@ -31,4 +32,7 @@ for to, subject, text, body in sent:
 assert "baris 1<br>baris 2" in sent[0][3]
 assert "http://u/billing" in sent[2][3] and "65" in sent[2][3]
 assert "7 hari" in sent[3][3]
+# penonton: subjek dan isi menjelaskan kenapa mereka menerima hasil rapat orang lain, pemilik tidak
+assert sent[4][1].startswith("Hasil rapat dibagikan") and "rapat yang sama" in sent[4][3] and "rapat yang sama" in sent[4][2]
+assert "rapat yang sama" not in sent[0][3] and sent[0][1].startswith("Transkrip siap")
 print("ok")

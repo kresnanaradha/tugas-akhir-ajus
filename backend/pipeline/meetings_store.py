@@ -81,8 +81,21 @@ def update_meeting(meeting_id: str, **fields) -> None:
         execute(f"UPDATE meetings SET {set_clause} WHERE id = %s", (*fields.values(), meeting_id))
 
 
-def add_viewer(meeting_id: str, user_id: str) -> None:
-    execute("INSERT INTO meeting_viewers (meeting_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (meeting_id, user_id))
+def add_viewer(meeting_id: str, user_id: str) -> bool:
+    """True kalau penonton ini baru (False: sudah tercatat), supaya hasil rapat tidak dikirim berulang."""
+    return fetch_value(
+        "INSERT INTO meeting_viewers (meeting_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING RETURNING 1",
+        (meeting_id, user_id),
+    ) is not None
+
+
+def list_viewers(meeting_id: str) -> list[dict]:
+    """Pengguna aktif yang memasukkan tautan yang sama dengan rapat ini (id, email, name, email_notifications)."""
+    return fetch_all(
+        "SELECT u.id, u.email, u.name, u.email_notifications FROM meeting_viewers v JOIN users u ON u.id = v.user_id "
+        "WHERE v.meeting_id = %s AND u.active IS NOT FALSE",
+        (meeting_id,),
+    )
 
 
 def is_viewer(meeting_id: str, user_id: str) -> bool:

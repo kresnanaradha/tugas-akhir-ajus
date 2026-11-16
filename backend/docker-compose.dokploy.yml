@@ -1,0 +1,100 @@
+# Compose untuk VPS (Dokploy): 3 perekam saja, dengan batas memori GABUNGAN 8 GB untuk semua kontainer Notulis.
+# Server hanya 2 vCPU / 12 GB dan menjalankan layanan lain, jadi 10 worker di docker-compose.yml tidak muat
+# (satu bot sekitar 1,5 sampai 2 GB). Berkas docker-compose.yml untuk lokal tidak diubah.
+#
+# Batas 8 GB: di server ada slice systemd `notulis.slice` (MemoryMax=8G, tanpa swap, CPUWeight=50) dan setiap service di
+# bawah memakai `cgroup_parent: notulis.slice`. Kalau total kontainer menyentuh 8 GB, kernel mematikan proses DI DALAM
+# slice itu saja (Docker menyalakannya lagi lewat restart), bukan layanan lain di server. `mem_limit` per kontainer
+# menahan satu kontainer yang bocor supaya tidak menghabiskan jatah yang lain. `oom_score_adj` tinggi membuat kernel
+# memilih kontainer ini lebih dulu kalau server sendiri kekurangan memori.
+#
+# Di Dokploy: Create Service > Compose, Provider Git (repo tugas akhir), Compose Path `./backend/docker-compose.dokploy.yml`.
+# Isi tab Environment dengan isi .env (DATABASE_URL, R2_*, OPENAI_API_KEY, REPLICATE_API_TOKEN, SECRET_KEY, XENDIT_*,
+# SMTP_*) ditambah REDIS_PASSWORD, VNC_PASSWORD, dan dua pengaturan untuk server https:
+#   LOCAL_FRONTEND_URL=https://<domain frontend>   (juga satu-satunya alamat yang boleh memanggil API)
+#   COOKIE_SECURE=1       cookie sesi hanya lewat https
+# Dokploy menulis semuanya ke `.env` di samping berkas ini. Domain API diarahkan ke worker-1, port 5050
+# (API di worker mana pun menaruh tugas join ke antrean Redis, jadi satu domain cukup).
+#
+# Login Google, sekali per worker, DI DALAM container lewat noVNC (cookie yang disalin dari Chrome laptop ditolak Google
+# dalam hitungan jam). Tiap worker punya profil Chromium sendiri (volume google-profile-N, bertahan saat container dibuat ulang).
+# Port noVNC (6080, 6081, 6082 untuk worker 1, 2, 3) hanya terbuka di 127.0.0.1 server, jangan dibuka ke internet: layarnya
+# memperlihatkan akun yang sedang login. Dari laptop, lewat terowongan SSH:
+#   ssh -L 6080:localhost:6080 -L 6081:localhost:6081 -L 6082:localhost:6082 <user>@<server>
+#   buka http://localhost:608N/vnc.html, Connect dengan VNC_PASSWORD
+#   di server: docker exec -it <container worker-N> python -m bots.google_login_vnc
+# Satu akun Google boleh dipakai ketiganya, tapi tiap worker login sendiri (profilnya tidak boleh disalin). Sebelum login,
+# atur WORKER_PLATFORMS=zoom di Environment supaya pemantau sesi tidak menandai sesi habis dan mengirim email, lalu hapus
+# setelah ketiganya login.
+
+x-limits: &limits
+  cgroup_parent: notulis.slice
+  oom_score_adj: 500
+  restart: unless-stopped
+
+x-worker-env: &worker-env
+  GOOGLE_PROFILE_DIR: /app/google-profile
+  TZ: Asia/Makassar
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  WORKER_PLATFORMS: ${WORKER_PLATFORMS:-google_meet,zoom}
+
+x-worker-base: &worker-base
+  <<: *limits
+  build: .
+  env_file: .env
+  environment: *worker-env
+  depends_on: [redis]
+  # shm 2 GB dipakai Chrome untuk capture (lihat docker-compose.yml). Isinya dihitung ke mem_limit hanya saat terpakai.
+  shm_size: "2gb"
+  mem_limit: "2g"
+
+x-transcriber-base: &transcriber-base
+  <<: *limits
+  build:
+    context: .
+    dockerfile: Dockerfile.transcriber
+  env_file: .env
+  depends_on: [redis]
+  mem_limit: "1g"
+  cpus: "1.0"
+
+services:
+  worker-1:
+    <<: *worker-base
+    ports: ["127.0.0.1:6080:6080"]
+    volumes: ["google-profile-1:/app/google-profile", "chroma-data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-2:
+    <<: *worker-base
+    ports: ["127.0.0.1:6081:6080"]
+    volumes: ["google-profile-2:/app/google-profile", "chroma-data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+  worker-3:
+    <<: *worker-base
+    ports: ["127.0.0.1:6082:6080"]
+    volumes: ["google-profile-3:/app/google-profile", "chroma-data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+
+  # Tanpa `ports:`: hanya jaringan compose ini yang menjangkau Redis.
+  redis:
+    <<: *limits
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    mem_limit: "256m"
+    volumes: ["redis-data:/data"]
+
+  transcriber-1:
+    <<: *transcriber-base
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      TRANSCRIBER_ID: transcriber-1
+  transcriber-2:
+    <<: *transcriber-base
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      TRANSCRIBER_ID: transcriber-2
+
+volumes:
+  hf-cache:
+  redis-data:
+  chroma-data:
+  google-profile-1:
+  google-profile-2:
+  google-profile-3:

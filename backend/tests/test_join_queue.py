@@ -133,4 +133,40 @@ assert c.post("/google/join", json=meet_url).status_code == 503
 assert c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"}).status_code == 200
 queued = json.loads(fake.lists["notulis:join_jobs:zoom"][-1])
 assert queued["platform"] == "zoom" and queued["title"] == "Rapat Zoom"
+
+# tautan yang sama dengan rapat orang lain: tanpa bot kedua. Rapat yang sudah selesai langsung mengirim hasilnya ke penonton
+# baru (satu kali saja), rapat yang masih berjalan menunggu email saat ringkasan selesai
+from routes import recording  # noqa: E402
+
+sent, added = [], []
+recording.artifacts.load_summary = lambda mid: {"executive_summary": "S"}
+recording.process.notify_meeting_ready = lambda mid, summary, only_user_id=None: sent.append((mid, only_user_id))
+meetings_store.add_viewer = lambda mid, uid: added.append((mid, uid)) or len(added) == 1  # hanya pemanggilan pertama yang baru
+
+
+class Inline:  # menjalankan thread langsung supaya hasilnya bisa diperiksa
+    def __init__(self, target, args=(), daemon=None):
+        self.target, self.args = target, args
+
+    def start(self):
+        self.target(*self.args)
+
+
+recording.threading.Thread = Inline
+meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "completed"}
+n_jobs = len(fake.lists["notulis:join_jobs:zoom"])
+for _ in range(2):  # ditempel dua kali: email hanya sekali
+    resp = c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"}).get_json()
+    assert resp == {"job_id": "old", "shared": True}
+assert sent == [("old", "owner")] and len(fake.lists["notulis:join_jobs:zoom"]) == n_jobs
+
+sent.clear(); added.clear()
+meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "recording"}
+c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"})
+assert added == [("old", "owner")] and sent == []  # masih berjalan: tidak ada email sekarang
+
+sent.clear()
+meetings_store.find_meeting_by_url = lambda url: {"id": "mine", "user_id": "owner", "status": "completed"}
+c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"})
+assert sent == []  # pemilik sendiri bukan penonton
 print("ok")

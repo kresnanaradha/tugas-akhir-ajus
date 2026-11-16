@@ -86,22 +86,35 @@ def _send(config: dict, to_email: str, subject: str, text: str, html_body: str) 
         server.sendmail(config["from"], [to_email], msg.as_string())
 
 
-def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, meeting_url: str) -> None:
+def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, meeting_url: str, shared: bool = False) -> None:
+    """Ringkasan siap. shared=True untuk pengguna yang memasukkan tautan yang sama dengan pemilik rapat: botnya tidak
+    dikirim dua kali, jadi emailnya menjelaskan kenapa mereka menerima hasil rapat ini."""
     config = _config()
     if config is None:
         return
 
-    text = (
-        f"Transkrip dan ringkasan rapat \"{title}\" sudah selesai diproses.\n\n"
-        f"Ringkasan:\n{summary_excerpt}\n\n"
-        f"Lihat detail lengkapnya: {meeting_url}\n\n"
-        "-- Notulis"
-    )
+    if shared:
+        intro = (
+            "Kemungkinan Anda berada di rapat yang sama. Tautan rapat yang Anda masukkan ke Notulis sudah direkam oleh "
+            "pengguna lain, jadi bot tidak dikirim dua kali dan hasilnya dibagikan kepada Anda. Anda bisa melihat rekaman, "
+            "transkrip, dan ringkasannya, tetapi hanya pemilik rapat yang dapat mengubahnya."
+        )
+        badge_label, subject, button = "Hasil Rapat Dibagikan", f"Hasil rapat dibagikan: {title}", "Lihat Hasil Rapat"
+        text = f"{intro}\n\nRapat: \"{title}\"\n\nRingkasan:\n{summary_excerpt}\n\nLihat hasil lengkapnya: {meeting_url}\n\n-- Notulis"
+    else:
+        intro = "Rekaman rapat ini sudah selesai ditranskripsi dan diringkas otomatis."
+        badge_label, subject, button = "Transkrip &amp; Ringkasan Siap", f"Transkrip siap: {title}", "Lihat Detail Rapat"
+        text = (
+            f"Transkrip dan ringkasan rapat \"{title}\" sudah selesai diproses.\n\n"
+            f"Ringkasan:\n{summary_excerpt}\n\n"
+            f"Lihat detail lengkapnya: {meeting_url}\n\n"
+            "-- Notulis"
+        )
     excerpt = html.escape(summary_excerpt or "Ringkasan belum tersedia untuk rapat ini.").replace("\n", "<br>")
     badge = (
         f'<div style="display:inline-block;background-color:{_GOLD};color:{_INK};font-size:11px;font-weight:700;'
         f'letter-spacing:0.4px;text-transform:uppercase;border-radius:999px;padding:4px 12px;margin-bottom:14px;">'
-        "Transkrip &amp; Ringkasan Siap</div>"
+        f"{badge_label}</div>"
     )
     quote = (
         f'<div style="border-left:3px solid {_GOLD};background-color:{_BG};border-radius:6px;padding:14px 16px;margin-bottom:24px;">'
@@ -112,11 +125,11 @@ def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, me
     content = "\n".join([
         badge,
         _heading(html.escape(title)),
-        _paragraph("Rekaman rapat ini sudah selesai ditranskripsi dan diringkas otomatis.", size=13, color=_INK_FAINT),
+        _paragraph(intro, size=13, color=_INK_FAINT),
         quote,
-        _button(meeting_url, "Lihat Detail Rapat"),
+        _button(meeting_url, button),
     ])
-    _send(config, to_email, f"Transkrip siap: {title}", text, _layout(content, footer=True))
+    _send(config, to_email, subject, text, _layout(content, footer=True))
 
 
 def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:

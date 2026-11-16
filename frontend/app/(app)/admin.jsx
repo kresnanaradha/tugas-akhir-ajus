@@ -6,6 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { getAdminExportUrl, getAdminStats, getAdminWorkers } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { PLATFORM_LABEL } from "@/lib/format";
 import { BarChart } from "@/components/BarChart";
 import { HorizontalBarChart } from "@/components/HorizontalBarChart";
 import { StatCard } from "@/components/StatCard";
@@ -184,17 +185,34 @@ export default function AdminScreen() {
           </>
         )}
 
-        <Text style={styles.sectionLabel}>Perekam (Worker)</Text>
+        <Text style={styles.sectionLabel}>Bot Perekam</Text>
         <View style={styles.chartCard}>
           {workers.length === 0 ? (
-            <Text style={styles.description}>Tidak ada worker perekam yang aktif.</Text>
+            <Text style={styles.description}>Tidak ada bot perekam yang aktif. Rapat baru akan menunggu sampai ada bot yang menyala.</Text>
           ) : (
-            workers.map((w) => (
-              <Text key={w.id} style={[styles.teamMeta, w.google_expired && { color: colors.danger }]}>
-                {w.id}: {w.busy ? "sedang merekam" : "kosong"} · {w.platforms.join(", ") || "tidak ada platform"}
-                {w.google_expired ? " · sesi Google habis, jalankan google_login.py" : ""}
-              </Text>
-            ))
+            workers.map((w, i) => {
+              const status = w.busy
+                ? { label: "Sedang merekam", fg: colors.danger, bg: colors.dangerSoft }
+                : { label: "Siap merekam", fg: colors.success, bg: colors.successSoft };
+              return (
+                <View key={w.id} style={[styles.workerRow, i > 0 && styles.workerRowDivider]}>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={styles.workerName}>
+                      Perekam {i + 1} <Text style={styles.workerId}>({w.id})</Text>
+                    </Text>
+                    <Text style={styles.teamMeta}>
+                      Bisa merekam: {w.platforms.map((p) => PLATFORM_LABEL[p] || p).join(", ") || "tidak ada platform"}
+                    </Text>
+                    {w.google_expired && (
+                      <Text style={[styles.teamMeta, { color: colors.danger }]}>
+                        Sesi Google habis, Google Meet dinonaktifkan. Login ulang akun bot lewat noVNC.
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={[styles.workerPill, { color: status.fg, backgroundColor: status.bg }]}>{status.label}</Text>
+                </View>
+              );
+            })
           )}
         </View>
       </View>
@@ -230,6 +248,11 @@ const styles = StyleSheet.create({
   sectionLabel: { ...type.eyebrow, color: colors.inkFaint, marginTop: spacing.md },
   statRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignContent: "stretch" },
   teamMeta: { ...type.small, color: colors.inkSoft },
+  workerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.sm },
+  workerRowDivider: { borderTopWidth: 1, borderTopColor: colors.border },
+  workerName: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
+  workerId: { ...type.small, fontWeight: "400", color: colors.inkFaint },
+  workerPill: { ...type.small, fontWeight: "600", borderRadius: radius.pill, paddingVertical: 3, paddingHorizontal: 10, overflow: "hidden" },
 
   chartCard: {
     flexGrow: 1,

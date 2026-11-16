@@ -17,13 +17,18 @@ from playwright.sync_api import sync_playwright
 load_dotenv()
 
 AUTH_STATE_PATH = os.getenv("GOOGLE_AUTH_STATE_PATH", "auth/google.json")
+# profil Chromium permanen dari bots/google_login_vnc.py, dipakai kalau diisi (lihat bots/google_meet.py)
+PROFILE_DIR = os.getenv("GOOGLE_PROFILE_DIR")
 # lebih ringan dari url Meet (tanpa izin kamera, tanpa UI join), halaman apa pun yang membuktikan sesi masih login cukup
 _CHECK_URL = "https://myaccount.google.com/"
 
 
 
 def session_alive(refresh: bool = True) -> bool:
-    """Apakah sesi tersimpan masih login. refresh=True juga menulis cookie terbaru ke file (file sesi worker tidak lagi read-only)."""
+    """Apakah sesi tersimpan masih login. refresh=True juga menulis cookie terbaru ke file (file sesi worker tidak lagi read-only).
+    Dengan profil permanen, kunjungan ini sendiri yang menyegarkan sesi dan Chromium menyimpannya ke profil."""
+    if PROFILE_DIR:
+        return _profile_alive()
     if not os.path.exists(AUTH_STATE_PATH):
         return False
 
@@ -44,8 +49,25 @@ def session_alive(refresh: bool = True) -> bool:
             browser.close()
 
 
+def _on_account_page(page) -> bool:
+    page.goto(_CHECK_URL, wait_until="domcontentloaded", timeout=30000)
+    return "myaccount.google.com" in page.url
+
+
+def _profile_alive() -> bool:
+    if not os.path.isdir(PROFILE_DIR) or not os.listdir(PROFILE_DIR):
+        return False
+    with sync_playwright() as p:
+        # dengan tampilan (display Xvfb worker) seperti saat join, supaya Google melihat browser yang sama
+        context = p.chromium.launch_persistent_context(PROFILE_DIR, headless=False, args=["--no-sandbox", "--disable-setuid-sandbox"])
+        try:
+            return _on_account_page(context.pages[0] if context.pages else context.new_page())
+        finally:
+            context.close()
+
+
 def main() -> int:
-    if not os.path.exists(AUTH_STATE_PATH):
+    if not PROFILE_DIR and not os.path.exists(AUTH_STATE_PATH):
         print(f"No saved session at {AUTH_STATE_PATH} -- run `python -m bots.google_login` first.")
         return 1
     if not session_alive():

@@ -11,6 +11,12 @@ rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 # `pulseaudio -D` gagal dan `set -e` mengubahnya jadi loop restart
 rm -f /var/run/pulse/pid /var/run/pulse/native
 rm -rf /tmp/pulse-*
+# profil Chromium permanen ada di volume dan bertahan saat container dibuat ulang. Kalau Chromium terputus paksa, kuncinya
+# (SingletonLock, berisi hostname container lama) tertinggal dan Chromium di container baru menolak memakai profil itu
+# ("in use by another computer"), jadi semua join Meet gagal. Di titik ini belum ada Chromium yang jalan, aman dihapus
+if [ -n "$GOOGLE_PROFILE_DIR" ]; then
+  rm -f "$GOOGLE_PROFILE_DIR"/SingletonLock "$GOOGLE_PROFILE_DIR"/SingletonCookie "$GOOGLE_PROFILE_DIR"/SingletonSocket
+fi
 
 Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
 XVFB_PID=$!
@@ -40,5 +46,14 @@ pactl set-default-sink DummyOutput
 # tanpa ini sink tertidur setelah 5 detik hening dan monitornya berhenti mengirim data, meninggalkan lubang di audio cadangan
 # (bots/audio_backup.py)
 pactl unload-module module-suspend-on-idle || true
+
+# layar jarak jauh untuk login Google di dalam container (bots/google_login_vnc.py). Memperlihatkan browser yang sedang
+# login, jadi wajib berkata sandi, x11vnc hanya mendengar localhost, dan port 6080 di compose hanya dibuka ke 127.0.0.1
+# host (di server: lewat ssh -L 6080:localhost:6080)
+if [ -n "$VNC_PASSWORD" ]; then
+  x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass >/dev/null 2>&1
+  x11vnc -display :99 -rfbauth /tmp/vncpass -localhost -forever -shared -rfbport 5900 -bg -quiet -o /tmp/x11vnc.log
+  websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/websockify.log 2>&1 &
+fi
 
 exec "$@"

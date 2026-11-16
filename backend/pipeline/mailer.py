@@ -145,15 +145,15 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
 
 
 def send_google_session_expired_email(to_email: str, worker_id: str) -> None:
-    """Untuk super admin: sesi Google worker habis, rapat Meet ditolak sampai google_login.py dijalankan lagi."""
+    """Untuk super admin: sesi Google worker habis, rapat Meet ditolak sampai akun bot login ulang lewat noVNC."""
     config = _config()
     if config is None:
         return
 
     text = (
         f"Sesi Google worker {worker_id} sudah habis. Rapat Google Meet ditolak sampai sesinya diperbarui.\n"
-        "Jalankan di host: python -m bots.google_login (satu file sesi per worker, lihat docker-compose.yml). "
-        "Worker memeriksa ulang otomatis tiap 5 menit.\n\n"
+        "Login ulang akun bot: buka http://localhost:6080/vnc.html (kata sandi VNC_PASSWORD di .env), lalu jalankan "
+        "docker compose exec <worker> python -m bots.google_login_vnc. Worker memeriksa ulang otomatis tiap 5 menit.\n\n"
         "-- Notulis"
     )
     content = "\n".join([
@@ -163,7 +163,9 @@ def send_google_session_expired_email(to_email: str, worker_id: str) -> None:
             "sampai sesinya diperbarui. Rapat Zoom tidak terpengaruh."
         ),
         _paragraph(
-            "Jalankan <code>python -m bots.google_login</code> di host. Worker memeriksa ulang otomatis tiap 5 menit.",
+            "Login ulang akun bot lewat noVNC: buka <code>http://localhost:6080/vnc.html</code>, lalu jalankan "
+            "<code>docker compose exec &lt;worker&gt; python -m bots.google_login_vnc</code>. "
+            "Worker memeriksa ulang otomatis tiap 5 menit.",
             size=12, color=_INK_FAINT, margin="0",
         ),
     ])

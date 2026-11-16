@@ -53,8 +53,11 @@ services:
     environment:
       <<: *worker-env
       WORKER_PLATFORMS: google_meet,zoom
-    ports: ["5050:5050"]
-    volumes: ["./auth/worker-1.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+      # profil Chromium permanen yang diisi lewat bots/google_login_vnc.py, menggantikan file sesi yang disalin dari host
+      GOOGLE_PROFILE_DIR: /app/google-profile
+    # 6080: noVNC untuk login Google (butuh VNC_PASSWORD di .env), hanya dari komputer ini
+    ports: ["5050:5050", "127.0.0.1:6080:6080"]
+    volumes: ["./auth/worker-1.json:/app/auth/google.json", "google-profile-1:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-2:
     <<: *worker-base
     ports: ["5051:5050"]
@@ -120,4 +123,5 @@ services:
 # Dipakai bersama semua worker
 volumes:
   hf-cache:
+  google-profile-1:
   redis-data:

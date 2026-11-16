@@ -40,4 +40,4 @@ EXPOSE 5050 6080
 ENV PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["python", "app.py"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

@@ -7,7 +7,35 @@ from functools import wraps
 
 from flask import Response, jsonify, session
 
-from pipeline import auth_store, billing_store, meetings_store
+from pipeline import auth_store, billing_store, join_queue, meetings_store
+
+
+def too_many_attempts(key: str, limit: int) -> bool:
+    """Sudah `limit` percobaan di `key` (login gagal, lupa password)? Disimpan di Redis (bersama semua proses, bertahan saat
+    restart) dengan kedaluwarsa otomatis. Redis mati dianggap belum, supaya gangguan Redis tidak mengunci semua orang."""
+    try:
+        return int(join_queue._get_client().get(f"notulis:rl:{key}") or 0) >= limit
+    except Exception as e:
+        print(f"[ratelimit] cek gagal, dilewati: {e}")
+        return False
+
+
+def count_attempt(key: str, window_s: int) -> None:
+    try:
+        client = join_queue._get_client()
+        # set nx lebih dulu supaya kunci selalu punya batas waktu (incr lalu expire terpisah bisa meninggalkan kunci abadi
+        # kalau prosesnya mati di antaranya, dan orangnya terkunci selamanya)
+        client.set(f"notulis:rl:{key}", 0, ex=window_s, nx=True)
+        client.incr(f"notulis:rl:{key}")
+    except Exception as e:
+        print(f"[ratelimit] hitung gagal, dilewati: {e}")
+
+
+def clear_attempts(key: str) -> None:
+    try:
+        join_queue._get_client().delete(f"notulis:rl:{key}")
+    except Exception as e:
+        print(f"[ratelimit] reset gagal, dilewati: {e}")
 
 
 # kosong atau 0 = tanpa batas, rekaman berhenti sendiri (host keluar, bot sendirian, hening)

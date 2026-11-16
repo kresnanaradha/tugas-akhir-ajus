@@ -248,6 +248,19 @@ Team is a flat monthly fee (`billing_store.PLAN_PRICES`), not metered per
 seat, so a seat cap would enforce a limit the billing itself doesn't charge
 for; revisit if that pricing model changes.
 
+**Same link, several users** - a second user who submits a link that already has a meeting (non-failed, within 6 hours) gets
+no second bot: they become a viewer (`meeting_viewers`, read-only) and receive the result by email with its own wording
+("kemungkinan Anda berada di rapat yang sama...", `mailer.send_meeting_ready_email(shared=True)`): when the summary is ready
+(`process.notify_meeting_ready` mails owner and viewers) or at once if the meeting already finished (`routes/recording.py`).
+
+**Security basics** (deploy checklist: `LOCAL_FRONTEND_URL` = the https frontend address, `COOKIE_SECURE=1`, strong `SECRET_KEY`,
+`VNC_PASSWORD`, never publish ports 6080 to 6082): CORS lets only `LOCAL_FRONTEND_URL` call the API with cookies (`app.py`);
+the session cookie is HttpOnly and SameSite=Lax (`COOKIE_SAMESITE=None` only if frontend and API are different sites);
+5 failed logins for one email lock it for 15 minutes and forgot-password mails at most 3 per address per hour
+(`routes/common.py` counters in Redis, `routes/auth.py`); the container runs gunicorn (`gunicorn.conf.py`, one process with
+threads: the recorder loop is a thread there, started by `post_worker_init`; a request longer than the gunicorn timeout does
+not kill the process, checked) instead of Flask's development server.
+
 **Email notifications** (`pipeline/mailer.py`, stdlib `smtplib` only, no
 new dependency) - after `summarize()` succeeds (shared by both the join
 flow and `/upload`), emails the meeting's owner a styled HTML message
@@ -330,19 +343,14 @@ short clips), `EXTRA_VOCAB` is sent as the vocabulary prompt. Audio leaves the m
   separation) only fix "who", or are heavy; the plan is to flag low-confidence lines (word probability from
   Replicate) and document it as a known limitation. Not built yet.
 
-**Docker multi-worker** (`docker-compose.yml`, `Dockerfile`,
-`docker-entrypoint.sh`) - 10 independent worker (recorder) services
-(`worker-1` through `worker-10`), each the full backend image in its own
-container with its own Xvfb virtual display, its own Google account/session
-(`auth/worker-N.json`, mounted writable so refreshed cookies persist), and its own host port; all
-share one Postgres/R2/`.env`, plus now `redis`/`transcriber-1`/
-`transcriber-2` (see "Recorder/transcriber split" above). **Only `worker-1`
-actually has a logged-in Google session right now** - `worker-2` through
-`worker-10` need `bots/google_login.py` run once per account before they're
-usable (see "Next steps"), and `WORKER_PLATFORMS` set to `google_meet,zoom` for them (compose default is `zoom` only,
-`worker-1` overrides it). Joins are now routed through the Redis join queue (see "Meeting lifecycle"), so the
-frontend can keep pointing at one `EXPO_PUBLIC_API_URL` and a free worker picks the job. Not yet verified live with
-two real workers (tests use a fake Redis: `tests/test_join_queue.py`).
+**Docker multi-worker** (`docker-compose.yml`, `docker-compose.dokploy.yml` for the VPS, `Dockerfile`,
+`docker-entrypoint.sh`) - 3 independent worker (recorder) services (`worker-1` to `worker-3`), each the full backend
+image in its own container with its own Xvfb display, its own persistent Chromium profile (volume `google-profile-N`) and its own
+host ports; all share one Postgres/R2/`.env`, plus `redis`/`transcriber-1`/`transcriber-2` (see "Recorder/transcriber
+split"). All three take Meet and Zoom. One Google account can serve all three, but each worker logs in itself (a profile
+must not be copied or two Chromiums share it). Joins go through the Redis join queue (see "Meeting lifecycle"), so the
+frontend points at one `EXPO_PUBLIC_API_URL` and a free worker picks the job. Not yet verified live with several recordings
+at once (tests use a fake Redis: `tests/test_join_queue.py`).
 
 `worker-test`/`worker-test-2` were a throwaway pair for load-testing during the
 optimization week (removed from the compose file since; `Dockerfile`'s `TORCH_CPU`
@@ -424,12 +432,14 @@ to `/login` live there, via `lib/auth-context.jsx`).
   transcribe → fix → summarize, with diarization) confirmed end-to-end.
   Google blocks anonymous automated joins and blocks a Playwright-driven
   login regardless of stealth patches, so the bot never logs in itself: a
-  human logs in once in a real Chrome via `bots/google_login.py` (on the host),
-  which saves the session to `auth/worker-N.json`; each join loads it as
-  Playwright `storage_state` in a fresh browser (launched with
-  `--auto-accept-this-tab-capture`, else every recording pauses on "Allow this
-  tab to be seen?"). The old CDP sidecar (`chrome-profile/`, port 9222) is gone.
-  On PowerShell set the path with `$env:GOOGLE_AUTH_STATE_PATH = "auth/worker-1.json"` first.
+  human logs in once per worker INSIDE the container through noVNC (`bots/google_login_vnc.py`, screen at
+  `http://localhost:608N/vnc.html`, password `VNC_PASSWORD` in `.env`, port bound to 127.0.0.1 only, over `ssh -L` on a server)
+  into a persistent Chromium profile (`GOOGLE_PROFILE_DIR`); the bot opens that same profile for every join (launched with
+  `--auto-accept-this-tab-capture`, else every recording pauses on "Allow this tab to be seen?"). Cookies copied from a Chrome on
+  the laptop (`bots/google_login.py` + `storage_state`, still there for running without Docker) were rejected by Google within
+  hours (other device and IP). Google flags the bot as "Memiliki potensi risiko" in the lobby, the host admits it with the
+  menu next to its name. Joining as a guest without any account is rejected outright ("You can't join this video call").
+  Stale `SingletonLock` files in the profile are removed by the entrypoint at every container start.
 - **Zoom: working, tested end-to-end** for join + record. Transcribe/
   summarize reuse the exact same functions Google Meet already confirmed
   working, but haven't been separately re-verified through a live Zoom run
@@ -584,10 +594,8 @@ but no full-length run has been done yet -- do a 15-minute one first):
 
 ## Known gaps
 
-- **`worker-2` through `worker-10` aren't actually usable yet for Meet** - the
-  compose services exist, but each needs its own Google account logged in
-  once via `bots/google_login.py` and `WORKER_PLATFORMS` extended with `google_meet` (see "Docker multi-worker" above).
-  Zoom works on any worker already.
+- **Google session durability is unproven.** The persistent profile removes the copied-cookie cause, but Google can still
+  revoke a session. Watch for "Sesi Google habis" emails for 2 to 3 days after each login.
 - **Join queue gaps.** Redis has no AOF, so queued joins are lost on a Redis crash (a queued join is only worth ~10
   minutes anyway). A job lost between the BLPOP claim and the first `set_job` (worker crash in that instant) leaves its
   row at its first status. Not gaps any more: a worker that dies mid-meeting is reaped (`_reap_dead_jobs` in `join_worker.py`:
@@ -598,7 +606,7 @@ but no full-length run has been done yet -- do a 15-minute one first):
   rotated back to the file; `GoogleMeetBot.join` also saves the session after each recording, 2026-11-12): every 30 min, every 5 min while expired. Expired: the worker stops claiming and
   advertising Meet (so `/google/join` answers 503 instead of accepting a join that must fail), the admin page marks it
   red, and every active super admin gets one email (`mailer.send_google_session_expired_email`; with several Meet
-  workers each one mails once). Back to normal by itself after `google_login.py` is run again on the host. A check that
+  workers each one mails once). Back to normal by itself after the worker is logged in again (`google_login_vnc`). A check that
   throws (network) is skipped, it does not flip the state. Not yet seen against a really expired session.
 - **Early-stop detection is untested against real screens.** `record()` now
   polls each bot's `meeting_state()` every 3s and stops on "ended" (twice in

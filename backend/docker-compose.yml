@@ -1,30 +1,33 @@
 # Nama project sama seperti sebelum folder jadi backend/, supaya volume yang ada (cache model) dan image tetap dipakai.
 name: meeting-bot
 
-# Perekam: sampai 10 bot. Tiap worker adalah seluruh backend (image sama, Flask di 5050 di dalam container) dengan
-# display Xvfb dan login Google sendiri, dan satu pengambil tugas yang merekam SATU rapat sekali jalan (dua bot di satu
+# Perekam: 3 bot. Tiap worker adalah seluruh backend (image sama, API di 5050 di dalam container) dengan display Xvfb,
+# profil Chromium dan login Google sendiri, dan satu pengambil tugas yang merekam SATU rapat sekali jalan (dua bot di satu
 # display akan merekam jendela satu sama lain). API di worker mana pun menaruh tugas join ke antrean Redis
 # (pipeline/join_queue.py) dan worker yang kosong mengambilnya, jadi frontend cukup menunjuk satu EXPO_PUBLIC_API_URL.
-# Mereka berbagi Postgres, R2, dan Redis lewat .env, hanya file sesi Google dan port host yang berbeda.
+# Mereka berbagi Postgres, R2, dan Redis lewat .env, hanya profil Google dan port host yang berbeda.
 #
-# Login tiap akun sekali di HOST (butuh layar dan orangnya), satu file sesi per worker:
-#   GOOGLE_AUTH_STATE_PATH=auth/worker-1.json python -m bots.google_login
-#   GOOGLE_AUTH_STATE_PATH=auth/worker-2.json python -m bots.google_login
-# lalu isi WORKER_PLATFORMS worker itu dengan google_meet,zoom (bawaan: zoom saja).
+# Login Google, sekali per worker, DI DALAM container lewat noVNC (bukan di host: cookie yang disalin dari Chrome host ditolak
+# Google dalam hitungan jam). Isi VNC_PASSWORD di .env, lalu untuk tiap worker N (port noVNC 6079+N):
+#   buka http://localhost:608N/vnc.html, Connect
+#   docker compose exec worker-N python -m bots.google_login_vnc
+# Satu akun Google boleh dipakai ketiganya, tapi tiap worker login sendiri (profilnya tidak boleh disalin). Sebelum worker login,
+# pemantau sesinya menandai sesi habis dan Meet tidak diambilnya, Zoom tetap jalan.
+# Port noVNC hanya terbuka ke komputer ini (127.0.0.1), jangan dibuka ke jaringan: layarnya memperlihatkan akun yang sedang login.
 #
-# Kekurangan: baru worker-1 yang login. Rapat yang menunggu worker kosong lebih dari JOIN_QUEUE_MAX_WAIT_SECONDS (600)
-# dibatalkan. Server yang hanya melayani API (tanpa bot) cukup diberi RECORDER=0.
+# Rapat yang menunggu worker kosong lebih dari JOIN_QUEUE_MAX_WAIT_SECONDS (600) dibatalkan. Server yang hanya melayani API
+# (tanpa bot) cukup diberi RECORDER=0.
 
 x-worker-env: &worker-env
-  GOOGLE_AUTH_STATE_PATH: /app/auth/google.json
+  # profil Chromium permanen (volume google-profile-N), diisi lewat bots/google_login_vnc.py
+  GOOGLE_PROFILE_DIR: /app/google-profile
   # timestamp adalah waktu lokal tanpa zona dan frontend menampilkannya apa adanya, jadi container butuh zona waktu
   # user (di UTC tiap rapat tampil 8 jam lebih awal)
   TZ: Asia/Makassar
   # antrean join dan rekaman yang selesai diserahkan ke transkriber lewat ini
   REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-  # platform yang diambil worker ini dari antrean join. Zoom tidak butuh akun, Meet butuh sesi Google yang sudah login
-  # (auth/worker-N.json): tambahkan google_meet hanya untuk worker yang sudah login, seperti worker-1 di bawah
-  WORKER_PLATFORMS: zoom
+  # platform yang diambil worker ini dari antrean join (Zoom tidak butuh akun, Meet butuh profil yang sudah login)
+  WORKER_PLATFORMS: google_meet,zoom
 
 x-worker-base: &worker-base
   build: .
@@ -50,50 +53,19 @@ x-transcriber-base: &transcriber-base
 services:
   worker-1:
     <<: *worker-base
-    environment:
-      <<: *worker-env
-      WORKER_PLATFORMS: google_meet,zoom
-      # profil Chromium permanen yang diisi lewat bots/google_login_vnc.py, menggantikan file sesi yang disalin dari host
-      GOOGLE_PROFILE_DIR: /app/google-profile
-    # 6080: noVNC untuk login Google (butuh VNC_PASSWORD di .env), hanya dari komputer ini
+    environment: *worker-env
     ports: ["5050:5050", "127.0.0.1:6080:6080"]
-    volumes: ["./auth/worker-1.json:/app/auth/google.json", "google-profile-1:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    volumes: ["google-profile-1:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-2:
     <<: *worker-base
-    ports: ["5051:5050"]
-    volumes: ["./auth/worker-2.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    environment: *worker-env
+    ports: ["5051:5050", "127.0.0.1:6081:6080"]
+    volumes: ["google-profile-2:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-3:
     <<: *worker-base
-    ports: ["5052:5050"]
-    volumes: ["./auth/worker-3.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-4:
-    <<: *worker-base
-    ports: ["5053:5050"]
-    volumes: ["./auth/worker-4.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-5:
-    <<: *worker-base
-    ports: ["5054:5050"]
-    volumes: ["./auth/worker-5.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-6:
-    <<: *worker-base
-    ports: ["5055:5050"]
-    volumes: ["./auth/worker-6.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-7:
-    <<: *worker-base
-    ports: ["5056:5050"]
-    volumes: ["./auth/worker-7.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-8:
-    <<: *worker-base
-    ports: ["5057:5050"]
-    volumes: ["./auth/worker-8.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-9:
-    <<: *worker-base
-    ports: ["5058:5050"]
-    volumes: ["./auth/worker-9.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
-  worker-10:
-    <<: *worker-base
-    ports: ["5059:5050"]
-    volumes: ["./auth/worker-10.json:/app/auth/google.json", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
+    environment: *worker-env
+    ports: ["5052:5050", "127.0.0.1:6082:6080"]
+    volumes: ["google-profile-3:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
 
   # antrean antara perekam dan transkriber (pipeline/job_queue.py). Diberi password walau tidak ada
   # `ports:` (hanya jaringan compose ini yang menjangkaunya), kalau-kalau ada port mapping yang tertambah karena salah di VPS sungguhan
@@ -124,4 +96,6 @@ services:
 volumes:
   hf-cache:
   google-profile-1:
+  google-profile-2:
+  google-profile-3:
   redis-data:

@@ -24,22 +24,33 @@ _MAX_JOIN_ATTEMPTS = 3
 _ENDED_PHRASES = ("return to home screen", "you've been removed", "you left the meeting", "call has ended", "meeting has ended")
 _ALONE_PHRASE = "you're the only one here"
 _ADMIT_WAIT_SECONDS = 60
+# container tidak punya mikrofon/kamera, jadi begitu masuk Meet memunculkan balon "Microphone not found" yang ikut terekam.
+# Tombol tutupnya dicari lewat aria-label persis (bukan teks bebas) supaya tidak pernah mengenai "Leave call"
+_POPUP_CLOSE = 'button[aria-label="Close"], button[aria-label="Tutup"], button[aria-label="Dismiss"]'
+
+
+def _close(context) -> None:
+    # profil permanen tidak punya objek browser terpisah, menutup context-nya menutup Chromium
+    (context.browser or context).close()
 
 
 class GoogleMeetBot(MeetBotBase):
     def join(self) -> str:
-        # Google memblokir loginnya kalau browser diotomasi, dengan stealth atau tidak, jadi bot tidak pernah login: orang
-        # login sekali (bots/google_login.py, di luar Docker) dan sesi yang disimpan di GOOGLE_AUTH_STATE_PATH dimuat
-        # ke browser baru setiap join. Satu container = satu akun
+        # Google memblokir loginnya kalau browser diotomasi, dengan stealth atau tidak, jadi bot tidak pernah login sendiri.
+        # Dua cara memakai login orang: (1) GOOGLE_PROFILE_DIR, profil Chromium permanen yang diisi lewat
+        # bots/google_login_vnc.py di dalam container (browser, perangkat, dan IP sama, cookie tidak pernah dipindah), atau
+        # (2) GOOGLE_AUTH_STATE_PATH, file sesi dari bots/google_login.py di host yang disalin ke browser baru setiap join.
+        # Satu container = satu akun
+        profile_dir = os.getenv("GOOGLE_PROFILE_DIR")
         auth_state_path = os.getenv("GOOGLE_AUTH_STATE_PATH", "auth/google.json")
-        if not os.path.exists(auth_state_path):
+        if not profile_dir and not os.path.exists(auth_state_path):
             raise RuntimeError(
                 f"No saved Google session at {auth_state_path} - run "
                 "`python -m bots.google_login` once to log in and create it."
             )
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(
+            launch = dict(
                 headless=False,
                 args=[
                     "--no-first-run",
@@ -59,13 +70,17 @@ class GoogleMeetBot(MeetBotBase):
                 ],
                 ignore_default_args=["--mute-audio", "--enable-automation"],
             )
-            context = browser.new_context(
-                storage_state=auth_state_path, viewport={"width": 1280, "height": 720}, ignore_https_errors=True
-            )
+            view = dict(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
+            if profile_dir:
+                # Chromium sendiri menyimpan cookie yang dirotasi Google ke profil, tidak ada yang perlu disalin balik
+                context = p.chromium.launch_persistent_context(profile_dir, **launch, **view)
+            else:
+                context = p.chromium.launch(**launch).new_context(storage_state=auth_state_path, **view)
 
             # dua evasion ini dimatikan, seperti konfigurasi Meet di proyek referensi
             Stealth(iframe_content_window=False, media_codecs=False).apply_stealth_sync(context)
-            self.page = context.new_page()
+            # profil permanen sudah membuka satu tab kosong, pakai itu supaya tidak ada tab lain yang ikut tampil
+            self.page = context.pages[0] if context.pages else context.new_page()
 
             admitted = False
             last_error = None
@@ -79,19 +94,21 @@ class GoogleMeetBot(MeetBotBase):
                     last_error = str(e)
 
             if not admitted:
-                browser.close()
+                _close(context)
                 raise RuntimeError(last_error or "Could not join the meeting")
 
             # try/finally: record() bisa melempar error di tengah rekaman, tanpa ini bot tetap tinggal di panggilan
             try:
+                self._dismiss_popups()
                 out_path = self.record()
             finally:
-                # Google merotasi cookie sesi tiap beberapa jam, snapshot lama jadi basi kalau tidak disimpan kembali
-                try:
-                    context.storage_state(path=auth_state_path)
-                except Exception as e:
-                    print(f"[google-meet] gagal menyimpan sesi: {e}")
-                browser.close()
+                # cara file sesi: Google merotasi cookie tiap beberapa jam, snapshot lama basi kalau tidak disimpan kembali
+                if not profile_dir:
+                    try:
+                        context.storage_state(path=auth_state_path)
+                    except Exception as e:
+                        print(f"[google-meet] gagal menyimpan sesi: {e}")
+                _close(context)
             return out_path
 
     def meeting_state(self) -> str:
@@ -101,6 +118,20 @@ class GoogleMeetBot(MeetBotBase):
         if _ALONE_PHRASE in text:
             return "alone"
         return "active"
+
+    def _dismiss_popups(self) -> None:
+        """Tutup balon peringatan yang muncul sesaat setelah masuk, sebelum perekaman dimulai. Gagal tidak apa-apa."""
+        self.page.wait_for_timeout(2500)  # balonnya muncul 1-2 detik setelah diizinkan masuk
+        for _ in range(3):
+            try:
+                self.page.keyboard.press("Escape")
+                buttons = self.page.locator(_POPUP_CLOSE)
+                for i in range(buttons.count()):
+                    if buttons.nth(i).is_visible():
+                        buttons.nth(i).click(timeout=1000)
+            except Exception:
+                pass
+            self.page.wait_for_timeout(700)
 
     def _attempt_join(self) -> bool:
         self.page.goto(self.url, wait_until="domcontentloaded")

@@ -38,7 +38,7 @@ export default function UploadRapatScreen() {
   const [recent, setRecent] = useState(null); // null = memuat
   useEffect(() => {
     listMeetings()
-      .then((data) => setRecent(data.slice(0, 4).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
+      .then((data) => setRecent(data.slice(0, 3).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
       .catch(() => setRecent([]));
   }, []);
 
@@ -187,7 +187,8 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
 
-  split: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  // stretch: kolom kiri dan kanan sama tinggi supaya dasar kartunya sejajar
+  split: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "stretch" },
   mainCol: { flex: 1.3, minWidth: 380, gap: spacing.sm },
   sideCol: { flex: 1, minWidth: 300, gap: spacing.md },
   sideCard: {

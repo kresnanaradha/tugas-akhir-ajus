@@ -31,6 +31,12 @@ def auth_register():
     return jsonify(user)
 
 
+# login gagal lebih dari 5 kali untuk satu email: terkunci 15 menit (menebak password satu akun jadi tidak mungkin)
+_LOGIN_WINDOW_S, _LOGIN_MAX = 15 * 60, 5
+# lupa password: paling banyak 3 email per alamat per jam, supaya fitur ini tidak dipakai membanjiri satu kotak masuk
+_FORGOT_WINDOW_S, _FORGOT_MAX = 3600, 3
+
+
 @bp.post("/auth/login")
 def auth_login():
     data = request.get_json(force=True) or {}
@@ -38,12 +44,18 @@ def auth_login():
     if not email or not password:
         return jsonify({"error": "email dan password wajib diisi"}), 400
 
+    email_key = f"login:{email.strip().lower()}"
+    if common.too_many_attempts(email_key, _LOGIN_MAX):
+        return jsonify({"error": "Terlalu banyak percobaan login. Coba lagi dalam 15 menit."}), 429
+
     user = auth_store.verify_login(email, password)
     if user is None:
+        common.count_attempt(email_key, _LOGIN_WINDOW_S)
         return jsonify({"error": "Email atau password salah"}), 401
     if not user["active"]:
         return jsonify({"error": "Akun dinonaktifkan. Hubungi admin."}), 403
 
+    common.clear_attempts(email_key)
     session["user_id"] = user["id"]
     session["role"] = user["role"]
     return jsonify(user)
@@ -111,6 +123,12 @@ def forgot_password():
     """Selalu menjawab ok supaya tidak bisa dipakai mencari email yang terdaftar. Token ditandatangani dan terikat ke
     hash password saat ini, jadi hanya berlaku sekali."""
     email = ((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+    # sudah tiga kali: dilewati diam-diam dan tetap menjawab ok, supaya jawabannya tidak membocorkan email itu terdaftar
+    email_key = f"forgot:{email}"
+    if email and common.too_many_attempts(email_key, _FORGOT_MAX):
+        return jsonify({"ok": True})
+    if email:
+        common.count_attempt(email_key, _FORGOT_WINDOW_S)
     row = auth_store.get_row_by_email(email) if email else None
     if row and row["active"]:
         token = _reset_serializer().dumps({"u": row["id"], "h": row["password_hash"][-16:]})

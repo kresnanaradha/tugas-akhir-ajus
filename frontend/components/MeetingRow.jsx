@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { Link } from "expo-router";
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
@@ -14,13 +15,27 @@ const PLATFORM_ACCENT = {
 };
 const DEFAULT_ACCENT = { icon: "video", bg: colors.surfaceSunken, fg: colors.inkFaint };
 
+// di bawah lebar ini (mis. kolom samping Rapat Baru) tanggal dan status pindah ke bawah judul, kalau tidak judul tinggal "R..."
+const COMPACT_WIDTH = 460;
+
 export function MeetingRow({ meeting, selected, onSelect }) {
   const accent = PLATFORM_ACCENT[meeting.platform] || DEFAULT_ACCENT;
+  const [width, setWidth] = useState(0);
+  const compact = width > 0 && width < COMPACT_WIDTH;
+  const when = (
+    <Text style={styles.time}>
+      {meeting.date}, {meeting.time}
+    </Text>
+  );
 
   // Dengan onSelect baris hanya memilih (panel pratinjau halaman Rapat); tanpanya,
   // ia membuka halaman detail seperti dulu (dashboard).
   const row = (
-      <Pressable style={StyleSheet.flatten([styles.row, selected && styles.rowSelected])} onPress={onSelect}>
+      <Pressable
+        style={StyleSheet.flatten([styles.row, selected && styles.rowSelected])}
+        onPress={onSelect}
+        onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+      >
         <View style={[styles.iconCircle, { backgroundColor: accent.bg }]}>
           <Feather name={accent.icon} size={16} color={accent.fg} />
         </View>
@@ -50,14 +65,20 @@ export function MeetingRow({ meeting, selected, onSelect }) {
               </View>
             )}
           </View>
+          {compact && (
+            <View style={styles.compactRow}>
+              {when}
+              <StatusPill status={meeting.status} />
+            </View>
+          )}
         </View>
 
-        <View style={styles.rightCol}>
-          <Text style={styles.time}>
-            {meeting.date}, {meeting.time}
-          </Text>
-          <StatusPill status={meeting.status} />
-        </View>
+        {!compact && (
+          <View style={styles.rightCol}>
+            {when}
+            <StatusPill status={meeting.status} />
+          </View>
+        )}
 
         <Feather name="chevron-right" size={16} color={colors.inkFaint} />
       </Pressable>
@@ -106,5 +127,6 @@ const styles = StyleSheet.create({
   meta: { ...type.small, color: colors.inkFaint },
 
   rightCol: { alignItems: "flex-end", gap: 6 },
+  compactRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.sm, marginTop: 4 },
   time: { ...type.small, color: colors.inkFaint },
 });

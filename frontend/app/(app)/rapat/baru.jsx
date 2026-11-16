@@ -34,7 +34,7 @@ export default function BuatRapatScreen() {
   const [recent, setRecent] = useState(null); // null = memuat
   useEffect(() => {
     listMeetings()
-      .then((data) => setRecent(data.slice(0, 4).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
+      .then((data) => setRecent(data.slice(0, 3).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
       .catch(() => setRecent([]));
   }, []);
 
@@ -188,7 +188,8 @@ const styles = StyleSheet.create({
   title: { ...type.h1, fontSize: 24, color: colors.ink },
   subtitle: { ...type.body, color: colors.inkSoft, marginBottom: spacing.lg },
 
-  split: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "flex-start" },
+  // stretch: kolom kiri dan kanan sama tinggi supaya dasar kartunya sejajar
+  split: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, alignItems: "stretch" },
 
   card: {
     flex: 1.3,
@@ -257,7 +258,8 @@ const styles = StyleSheet.create({
 
   errorText: { ...type.small, color: colors.danger, marginTop: spacing.md },
 
-  actions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.xl },
+  // marginTop auto: tombol tetap di dasar kartu saat kartunya memanjang mengikuti kolom kanan
+  actions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: "auto", paddingTop: spacing.xl },
   cancelButton: {
     borderWidth: 1,
     borderColor: colors.border,

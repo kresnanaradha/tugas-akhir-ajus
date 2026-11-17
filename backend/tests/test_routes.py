@@ -134,6 +134,12 @@ assert len(mails) == 4  # alamat lain tidak terpengaruh
 join_queue._get_client = lambda: (_ for _ in ()).throw(RuntimeError("redis mati"))
 assert login("a@b.c", "benar").status_code == 200
 
+# nonaktifkan akun sendiri: Super Admin ditolak (jangan sampai tidak ada admin), User biasa boleh
+deactivated = []
+auth_store.update_user = lambda uid, **k: deactivated.append((uid, k))
+assert client_as("sa", "super_admin").post("/auth/me/deactivate").status_code == 400 and not deactivated
+assert client_as("u1").post("/auth/me/deactivate").status_code == 200 and deactivated == [("u1", {"active": False})]
+
 # /upload langsung kembali dengan id rapat dan mengantre ke transkriber (tidak memproses di request)
 import io
 from pipeline import job_queue

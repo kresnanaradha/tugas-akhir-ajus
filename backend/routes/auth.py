@@ -106,7 +106,10 @@ def update_own_profile():
 @bp.post("/auth/me/deactivate")
 @login_required
 def deactivate_own_account():
-    """Nonaktifkan, bukan hapus (rapat menunjuk ke baris user), lalu logout."""
+    """Nonaktifkan, bukan hapus (rapat menunjuk ke baris user), lalu logout. Super Admin ditolak, sama seperti di halaman
+    Manajemen Pengguna: kalau satu-satunya Super Admin menonaktifkan diri, tidak ada lagi yang bisa mengelola sistem."""
+    if session.get("role") == "super_admin":
+        return jsonify({"error": "Akun Super Admin tidak bisa dinonaktifkan sendiri"}), 400
     auth_store.update_user(session["user_id"], active=False)
     session.clear()
     return jsonify({"ok": True})

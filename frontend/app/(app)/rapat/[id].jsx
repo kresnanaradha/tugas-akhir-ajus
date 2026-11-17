@@ -176,7 +176,7 @@ export default function MeetingDetailScreen() {
   }
 
   const stats = meetingStats(meeting || {});
-  const canEdit = !!meeting?.can_edit; // penonton (tautan, team) hanya membaca, backend menolak ubahan mereka
+  const canEdit = !!meeting?.can_edit; // anggota team hanya membaca, backend menolak ubahan mereka
   const isLive = liveStatus && liveStatus !== "failed";
   const isLiveFailed = liveStatus === "failed";
 

@@ -140,6 +140,22 @@ auth_store.update_user = lambda uid, **k: deactivated.append((uid, k))
 assert client_as("sa", "super_admin").post("/auth/me/deactivate").status_code == 400 and not deactivated
 assert client_as("u1").post("/auth/me/deactivate").status_code == 200 and deactivated == [("u1", {"active": False})]
 
+# hapus rapat yang berbagi berkas rekaman: berkas dibiarkan selama masih dipakai rapat lain, yang terakhir membersihkannya
+deleted = []
+storage.delete_prefix = lambda prefix, keep=None: deleted.append(("prefix", prefix, keep))
+storage.delete_object = lambda key: deleted.append(("object", key))
+meetings_store.delete_meeting = lambda mid: None
+meetings_store.get_meeting = lambda mid: {"id": mid, "user_id": "owner", "status": "completed", "recording": "m1/recording.webm"}
+for rid, refs, expected in (
+    ("m1", 1, [("prefix", "m1/", "m1/recording.webm")]),  # sumber, masih ada salinan: rekaman dibiarkan
+    ("m1", 0, [("prefix", "m1/", None)]),  # sumber tanpa salinan: semuanya dihapus
+    ("c1", 1, [("prefix", "c1/", "m1/recording.webm")]),  # salinan, sumber atau salinan lain masih ada
+    ("c1", 0, [("prefix", "c1/", None), ("object", "m1/recording.webm")]),  # salinan terakhir: rekaman sumber ikut dibersihkan
+):
+    deleted.clear()
+    meetings_store.recording_refs = lambda rec, mid, refs=refs: refs
+    assert client_as("owner").delete(f"/meetings/{rid}").status_code == 200 and deleted == expected, (rid, refs, deleted)
+
 # /upload langsung kembali dengan id rapat dan mengantre ke transkriber (tidak memproses di request)
 import io
 from pipeline import job_queue

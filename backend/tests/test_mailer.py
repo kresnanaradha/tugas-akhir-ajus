@@ -32,7 +32,7 @@ for to, subject, text, body in sent:
 assert "baris 1<br>baris 2" in sent[0][3]
 assert "http://u/billing" in sent[2][3] and "65" in sent[2][3]
 assert "7 hari" in sent[3][3]
-# penonton: subjek dan isi menjelaskan kenapa mereka menerima hasil rapat orang lain, pemilik tidak
-assert sent[4][1].startswith("Hasil rapat dibagikan") and "rapat yang sama" in sent[4][3] and "rapat yang sama" in sent[4][2]
+# rapat salinan: subjek dan isi menjelaskan kenapa mereka menerima hasil rapat orang lain, pemilik tidak
+assert sent[4][1].startswith("Hasil rapat disalin") and "rapat yang sama" in sent[4][3] and "rapat yang sama" in sent[4][2]
 assert "rapat yang sama" not in sent[0][3] and sent[0][1].startswith("Transkrip siap")
 print("ok")

@@ -3,6 +3,7 @@ transkriber. Dijalankan app.py di thread latar (kecuali RECORDER=0)."""
 
 import threading
 import time
+from datetime import datetime
 
 from bots import google_session_keepalive
 from bots.google_meet import GoogleMeetBot
@@ -40,10 +41,14 @@ def run_join_job(job_id: str, bot, platform: str, title: str, num_speakers: int 
     owner_id = (meetings_store.get_meeting(job_id) or {}).get("user_id")
     weekly = common.weekly_quota(owner_id) if owner_id else None
     if weekly and duration_minutes > weekly["remaining"]:
-        meetings_store.update_meeting(job_id, status="limited", recording=recording_key, duration_minutes=duration_minutes)
+        meetings_store.update_meeting(
+            job_id, status="limited", recording=recording_key, duration_minutes=duration_minutes, ended_at=datetime.now()
+        )
         send_unprocessed_email(owner_id, job_id, title, duration_minutes, weekly)
     else:
-        meetings_store.update_meeting(job_id, status="processing", recording=recording_key, duration_minutes=duration_minutes)
+        meetings_store.update_meeting(
+            job_id, status="processing", recording=recording_key, duration_minutes=duration_minutes, ended_at=datetime.now()
+        )
         job_queue.enqueue_transcription(job_id, recording_key, num_speakers)
 
     # buang job-nya supaya GET /jobs/<id> 404, frontend lalu memantau baris rapatnya

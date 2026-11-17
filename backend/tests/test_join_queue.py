@@ -134,14 +134,14 @@ assert c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"})
 queued = json.loads(fake.lists["notulis:join_jobs:zoom"][-1])
 assert queued["platform"] == "zoom" and queued["title"] == "Rapat Zoom"
 
-# tautan yang sama dengan rapat orang lain: tanpa bot kedua. Rapat yang sudah selesai langsung mengirim hasilnya ke penonton
-# baru (satu kali saja), rapat yang masih berjalan menunggu email saat ringkasan selesai
+# tautan yang sama dengan rapat orang lain: tanpa bot kedua. User kedua mendapat rapat salinan sendiri (id baru). Yang sumbernya
+# sudah selesai tersalin sekarang, yang masih berjalan tersalin nanti oleh transkriber
 from routes import recording  # noqa: E402
 
-sent, added = [], []
-recording.artifacts.load_summary = lambda mid: {"executive_summary": "S"}
-recording.process.notify_meeting_ready = lambda mid, summary, only_user_id=None: sent.append((mid, only_user_id))
-meetings_store.add_viewer = lambda mid, uid: added.append((mid, uid)) or len(added) == 1  # hanya pemanggilan pertama yang baru
+created, finished = [], []
+meetings_store.find_follower = lambda src, uid: None
+meetings_store.create_follower = lambda src, uid: created.append((src["id"], uid)) or "copy1"
+recording.followers.finish_follower = lambda fid, src: finished.append((fid, src["id"]))
 
 
 class Inline:  # menjalankan thread langsung supaya hasilnya bisa diperiksa
@@ -153,20 +153,30 @@ class Inline:  # menjalankan thread langsung supaya hasilnya bisa diperiksa
 
 
 recording.threading.Thread = Inline
-meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "completed"}
 n_jobs = len(fake.lists["notulis:join_jobs:zoom"])
-for _ in range(2):  # ditempel dua kali: email hanya sekali
-    resp = c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"}).get_json()
-    assert resp == {"job_id": "old", "shared": True}
-assert sent == [("old", "owner")] and len(fake.lists["notulis:join_jobs:zoom"]) == n_jobs
+zoom_url = {"url": "https://us02web.zoom.us/j/123456789"}
 
-sent.clear(); added.clear()
+meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "completed"}
+resp = c.post("/zoom/join", json=zoom_url).get_json()
+assert resp == {"job_id": "copy1", "shared": True}  # id rapat salinan, bukan id rapat orang lain
+assert created == [("old", "owner")] and finished == [("copy1", "old")]
+assert len(fake.lists["notulis:join_jobs:zoom"]) == n_jobs  # tidak ada bot kedua
+
+created.clear(); finished.clear()
 meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "recording"}
-c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"})
-assert added == [("old", "owner")] and sent == []  # masih berjalan: tidak ada email sekarang
+c.post("/zoom/join", json=zoom_url)
+assert created == [("old", "owner")] and finished == []  # masih berjalan: hasilnya disalin nanti saat sumber selesai
 
-sent.clear()
+created.clear()
+meetings_store.find_follower = lambda src, uid: "copy1"  # ditempel dua kali: tetap rapat salinan yang sama
+assert c.post("/zoom/join", json=zoom_url).get_json() == {"job_id": "copy1", "shared": True} and created == []
+
+meetings_store.find_follower = lambda src, uid: None
 meetings_store.find_meeting_by_url = lambda url: {"id": "mine", "user_id": "owner", "status": "completed"}
-c.post("/zoom/join", json={"url": "https://us02web.zoom.us/j/123456789"})
-assert sent == []  # pemilik sendiri bukan penonton
+assert c.post("/zoom/join", json=zoom_url).get_json() == {"job_id": "mine", "shared": True} and created == []  # rapat sendiri
+
+# salinan ikut jatah rapat bulanan: kuota habis ditolak, rapat tidak dibuat
+meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "recording"}
+common.check_meeting_quota = lambda uid: "Jatah rapat bulan ini habis"
+assert c.post("/zoom/join", json=zoom_url).status_code == 402 and created == []
 print("ok")

@@ -87,8 +87,8 @@ def _send(config: dict, to_email: str, subject: str, text: str, html_body: str) 
 
 
 def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, meeting_url: str, shared: bool = False) -> None:
-    """Ringkasan siap. shared=True untuk pengguna yang memasukkan tautan yang sama dengan pemilik rapat: botnya tidak
-    dikirim dua kali, jadi emailnya menjelaskan kenapa mereka menerima hasil rapat ini."""
+    """Ringkasan siap. shared=True untuk pemilik rapat salinan (memasukkan tautan yang sama dengan rapat orang lain): botnya
+    tidak dikirim dua kali, jadi emailnya menjelaskan kenapa mereka menerima hasil rapat ini."""
     config = _config()
     if config is None:
         return
@@ -96,10 +96,10 @@ def send_meeting_ready_email(to_email: str, title: str, summary_excerpt: str, me
     if shared:
         intro = (
             "Kemungkinan Anda berada di rapat yang sama. Tautan rapat yang Anda masukkan ke Notulis sudah direkam oleh "
-            "pengguna lain, jadi bot tidak dikirim dua kali dan hasilnya dibagikan kepada Anda. Anda bisa melihat rekaman, "
-            "transkrip, dan ringkasannya, tetapi hanya pemilik rapat yang dapat mengubahnya."
+            "pengguna lain, jadi bot tidak dikirim dua kali dan hasilnya disalin ke rapat Anda. Anda bisa melihat dan mengubah "
+            "transkrip, ringkasan, dan action item salinan itu tanpa memengaruhi rapat milik pengguna lain."
         )
-        badge_label, subject, button = "Hasil Rapat Dibagikan", f"Hasil rapat dibagikan: {title}", "Lihat Hasil Rapat"
+        badge_label, subject, button = "Hasil Rapat Disalin", f"Hasil rapat disalin untuk Anda: {title}", "Lihat Hasil Rapat"
         text = f"{intro}\n\nRapat: \"{title}\"\n\nRingkasan:\n{summary_excerpt}\n\nLihat hasil lengkapnya: {meeting_url}\n\n-- Notulis"
     else:
         intro = "Rekaman rapat ini sudah selesai ditranskripsi dan diringkas otomatis."

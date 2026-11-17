@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, session
 
-from pipeline import artifacts, job_queue, join_queue, meetings_store, process, storage
+from pipeline import followers, job_queue, join_queue, meetings_store, storage
 
 from . import common
 from .common import login_required
@@ -32,12 +32,6 @@ MEETING_URL_PATTERNS = {
 MEETING_PLATFORM_LABEL = {"google_meet": "Google Meet", "zoom": "Zoom"}
 
 
-def _send_shared_result(meeting_id: str, user_id: str) -> None:
-    summary = artifacts.load_summary(meeting_id)
-    if summary:
-        process.notify_meeting_ready(meeting_id, summary, only_user_id=user_id)
-
-
 def _join(platform: str, title: str):
     data = request.get_json(force=True) or {}
     url = data.get("url")
@@ -53,16 +47,22 @@ def _join(platform: str, title: str):
     if not MEETING_URL_PATTERNS[platform].match(url):
         return jsonify({"error": f"'{url}' bukan tautan {MEETING_PLATFORM_LABEL[platform]} yang valid"}), 400
 
-    # sudah ada bot di tautan ini (atau pernah direkam): bagikan rapat itu, jangan
-    # kirim bot kedua
+    # tautan ini sedang atau baru direkam: jangan kirim bot kedua (hemat sumber daya). User ini mendapat rapat sendiri
+    # berisi salinan hasilnya, yang terisi saat rapat sumber selesai
     existing = meetings_store.find_meeting_by_url(url)
     if existing:
-        is_new_viewer = existing.get("user_id") != session["user_id"] and meetings_store.add_viewer(existing["id"], session["user_id"])
-        # rapat yang masih berjalan: emailnya menyusul saat ringkasan selesai (process.notify_meeting_ready). Yang sudah
-        # selesai tidak akan diproses lagi, jadi hasilnya dikirim sekarang
-        if is_new_viewer and existing["status"] == "completed":
-            threading.Thread(target=_send_shared_result, args=(existing["id"], session["user_id"]), daemon=True).start()
-        return jsonify({"job_id": existing["id"], "shared": True})
+        if existing.get("user_id") == session["user_id"]:
+            return jsonify({"job_id": existing["id"], "shared": True})
+        mine = meetings_store.find_follower(existing["id"], session["user_id"])
+        if mine:
+            return jsonify({"job_id": mine, "shared": True})
+        quota_error = common.check_meeting_quota(session["user_id"])  # salinan juga satu rapat di jatah bulanannya
+        if quota_error:
+            return jsonify({"error": quota_error}), 402
+        follower_id = meetings_store.create_follower(existing, session["user_id"])
+        if existing["status"] == "completed":  # sudah selesai: hasilnya tersalin sekarang, yang berjalan disalin nanti
+            threading.Thread(target=followers.finish_follower, args=(follower_id, existing), daemon=True).start()
+        return jsonify({"job_id": follower_id, "shared": True})
 
     quota_error = common.check_meeting_quota(session["user_id"])
     if quota_error:

@@ -1,4 +1,5 @@
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 
 from .db import execute, fetch_all, fetch_one, fetch_value, register_schema
 
@@ -22,6 +23,12 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS user_id TEXT;
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS in_kb BOOLEAN DEFAULT FALSE;
 -- pemilik membagikannya ke team-nya (opt in per rapat)
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS shared_with_team BOOLEAN DEFAULT FALSE;
+-- rapat salinan: User kedua yang memasukkan tautan yang sama dengan rapat yang sedang atau baru direkam mendapat rapat sendiri,
+-- dan baris ini menunjuk ke rapat sumber (NULL untuk rapat biasa). Hasilnya disalin saat sumber selesai, rekamannya tetap satu berkas
+ALTER TABLE meetings ADD COLUMN IF NOT EXISTS source_meeting_id TEXT;
+-- saat rekaman berakhir, untuk menentukan berapa lama tautan itu masih dianggap rapat yang sama
+ALTER TABLE meetings ADD COLUMN IF NOT EXISTS ended_at TIMESTAMP;
+-- peninggalan cara lama (penonton hanya melihat): tidak lagi diisi, tetapi baris lama tetap dihormati
 -- orang yang boleh melihat rapat yang bukan miliknya: mereka mengirim tautan live yang sama dan diberi rapat yang sudah ada
 CREATE TABLE IF NOT EXISTS meeting_viewers (
     meeting_id TEXT NOT NULL,
@@ -54,24 +61,75 @@ def start_meeting(
     )
 
 
-# tautan berulang (rapat mingguan, ruang Zoom pribadi) tidak boleh memberi seseorang transkrip lama, jadi
-# berbagi hanya melihat rapat dari beberapa jam terakhir
-_SHARE_WINDOW_HOURS = 6
+# tautan yang sama dianggap rapat yang sama selama bot masih bergabung atau merekam, ditambah beberapa menit setelah rekaman
+# berakhir (untuk yang terlambat memasukkan tautan). Lebih lama dari itu tautan berulang (rapat mingguan, ruang Zoom pribadi)
+# adalah rapat baru dan tidak boleh memberi seseorang transkrip lama.
+_SHARE_MINUTES_AFTER_END = 30
 
 
 def find_meeting_by_url(url: str) -> dict | None:
-    """Rapat non-gagal terbaru untuk tautan ini di dalam jendela berbagi, supaya _join() bisa membagikannya
-    dan tidak memulai bot kedua. Percobaan yang gagal tidak dihitung, jadi mencoba ulang mulai dari awal."""
-
+    """Rapat sumber (bukan salinan) non-gagal untuk tautan ini yang masih berjalan atau baru berakhir, supaya _join()
+    tidak memulai bot kedua untuk rapat yang sama. Percobaan yang gagal tidak dihitung, jadi mencoba ulang mulai dari awal."""
     row = fetch_one(
         """
         SELECT * FROM meetings
-        WHERE url = %s AND status != 'failed' AND created_at > NOW() - make_interval(hours => %s)
+        WHERE url = %s AND source_meeting_id IS NULL AND status != 'failed'
+            AND (status IN ('joining', 'recording', 'stopping') OR ended_at > %s)
         ORDER BY created_at DESC LIMIT 1
         """,
-        (url, _SHARE_WINDOW_HOURS),
+        # batasnya dihitung di sini, bukan NOW() database: ended_at ditulis dengan jam server (datetime.now()), sedangkan
+        # NOW() mengikuti zona waktu database (Supabase UTC) sehingga jendelanya bisa melebar beberapa jam
+        (url, datetime.now() - timedelta(minutes=_SHARE_MINUTES_AFTER_END)),
     )
     return _with_iso_date(row) if row else None
+
+
+def create_follower(source: dict, user_id: str) -> str:
+    """Buat rapat salinan milik user_id untuk rapat sumber dan kembalikan id-nya. Statusnya mengikuti sumber
+    (kecuali selesai, itu diisi followers.finish_follower setelah hasilnya tersalin)."""
+    follower_id = uuid.uuid4().hex
+    status = "processing" if source["status"] == "completed" else source["status"]
+    execute(
+        """
+        INSERT INTO meetings (id, platform, title, created_at, duration_minutes, status, recording, estimated_participants,
+                              url, user_id, source_meeting_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (follower_id, source["platform"], source["title"], datetime.now(), source.get("duration_minutes"), status,
+         source["recording"], source.get("estimated_participants"), source.get("url"), user_id, source["id"]),
+    )
+    return follower_id
+
+
+def find_follower(source_id: str, user_id: str) -> str | None:
+    """Id rapat salinan milik user ini untuk rapat sumber, kalau sudah ada (tautan ditempel dua kali)."""
+    return fetch_value("SELECT id FROM meetings WHERE source_meeting_id = %s AND user_id = %s", (source_id, user_id))
+
+
+def list_followers(source_id: str) -> list[dict]:
+    """Rapat salinan dari sumber ini yang hasilnya belum tersalin."""
+    return fetch_all("SELECT * FROM meetings WHERE source_meeting_id = %s AND status <> 'completed'", (source_id,))
+
+
+def recording_refs(recording: str, exclude_id: str) -> int:
+    """Berapa rapat lain yang memakai berkas rekaman yang sama (sumber dan salinannya berbagi satu berkas)."""
+    return fetch_value("SELECT COUNT(*) FROM meetings WHERE recording = %s AND id <> %s", (recording, exclude_id))
+
+
+# yang ikut disalin ke rapat salinan saat sumbernya berubah. Status "completed" tidak: itu diisi setelah hasilnya tersalin
+_MIRRORED = ("recording", "duration_minutes", "ended_at")
+
+
+def _mirror_to_followers(meeting_id: str, fields: dict) -> None:
+    mirror = {col: val for col, val in fields.items() if col in _MIRRORED}
+    if fields.get("status") not in (None, "completed"):
+        mirror["status"] = fields["status"]
+    if mirror:
+        set_clause = ", ".join(f"{col} = %s" for col in mirror)
+        execute(
+            f"UPDATE meetings SET {set_clause} WHERE source_meeting_id = %s AND status <> 'completed'",
+            (*mirror.values(), meeting_id),
+        )
 
 
 def update_meeting(meeting_id: str, **fields) -> None:
@@ -79,23 +137,7 @@ def update_meeting(meeting_id: str, **fields) -> None:
     if fields:
         set_clause = ", ".join(f"{col} = %s" for col in fields)
         execute(f"UPDATE meetings SET {set_clause} WHERE id = %s", (*fields.values(), meeting_id))
-
-
-def add_viewer(meeting_id: str, user_id: str) -> bool:
-    """True kalau penonton ini baru (False: sudah tercatat), supaya hasil rapat tidak dikirim berulang."""
-    return fetch_value(
-        "INSERT INTO meeting_viewers (meeting_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING RETURNING 1",
-        (meeting_id, user_id),
-    ) is not None
-
-
-def list_viewers(meeting_id: str) -> list[dict]:
-    """Pengguna aktif yang memasukkan tautan yang sama dengan rapat ini (id, email, name, email_notifications)."""
-    return fetch_all(
-        "SELECT u.id, u.email, u.name, u.email_notifications FROM meeting_viewers v JOIN users u ON u.id = v.user_id "
-        "WHERE v.meeting_id = %s AND u.active IS NOT FALSE",
-        (meeting_id,),
-    )
+        _mirror_to_followers(meeting_id, fields)
 
 
 def is_viewer(meeting_id: str, user_id: str) -> bool:
@@ -104,6 +146,7 @@ def is_viewer(meeting_id: str, user_id: str) -> bool:
 
 def delete_meeting(meeting_id: str) -> None:
     execute("DELETE FROM meeting_viewers WHERE meeting_id = %s", (meeting_id,))
+    execute("UPDATE meetings SET source_meeting_id = NULL WHERE source_meeting_id = %s", (meeting_id,))
     execute("DELETE FROM meetings WHERE id = %s", (meeting_id,))
 
 
@@ -146,7 +189,7 @@ def recorded_minutes_since(user_id: str, since: datetime) -> float:
 
     return float(fetch_value(
         "SELECT COALESCE(SUM(duration_minutes), 0) FROM meetings "
-        "WHERE user_id = %s AND url IS NOT NULL AND status <> 'limited' AND created_at >= %s",
+        "WHERE user_id = %s AND url IS NOT NULL AND source_meeting_id IS NULL AND status <> 'limited' AND created_at >= %s",
         (user_id, since),
     ))
 

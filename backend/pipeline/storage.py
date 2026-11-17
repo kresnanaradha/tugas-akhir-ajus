@@ -66,9 +66,13 @@ _CONTENT_TYPES = {
 }
 
 
-def delete_prefix(prefix: str) -> int:
+def delete_object(key: str) -> None:
+    _get_client().delete_object(Bucket=_bucket(), Key=key)
+
+
+def delete_prefix(prefix: str, keep: str | None = None) -> int:
     """Hapus semua objek di bawah `prefix` (folder sebuah rapat), satu delete_object per key karena R2 rewel
-    soal delete_objects. Mengembalikan jumlahnya."""
+    soal delete_objects. `keep`: satu key yang dibiarkan (rekaman yang masih dipakai rapat salinan). Mengembalikan jumlahnya."""
     client = _get_client()
     keys = []
     continuation = None
@@ -81,6 +85,7 @@ def delete_prefix(prefix: str) -> int:
         if not resp.get("IsTruncated"):
             break
         continuation = resp["NextContinuationToken"]
+    keys = [key for key in keys if key != keep]
     for key in keys:
         client.delete_object(Bucket=_bucket(), Key=key)
     return len(keys)

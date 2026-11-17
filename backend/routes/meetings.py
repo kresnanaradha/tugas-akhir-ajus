@@ -314,8 +314,14 @@ def delete_meeting_route(meeting_id):
     if record["status"] in _LIVE_STATUSES:
         return jsonify({"error": "Rapat masih berjalan, tunggu sampai selesai"}), 409
 
-    # R2 dulu: kalau gagal tidak ada yang lain disentuh dan hapus bisa diulang.
-    storage.delete_prefix(f"{meeting_id}/")
+    # R2 dulu: kalau gagal tidak ada yang lain disentuh dan hapus bisa diulang. Rapat sumber dan salinannya berbagi satu
+    # berkas rekaman: berkas itu baru dihapus saat tidak ada rapat lain yang memakainya
+    recording = record.get("recording") or ""
+    in_use = bool(recording) and meetings_store.recording_refs(recording, meeting_id) > 0
+    prefix = f"{meeting_id}/"
+    storage.delete_prefix(prefix, keep=recording if in_use else None)
+    if recording and not in_use and not recording.startswith(prefix):
+        storage.delete_object(recording)  # rapat salinan yang terakhir: rekaman sumber yang sudah dihapus ikut dibersihkan
     try:
         knowledge_base.remove_meeting(meeting_id)
     except Exception as e:

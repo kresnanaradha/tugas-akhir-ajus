@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from pipeline import job_queue, storage  # noqa: E402 (setelah load_dotenv)
+from pipeline import followers, job_queue, storage  # noqa: E402 (setelah load_dotenv)
 from pipeline.meetings_store import update_meeting  # noqa: E402
 from pipeline.process import process_recording  # noqa: E402
 
@@ -36,6 +36,11 @@ def _process_job(job: dict) -> None:
                 print(f"[transcriber] {meeting_id} {step}: {result[step]}")
         # hanya transkrip yang gagal yang menggagalkan rapat, ringkasan yang hilang bisa dibuat ulang dari editor
         update_meeting(meeting_id, status="failed" if "transcript_error" in result else "completed")
+        if "transcript_error" not in result:
+            try:
+                followers.copy_results(meeting_id)  # salin hasilnya ke rapat User lain yang memakai tautan yang sama
+            except Exception as e:
+                print(f"[transcriber] {meeting_id} copy to followers failed: {e}")
         print(f"[transcriber] {meeting_id} done")
     finally:
         os.unlink(local_path)

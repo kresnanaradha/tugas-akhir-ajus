@@ -6,7 +6,6 @@ from pipeline import process
 
 mails = []
 process.get_meeting = lambda mid: {"user_id": "u", "title": "T"}
-process.list_viewers = lambda mid: []
 process.auth_store.get_user = lambda uid: {"email": "a@b.c", "email_notifications": True}
 process.mailer.send_meeting_ready_email = lambda **kw: mails.append(kw)
 
@@ -45,28 +44,20 @@ process.auth_store.get_user = lambda uid: {"email": "a@b.c", "email_notification
 run()
 assert not mails
 
-# penonton (tautan yang sama) ikut dapat email berkata lain: yang menolak dilewati, NULL di database dianggap menyala
-process.auth_store.get_user = lambda uid: {"email": "owner@b.c", "email_notifications": True}
-process.list_viewers = lambda mid: [
-    {"id": "v1", "email": "v1@b.c", "email_notifications": None},
-    {"id": "v2", "email": "v2@b.c", "email_notifications": False},
-]
-run()
-assert [(m["to_email"], m["shared"]) for m in mails] == [("owner@b.c", False), ("v1@b.c", True)]
-
-# satu email gagal tidak menghentikan yang lain
+# satu email gagal tidak melempar error ke pipeline
 def flaky(**kw):
-    if kw["to_email"] == "owner@b.c":
-        raise RuntimeError("smtp")
-    mails.append(kw)
+    raise RuntimeError("smtp")
 process.mailer.send_meeting_ready_email = flaky
-run()
-assert [m["to_email"] for m in mails] == ["v1@b.c"]
+run()  # tidak melempar
 
-# penonton yang bergabung setelah rapat selesai: hanya dia
+# pemilik rapat salinan: emailnya berkata lain (shared=True), yang menolak dilewati
 process.mailer.send_meeting_ready_email = lambda **kw: mails.append(kw)
 process.auth_store.get_user = lambda uid: {"email": f"{uid}@b.c", "email_notifications": True}
 mails.clear()
-process.notify_meeting_ready("m1", ok_summary, only_user_id="late")
-assert [(m["to_email"], m["shared"]) for m in mails] == [("late@b.c", True)]
+process.notify_meeting_ready("m1", ok_summary, shared=True)
+assert [(m["to_email"], m["shared"]) for m in mails] == [("u@b.c", True)]
+mails.clear()
+process.auth_store.get_user = lambda uid: {"email": "x@b.c", "email_notifications": False}
+process.notify_meeting_ready("m1", ok_summary, shared=True)
+assert not mails
 print("ok")

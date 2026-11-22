@@ -90,11 +90,9 @@ def super_admin_required(view):
 
 
 def can_view_meeting(record: dict) -> bool:
-    """Pemilik, super admin, penonton lewat tautan, atau teman satu team kalau pemilik membagikannya ke team."""
+    """Pemilik, super admin, atau teman satu team kalau pemilik membagikannya ke team."""
     uid = session["user_id"]
     if session.get("role") == "super_admin" or record.get("user_id") == uid:
-        return True
-    if meetings_store.is_viewer(record["id"], uid):
         return True
     if record.get("shared_with_team") and record.get("user_id"):
         owner, me = auth_store.get_user(record["user_id"]), auth_store.get_user(uid)

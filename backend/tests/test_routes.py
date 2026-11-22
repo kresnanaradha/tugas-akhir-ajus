@@ -7,7 +7,7 @@ from routes import auth
 from pipeline import admin_stats, artifacts, auth_store, join_queue, knowledge_base, meetings_store, storage
 from routes import common
 
-RECORD = {"id": "m1", "user_id": "owner", "recording": "m1/recording.webm", "status": "completed", "title": "T"}
+RECORD = {"id": "m1", "user_id": "owner", "recording": "m1/recording.webm", "status": "completed", "title": "T", "shared_with_team": True}
 
 
 def client_as(user_id, role="user"):
@@ -19,8 +19,8 @@ def client_as(user_id, role="user"):
 
 auth_store.is_active = lambda uid: True
 meetings_store.get_meeting = lambda mid: dict(RECORD) if mid == "m1" else None
-meetings_store.is_viewer = lambda mid, uid: uid == "viewer"
-auth_store.get_user = lambda uid: {"team_id": None, "name": uid}
+# "viewer" adalah anggota team pemilik: rapat dibagikan ke team, jadi ia hanya bisa melihat
+auth_store.get_user = lambda uid: {"team_id": "t1" if uid in ("owner", "viewer") else None, "name": uid}
 artifacts.load_summary = lambda mid: {"action_items": []}
 artifacts.load_transcript = lambda mid: "t"
 artifacts.load_fixed_transcript = lambda mid: "f"

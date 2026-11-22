@@ -28,13 +28,6 @@ ALTER TABLE meetings ADD COLUMN IF NOT EXISTS shared_with_team BOOLEAN DEFAULT F
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS source_meeting_id TEXT;
 -- saat rekaman berakhir, untuk menentukan berapa lama tautan itu masih dianggap rapat yang sama
 ALTER TABLE meetings ADD COLUMN IF NOT EXISTS ended_at TIMESTAMP;
--- peninggalan cara lama (penonton hanya melihat): tidak lagi diisi, tetapi baris lama tetap dihormati
--- orang yang boleh melihat rapat yang bukan miliknya: mereka mengirim tautan live yang sama dan diberi rapat yang sudah ada
-CREATE TABLE IF NOT EXISTS meeting_viewers (
-    meeting_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    PRIMARY KEY (meeting_id, user_id)
-);
 """
 register_schema(_TABLE_SQL)
 # recording NOT NULL (menghapusnya membuat Supabase macet), jadi '' berarti "belum ada rekaman"
@@ -140,18 +133,13 @@ def update_meeting(meeting_id: str, **fields) -> None:
         _mirror_to_followers(meeting_id, fields)
 
 
-def is_viewer(meeting_id: str, user_id: str) -> bool:
-    return fetch_one("SELECT 1 FROM meeting_viewers WHERE meeting_id = %s AND user_id = %s", (meeting_id, user_id)) is not None
-
-
 def delete_meeting(meeting_id: str) -> None:
-    execute("DELETE FROM meeting_viewers WHERE meeting_id = %s", (meeting_id,))
     execute("UPDATE meetings SET source_meeting_id = NULL WHERE source_meeting_id = %s", (meeting_id,))
     execute("DELETE FROM meetings WHERE id = %s", (meeting_id,))
 
 
 def list_meetings(user_id: str | None = None) -> list[dict]:
-    """Semua rapat (user_id=None, hanya admin), atau milik user ini, yang dibagikan ke mereka lewat tautan, dan
+    """Semua rapat (user_id=None, hanya admin), atau milik user ini (termasuk rapat salinan), dan
     rapat teman yang dibagikan pemiliknya ke team. Baris dari sebelum login (user_id NULL) hanya tampil
     di tampilan tanpa filter."""
 
@@ -162,7 +150,6 @@ def list_meetings(user_id: str | None = None) -> list[dict]:
             """
             SELECT * FROM meetings
             WHERE user_id = %s
-                OR id IN (SELECT meeting_id FROM meeting_viewers WHERE user_id = %s)
                 OR (shared_with_team AND user_id IN (
                     SELECT id FROM users
                     WHERE team_id IS NOT NULL
@@ -170,7 +157,7 @@ def list_meetings(user_id: str | None = None) -> list[dict]:
                 ))
             ORDER BY created_at DESC
             """,
-            (user_id, user_id, user_id),
+            (user_id, user_id),
         )
     return [_with_iso_date(row) for row in rows]
 

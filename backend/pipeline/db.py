@@ -50,8 +50,6 @@ BEGIN
     FOR fk IN
         SELECT * FROM (VALUES
             ('fk_meetings_user',      'meetings',        'user_id',    'users',    'id', 'NO ACTION'),
-            ('fk_viewers_meeting',    'meeting_viewers', 'meeting_id', 'meetings', 'id', 'CASCADE'),
-            ('fk_viewers_user',       'meeting_viewers', 'user_id',    'users',    'id', 'CASCADE'),
             ('fk_subscriptions_user', 'subscriptions',   'id',         'users',    'id', 'CASCADE'),
             ('fk_users_team',         'users',           'team_id',    'teams',    'id', 'SET NULL'),
             ('fk_teams_owner',        'teams',           'owner_id',   'users',    'id', 'NO ACTION'),
@@ -73,7 +71,7 @@ BEGIN
             END;
         END IF;
     END LOOP;
-    FOREACH t IN ARRAY ARRAY['users', 'meetings', 'meeting_viewers', 'subscriptions',
+    FOREACH t IN ARRAY ARRAY['users', 'meetings', 'subscriptions',
                              'teams', 'team_invites', 'api_usage', 'replicate_usage']
     LOOP
         IF to_regclass('public.' || t) IS NOT NULL

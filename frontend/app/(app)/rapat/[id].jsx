@@ -1,10 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { colors, radius, spacing } from "@/constants/theme";
-import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, processMeeting, shareMeetingWithTeam, stopJob } from "@/lib/api";
+import { deleteMeeting, getJobStatus, getMeeting, getRecordingUrl, processMeeting, renameMeeting, shareMeetingWithTeam, stopJob } from "@/lib/api";
 import { formatMeetingDate, PLATFORM_LABEL } from "@/lib/format";
 import { meetingStats } from "@/lib/transcript";
 import { BackLink } from "@/components/BackLink";
@@ -56,6 +56,10 @@ export default function MeetingDetailScreen() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [titleSaving, setTitleSaving] = useState(false);
+  const [titleError, setTitleError] = useState("");
   const editor = useTranscriptEditor(id, setMeeting);
 
   useEffect(() => () => clearTimeout(pollTimer.current), []);
@@ -175,6 +179,31 @@ export default function MeetingDetailScreen() {
       .finally(() => setSharingTeam(false));
   }
 
+  function startEditTitle() {
+    setTitleDraft(meeting.title);
+    setTitleError("");
+    setEditingTitle(true);
+  }
+
+  async function handleSaveTitle() {
+    const title = titleDraft.trim();
+    if (!title) {
+      setTitleError("Nama rapat tidak boleh kosong");
+      return;
+    }
+    setTitleSaving(true);
+    setTitleError("");
+    try {
+      await renameMeeting(id, title);
+      setMeeting((m) => ({ ...m, title }));
+      setEditingTitle(false);
+    } catch (e) {
+      setTitleError(e.message || "Gagal menyimpan nama rapat");
+    } finally {
+      setTitleSaving(false);
+    }
+  }
+
   const stats = meetingStats(meeting || {});
   const canEdit = !!meeting?.can_edit; // anggota team hanya membaca, backend menolak ubahan mereka
   const isLive = liveStatus && liveStatus !== "failed";
@@ -243,7 +272,40 @@ export default function MeetingDetailScreen() {
 
 
               </View>
-              <Text style={styles.title}>{meeting.title}</Text>
+              {editingTitle ? (
+                <View style={{ gap: spacing.sm }}>
+                  <TextInput
+                    style={styles.itemInput}
+                    value={titleDraft}
+                    onChangeText={setTitleDraft}
+                    maxLength={120}
+                    placeholder="Nama rapat, mis. Sprint Planning Proyek X"
+                    placeholderTextColor={colors.inkFaint}
+                    autoFocus
+                  />
+                  <Text style={styles.metaText}>
+                    Tulis konteks rapat di nama ini (topik atau proyek). Platform tetap tampil di lencana di atas.
+                  </Text>
+                  {!!titleError && <Text style={styles.errorText}>{titleError}</Text>}
+                  <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                    <Pressable style={[styles.smallButton, styles.smallButtonPrimary]} onPress={handleSaveTitle} disabled={titleSaving}>
+                      <Text style={styles.smallButtonLabel}>{titleSaving ? "Menyimpan..." : "Simpan"}</Text>
+                    </Pressable>
+                    <Pressable style={styles.smallButton} onPress={() => setEditingTitle(false)} disabled={titleSaving}>
+                      <Text style={styles.smallButtonLabel}>Batal</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Text style={[styles.title, { flexShrink: 1 }]}>{meeting.title}</Text>
+                  {canEdit && (
+                    <Pressable onPress={startEditTitle} hitSlop={10} accessibilityLabel="Ubah nama rapat">
+                      <Feather name="edit-2" size={15} color={colors.inkFaint} />
+                    </Pressable>
+                  )}
+                </View>
+              )}
               <View style={styles.metaRow}>
                 <Feather name="calendar" size={13} color={colors.inkFaint} />
                 <Text style={styles.metaText}>

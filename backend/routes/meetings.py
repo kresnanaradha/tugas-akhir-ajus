@@ -58,6 +58,26 @@ def meeting_detail(meeting_id):
     return jsonify(record)
 
 
+_MAX_TITLE = 120
+
+
+@bp.patch("/meetings/<meeting_id>")
+@login_required
+def rename_meeting(meeting_id):
+    """Ubah nama rapat. User menaruh konteks rapat (topik, proyek) di nama itu, sedangkan platform (Meet atau Zoom)
+    tetap tampil sebagai lencana terpisah dari kolom platform."""
+    _, error = common.load_meeting(meeting_id, edit=True)
+    if error:
+        return error
+    title = str((request.get_json(silent=True) or {}).get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "Nama rapat tidak boleh kosong"}), 400
+    if len(title) > _MAX_TITLE:
+        return jsonify({"error": f"Nama rapat maksimal {_MAX_TITLE} karakter"}), 400
+    meetings_store.update_meeting(meeting_id, title=title)
+    return jsonify({"title": title})
+
+
 @bp.get("/meetings/<meeting_id>/recording")
 @login_required
 def meeting_recording(meeting_id):

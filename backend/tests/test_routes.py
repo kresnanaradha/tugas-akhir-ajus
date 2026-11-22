@@ -140,6 +140,19 @@ auth_store.update_user = lambda uid, **k: deactivated.append((uid, k))
 assert client_as("sa", "super_admin").post("/auth/me/deactivate").status_code == 400 and not deactivated
 assert client_as("u1").post("/auth/me/deactivate").status_code == 200 and deactivated == [("u1", {"active": False})]
 
+# ubah nama rapat: hanya pemilik atau super admin, tidak boleh kosong atau terlalu panjang
+renamed = []
+meetings_store.update_meeting = lambda mid, **f: renamed.append((mid, f))
+meetings_store.get_meeting = lambda mid: dict(RECORD) if mid == "m1" else None
+owner = client_as("owner")
+assert owner.patch("/meetings/m1", json={"title": "  Sprint Planning Proyek X  "}).get_json() == {"title": "Sprint Planning Proyek X"}
+assert renamed == [("m1", {"title": "Sprint Planning Proyek X"})]
+assert owner.patch("/meetings/m1", json={"title": "   "}).status_code == 400
+assert owner.patch("/meetings/m1", json={"title": "x" * 121}).status_code == 400
+assert client_as("viewer").patch("/meetings/m1", json={"title": "Curian"}).status_code in (403, 404)  # penonton tidak bisa mengubah
+assert client_as("sa", "super_admin").patch("/meetings/m1", json={"title": "Admin"}).status_code == 200
+assert len(renamed) == 2  # hanya dua yang berhasil
+
 # hapus rapat yang berbagi berkas rekaman: berkas dibiarkan selama masih dipakai rapat lain, yang terakhir membersihkannya
 deleted = []
 storage.delete_prefix = lambda prefix, keep=None: deleted.append(("prefix", prefix, keep))

@@ -78,6 +78,8 @@ export const generateShortSummary = (id) => api(`${meeting(id)}/short-summary`, 
 export const toggleActionItem = (id, index, done) => api(`${meeting(id)}/action-items/${index}/toggle`, "POST", { done });
 // ganti seluruh daftar ({task, assignee, due, done}[]): satu panggilan untuk edit, tambah, dan hapus
 export const replaceActionItems = (id, items) => api(`${meeting(id)}/action-items`, "PUT", { items });
+// ubah nama rapat (pemilik atau super admin), konteks rapat ditulis di nama itu. Mengembalikan {title}
+export const renameMeeting = (id, title) => api(meeting(id), "PATCH", { title });
 // hapus permanen (R2, Knowledge Base, DB). Hanya pemilik atau super admin, ditolak selagi merekam/memproses
 export const deleteMeeting = (id) => api(meeting(id), "DELETE");
 // hanya ringkasan eksekutif dan keputusan utama yang diindeks

@@ -104,15 +104,6 @@ q.heartbeat(False)
 assert q.has_worker("zoom") and not q.has_worker("google_meet")
 assert [w for w in q.workers() if w["id"] == "w1"][0]["google_expired"] is True
 q.google_expired = False
-# port noVNC dikabarkan lewat detak (dari VNC_PORT), kosong kalau tidak diatur
-import os  # noqa: E402
-
-os.environ["VNC_PORT"] = "6081"
-q.heartbeat(False)
-assert [w for w in q.workers() if w["id"] == "w1"][0]["vnc_port"] == 6081
-os.environ.pop("VNC_PORT")
-q.heartbeat(False)
-assert [w for w in q.workers() if w["id"] == "w1"][0]["vnc_port"] is None
 assert q.claim()["job_id"] == "m" and q.claim()["job_id"] == "g"  # "m" tertunda sejak awal tes
 q.PLATFORMS = ["zoom"]
 q.heartbeat(True)

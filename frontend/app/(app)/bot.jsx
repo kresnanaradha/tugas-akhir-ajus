@@ -1,7 +1,6 @@
 import { Redirect } from "expo-router";
 import { useEffect, useState } from "react";
-import { Feather } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { getAdminQueue, getAdminWorkers } from "@/lib/api";
@@ -79,28 +78,11 @@ export default function BotScreen() {
                     </Text>
                   )}
                 </View>
-                {w.vnc_port && (
-                  // membuka noVNC di komputermu sendiri (localhost), jadi tidak ada port yang dibuka ke internet
-                  <Pressable
-                    style={[styles.vncButton, w.google_expired && styles.vncButtonAlert]}
-                    onPress={() => window.open(`http://localhost:${w.vnc_port}/vnc.html`, "_blank")}
-                  >
-                    <Feather name="monitor" size={12} color={colors.ink} />
-                    <Text style={styles.vncButtonLabel}>VNC</Text>
-                  </Pressable>
-                )}
                 <StatusPill busy={w.busy} busyLabel="Sedang merekam" idleLabel="Siap merekam" />
               </View>
             ))
           )}
         </View>
-        {workers?.some((w) => w.vnc_port) && (
-          <Text style={styles.hint}>
-            Tombol VNC membuka layar bot di komputermu lewat localhost. Di server, jalankan dulu terowongan SSH:
-            ssh -L 6080:localhost:6080 -L 6081:localhost:6081 -L 6082:localhost:6082 (user)@(server). Password VNC ada di
-            .env (VNC_PASSWORD).
-          </Text>
-        )}
 
         <Text style={styles.sectionLabel}>Antrean dan Pemrosesan Hasil</Text>
         <View style={styles.statRow}>
@@ -163,19 +145,5 @@ const styles = StyleSheet.create({
   name: { ...type.bodyMedium, fontWeight: "600", color: colors.ink },
   id: { ...type.small, fontWeight: "400", color: colors.inkFaint },
   meta: { ...type.small, color: colors.inkSoft },
-  hint: { ...type.small, color: colors.inkFaint, maxWidth: 80 * 8 },
-  vncButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    backgroundColor: colors.surface,
-  },
-  vncButtonAlert: { backgroundColor: colors.gold, borderColor: colors.gold },
-  vncButtonLabel: { ...type.small, fontWeight: "700", color: colors.ink },
   pill: { ...type.small, fontWeight: "600", borderRadius: radius.pill, paddingVertical: 3, paddingHorizontal: 10, overflow: "hidden" },
 });

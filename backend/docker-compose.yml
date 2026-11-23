@@ -51,20 +51,20 @@ x-transcriber-base: &transcriber-base
   cpus: "1.0"
 
 services:
-  # WORKER_ID tetap (bukan nama container) dan VNC_PORT dikabarkan ke halaman Bot Perekam lewat detak worker
+  # WORKER_ID tetap (bukan nama container), jadi nama di halaman Bot Perekam stabil: worker-1 sampai worker-3
   worker-1:
     <<: *worker-base
-    environment: {<<: *worker-env, WORKER_ID: worker-1, VNC_PORT: "6080"}
+    environment: {<<: *worker-env, WORKER_ID: worker-1}
     ports: ["5050:5050", "127.0.0.1:6080:6080"]
     volumes: ["google-profile-1:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-2:
     <<: *worker-base
-    environment: {<<: *worker-env, WORKER_ID: worker-2, VNC_PORT: "6081"}
+    environment: {<<: *worker-env, WORKER_ID: worker-2}
     ports: ["5051:5050", "127.0.0.1:6081:6080"]
     volumes: ["google-profile-2:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
   worker-3:
     <<: *worker-base
-    environment: {<<: *worker-env, WORKER_ID: worker-3, VNC_PORT: "6082"}
+    environment: {<<: *worker-env, WORKER_ID: worker-3}
     ports: ["5052:5050", "127.0.0.1:6082:6080"]
     volumes: ["google-profile-3:/app/google-profile", "./chroma_data:/app/chroma_data", "hf-cache:/root/.cache/huggingface"]
 

@@ -1,8 +1,9 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
+import { PasswordInput } from "@/components/PasswordInput";
 import { resetPassword } from "@/lib/api";
 
 // Tujuan tautan di email reset password (POST /auth/forgot). Publik:
@@ -41,9 +42,9 @@ export default function ResetPasswordScreen() {
           <>
             <Text style={styles.subtitle}>Masukkan password baru untuk akun Anda.</Text>
             <Text style={styles.label}>PASSWORD BARU</Text>
-            <TextInput style={styles.input} secureTextEntry value={password} onChangeText={setPassword} placeholder="Minimal 8 karakter" placeholderTextColor={colors.inkFaint} />
+            <PasswordInput style={styles.input} value={password} onChangeText={setPassword} placeholder="Minimal 8 karakter" placeholderTextColor={colors.inkFaint} />
             <Text style={styles.label}>ULANGI PASSWORD</Text>
-            <TextInput style={styles.input} secureTextEntry value={confirm} onChangeText={setConfirm} placeholderTextColor={colors.inkFaint} />
+            <PasswordInput style={styles.input} value={confirm} onChangeText={setConfirm} placeholderTextColor={colors.inkFaint} />
             {!!error && <Text style={styles.error}>{error}</Text>}
             <Pressable style={[styles.submit, submitting && { opacity: 0.6 }]} onPress={handleSubmit} disabled={submitting}>
               {submitting ? <ActivityIndicator color={colors.ink} size="small" /> : <Text style={styles.submitLabel}>Simpan Password</Text>}

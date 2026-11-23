@@ -2,10 +2,17 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 
+// angka panjang (mis. "Rp 299.000") mengecil sesuai panjangnya, supaya tidak terpotong jadi "Rp 2..."
+function valueSize(text) {
+  const n = String(text).length;
+  return n <= 7 ? 34 : n <= 9 ? 30 : n <= 11 ? 26 : n <= 13 ? 20 : 17;
+}
+
 export function StatCard({ value, label, delta, deltaColor = colors.inkFaint, style }) {
+  const size = valueSize(value);
   return (
     <View style={[styles.card, style]}>
-      <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
+      <Text style={[styles.value, { fontSize: size, lineHeight: Math.round(size * 1.18) }]} numberOfLines={1} ellipsizeMode="tail">
         {value}
       </Text>
       <Text style={styles.label}>{label}</Text>

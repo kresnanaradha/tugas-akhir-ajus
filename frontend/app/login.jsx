@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 
 import { colors, radius, spacing, type } from "@/constants/theme";
+import { PasswordInput } from "@/components/PasswordInput";
 import { forgotPassword, login, register } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -48,7 +49,7 @@ export default function LoginScreen() {
     try {
       const user = tab === "masuk" ? await login(email.trim(), password) : await register(email.trim(), password, name.trim());
       signIn(user);
-      router.replace("/dashboard");
+      router.replace(user.role === "super_admin" ? "/admin" : "/dashboard");
     } catch (e) {
       setError(e.message || "Terjadi kesalahan");
     } finally {
@@ -214,11 +215,10 @@ export default function LoginScreen() {
                 </Pressable>
               )}
             </View>
-            <TextInput
+            <PasswordInput
               style={styles.input}
               placeholder="••••••••"
               placeholderTextColor={colors.inkFaint}
-              secureTextEntry
               value={password}
               onChangeText={setPassword}
             />

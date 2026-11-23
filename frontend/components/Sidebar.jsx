@@ -97,8 +97,10 @@ function PlanCard({ pathname }) {
 export function Sidebar() {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
-  // hanya super admin yang melihat tautan Statistik dan Manajemen Pengguna, backend menolak yang lain juga
-  const groups = user?.role === "super_admin" ? [...NAV_GROUPS, ADMIN_GROUP] : NAV_GROUPS;
+  // super admin hanya mengelola sistem: grup Sistem saja, tanpa kartu paket dan Billing. User biasa tidak melihat grup Sistem
+  // (backend juga menolak rutenya)
+  const isAdmin = user?.role === "super_admin";
+  const groups = isAdmin ? [ADMIN_GROUP] : NAV_GROUPS;
 
   function handleLogout() {
     // kirim dan lupakan, dan bersihkan auth lokal bagaimanapun supaya kerangka tidak tersangkut login kalau permintaannya gagal
@@ -136,7 +138,7 @@ export function Sidebar() {
       </View>
 
       <View style={styles.footer}>
-        <PlanCard pathname={pathname} />
+        {!isAdmin && <PlanCard pathname={pathname} />}
         <Link href="/pengaturan" asChild>
           <Pressable style={StyleSheet.flatten([styles.navItem, isActive(pathname, "/pengaturan") && styles.navItemActive])}>
             <Feather name="settings" size={17} color={isActive(pathname, "/pengaturan") ? colors.ink : colors.inkSoft} />
@@ -147,12 +149,14 @@ export function Sidebar() {
             </Text>
           </Pressable>
         </Link>
-        <Link href="/billing" asChild>
-          <Pressable style={StyleSheet.flatten([styles.navItem, isActive(pathname, "/billing") && styles.navItemActive])}>
-            <Feather name="credit-card" size={17} color={isActive(pathname, "/billing") ? colors.ink : colors.inkSoft} />
-            <Text style={StyleSheet.flatten([styles.navLabel, isActive(pathname, "/billing") && styles.navLabelActive])}>Billing</Text>
-          </Pressable>
-        </Link>
+        {!isAdmin && (
+          <Link href="/billing" asChild>
+            <Pressable style={StyleSheet.flatten([styles.navItem, isActive(pathname, "/billing") && styles.navItemActive])}>
+              <Feather name="credit-card" size={17} color={isActive(pathname, "/billing") ? colors.ink : colors.inkSoft} />
+              <Text style={StyleSheet.flatten([styles.navLabel, isActive(pathname, "/billing") && styles.navLabelActive])}>Billing</Text>
+            </Pressable>
+          </Link>
+        )}
         <View style={styles.userRow}>
           <View style={styles.avatar}>
             <Text style={styles.avatarLabel}>{initialsOf(user?.name)}</Text>

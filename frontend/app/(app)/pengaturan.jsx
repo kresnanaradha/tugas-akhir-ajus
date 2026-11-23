@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
+import { PasswordInput } from "@/components/PasswordInput";
 import { changePassword, deactivateAccount, logout as apiLogout, updateProfile } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { initialsOf } from "@/lib/format";
@@ -187,27 +188,24 @@ function ProfileCard() {
 
         {showPasswordForm && (
           <View style={{ gap: spacing.sm, marginTop: spacing.xs }}>
-            <TextInput
+            <PasswordInput
               style={styles.fieldInput}
               placeholder="Password saat ini"
               placeholderTextColor={colors.inkFaint}
-              secureTextEntry
               value={currentPassword}
               onChangeText={setCurrentPassword}
             />
-            <TextInput
+            <PasswordInput
               style={styles.fieldInput}
               placeholder="Password baru (minimal 8 karakter)"
               placeholderTextColor={colors.inkFaint}
-              secureTextEntry
               value={newPassword}
               onChangeText={setNewPassword}
             />
-            <TextInput
+            <PasswordInput
               style={styles.fieldInput}
               placeholder="Konfirmasi password baru"
               placeholderTextColor={colors.inkFaint}
-              secureTextEntry
               value={confirmPassword}
               onChangeText={setConfirmPassword}
             />

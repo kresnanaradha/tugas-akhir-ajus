@@ -103,7 +103,7 @@ export default function AdminScreen() {
             <View style={styles.column}>
             <Text style={styles.sectionLabel}>Bisnis</Text>
             <View style={styles.statRow}>
-              <StatCard value={formatIDR(stats.mrr_idr)} label="Pendapatan Berjalan (MRR)" />
+              <StatCard value={formatIDR(stats.mrr_idr)} label="Pendapatan Berjalan (MRR)" style={{ flex: 1.6 }} />
               <StatCard
                 value={Object.values(stats.plan_counts).reduce((a, b) => a + b, 0)}
                 label="Subscriber Aktif"

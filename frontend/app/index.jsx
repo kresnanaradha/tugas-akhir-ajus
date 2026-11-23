@@ -5,7 +5,7 @@ import { colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
 
 export default function Index() {
-  const { status } = useAuth();
+  const { status, user } = useAuth();
 
   if (status === "loading") {
     return (
@@ -15,5 +15,7 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={status === "authenticated" ? "/dashboard" : "/login"} />;
+  // Super Admin hanya mengelola sistem, jadi halaman awalnya Statistik
+  const home = user?.role === "super_admin" ? "/admin" : "/dashboard";
+  return <Redirect href={status === "authenticated" ? home : "/login"} />;
 }

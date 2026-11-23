@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
+import { PasswordInput } from "@/components/PasswordInput";
 import { createUser, listUsers, resetUserPassword, updateUser } from "@/lib/api";
 
 // manajemen user super admin: daftar, tambah, nonaktifkan (bukan hapus, rapat menunjuk ke user), reset password.
@@ -72,11 +73,10 @@ export function UserManagement({ currentUserId }) {
             />
           </View>
           <View style={styles.formRow}>
-            <TextInput
+            <PasswordInput
               style={[styles.input, { flex: 1 }]}
               placeholder="Password (minimal 8 karakter)"
               placeholderTextColor={colors.inkFaint}
-              secureTextEntry
               value={form.password}
               onChangeText={(password) => setForm((f) => ({ ...f, password }))}
             />
@@ -148,11 +148,10 @@ export function UserManagement({ currentUserId }) {
 
             {resetFor === u.id && (
               <View style={styles.resetRow}>
-                <TextInput
+                <PasswordInput
                   style={[styles.input, { flex: 1 }]}
                   placeholder="Password baru (minimal 8 karakter)"
                   placeholderTextColor={colors.inkFaint}
-                  secureTextEntry
                   value={newPassword}
                   onChangeText={setNewPassword}
                 />

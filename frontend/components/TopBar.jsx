@@ -18,11 +18,14 @@ export function TopBar() {
   const [openMenu, setOpenMenu] = useState(null); // null | "bell" | "user"
 
   // satu pengambilan data untuk badge (ada rapat 24 jam terakhir?) dan dropdown lonceng. Bilah ini ada di setiap halaman, jadi berjalan sekali per navigasi
+  // super admin hanya mengelola sistem: tanpa pencarian rapat dan lonceng rapat (dan tanpa pengambilan datanya)
+  const isAdmin = user?.role === "super_admin";
   useEffect(() => {
+    if (isAdmin) return;
     listMeetings()
       .then((all) => setRecent(all.slice(0, 5).map((m) => ({ ...m, ...formatMeetingDate(m.created_at) }))))
       .catch(() => setRecent([]));
-  }, []);
+  }, [isAdmin]);
 
   const hasRecentActivity = recent?.some((m) => Date.now() - new Date(m.created_at).getTime() < DAY_MS);
 
@@ -42,22 +45,27 @@ export function TopBar() {
 
   return (
     <View style={styles.bar}>
-      <View style={styles.search}>
-        <Feather name="search" size={15} color={colors.inkFaint} />
-        <TextInput
-          placeholder="Cari rapat, transkrip..."
-          placeholderTextColor={colors.inkFaint}
-          style={styles.searchInput}
-          value={search}
-          onChangeText={setSearch}
-          onSubmitEditing={runSearch}
-          returnKeyType="search"
-        />
-      </View>
+      {isAdmin ? (
+        <View />
+      ) : (
+        <View style={styles.search}>
+          <Feather name="search" size={15} color={colors.inkFaint} />
+          <TextInput
+            placeholder="Cari rapat, transkrip..."
+            placeholderTextColor={colors.inkFaint}
+            style={styles.searchInput}
+            value={search}
+            onChangeText={setSearch}
+            onSubmitEditing={runSearch}
+            returnKeyType="search"
+          />
+        </View>
+      )}
 
       <View style={styles.right}>
         {openMenu && <Pressable style={styles.overlay} onPress={() => setOpenMenu(null)} />}
 
+        {!isAdmin && (
         <View>
           <Pressable style={styles.bellWrap} onPress={() => setOpenMenu((m) => (m === "bell" ? null : "bell"))}>
             <Feather name="bell" size={18} color={colors.inkSoft} />
@@ -90,6 +98,7 @@ export function TopBar() {
             </View>
           )}
         </View>
+        )}
 
         <View>
           <Pressable style={styles.userChip} onPress={() => setOpenMenu((m) => (m === "user" ? null : "user"))}>

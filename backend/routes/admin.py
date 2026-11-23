@@ -3,7 +3,7 @@
 import psycopg2.errors
 from flask import Blueprint, jsonify, request, session
 
-from pipeline import admin_stats, auth_store, billing_store, join_queue, meetings_store, report_pdf
+from pipeline import admin_stats, auth_store, billing_store, job_queue, join_queue, meetings_store, report_pdf
 
 from . import common
 from .common import super_admin_required
@@ -27,6 +27,25 @@ def admin_workers():
     except Exception as e:
         print(f"[admin] workers: {e}")
         return jsonify([])
+
+
+@bp.get("/admin/queue")
+@super_admin_required
+def admin_queue():
+    """Antrean join per platform, antrean transkripsi, job yang menyerah, dan transkriber yang hidup (halaman Bot Perekam)."""
+    try:
+        return jsonify({
+            "join": join_queue.queue_lengths(),
+            **job_queue.queue_stats(),
+            "transcribers": sorted(job_queue.transcribers(), key=lambda t: t["id"]),
+        })
+    except Exception as e:
+        print(f"[admin] queue: {e}")
+        return jsonify({"join": {}, "transcription": 0, "dead": 0, "transcribers": []})
+
+
+# hanya ada satu akun super admin (dibuat langsung di database), dari aplikasi tidak ada jalan menambah atau menaikkan peran itu
+_ONE_SUPER_ADMIN = "Akun Super Admin hanya satu dan tidak bisa ditambah dari aplikasi"
 
 
 @bp.get("/admin/users")
@@ -54,6 +73,8 @@ def admin_users_create():
         return jsonify({"error": "Password minimal 8 karakter"}), 400
     if role not in auth_store.ROLES:
         return jsonify({"error": "Peran tidak dikenal"}), 400
+    if role == "super_admin":
+        return jsonify({"error": _ONE_SUPER_ADMIN}), 400
     try:
         return jsonify(auth_store.create_user(email, password, name, role))
     except psycopg2.errors.UniqueViolation:
@@ -72,6 +93,8 @@ def admin_users_update(user_id):
         return jsonify({"error": "Nama tidak boleh kosong"}), 400
     if role is not None and role not in auth_store.ROLES:
         return jsonify({"error": "Peran tidak dikenal"}), 400
+    if role == "super_admin" and user_id != session["user_id"]:
+        return jsonify({"error": _ONE_SUPER_ADMIN}), 400
     if user_id == session["user_id"] and (active is False or (role is not None and role != "super_admin")):
         return jsonify({"error": "Kamu tidak bisa menonaktifkan atau menurunkan akunmu sendiri"}), 400
     target = auth_store.get_user(user_id)

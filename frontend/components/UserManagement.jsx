@@ -5,15 +5,15 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
 import { createUser, listUsers, resetUserPassword, updateUser } from "@/lib/api";
 
-// manajemen user super admin: daftar, tambah, ubah peran, nonaktifkan (bukan hapus, rapat menunjuk ke user), reset
-// password. Backend yang menegakkan semuanya, ini hanya menjalankannya
+// manajemen user super admin: daftar, tambah, nonaktifkan (bukan hapus, rapat menunjuk ke user), reset password.
+// Peran tidak bisa diubah (hanya ada satu super admin). Backend yang menegakkan semuanya, ini hanya menjalankannya
 const PLAN_LABEL = { free: "Free", pro: "Pro", team: "Team" };
 
 export function UserManagement({ currentUserId }) {
   const [users, setUsers] = useState(null);
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "user" });
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [resetFor, setResetFor] = useState(null); // id user yang form reset-nya terbuka
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -81,19 +81,13 @@ export function UserManagement({ currentUserId }) {
               onChangeText={(password) => setForm((f) => ({ ...f, password }))}
             />
             <Pressable
-              style={styles.smallButton}
-              onPress={() => setForm((f) => ({ ...f, role: f.role === "user" ? "super_admin" : "user" }))}
-            >
-              <Text style={styles.smallButtonLabel}>Peran: {form.role === "user" ? "User" : "Super Admin"}</Text>
-            </Pressable>
-            <Pressable
               style={[styles.smallButton, styles.primary]}
               disabled={busy}
               onPress={() =>
                 run(
                   () => createUser(form),
                   () => {
-                    setForm({ name: "", email: "", password: "", role: "user" });
+                    setForm({ name: "", email: "", password: "" });
                     setAdding(false);
                   }
                 )
@@ -135,11 +129,6 @@ export function UserManagement({ currentUserId }) {
 
             {!isSelf && (
               <View style={styles.actions}>
-                {u.role === "user" && (
-                  <Pressable disabled={busy} onPress={() => change(u.id, { role: "super_admin" })}>
-                    <Text style={styles.link}>Jadikan Admin</Text>
-                  </Pressable>
-                )}
                 <Pressable
                   disabled={busy}
                   onPress={() => {

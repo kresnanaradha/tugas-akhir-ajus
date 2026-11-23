@@ -30,6 +30,7 @@ const ADMIN_GROUP = {
   label: "Sistem",
   items: [
     { href: "/admin", label: "Statistik", icon: "shield" },
+    { href: "/bot", label: "Bot Perekam", icon: "cpu" },
     { href: "/pengguna", label: "Manajemen Pengguna", icon: "user-check" },
   ],
 };

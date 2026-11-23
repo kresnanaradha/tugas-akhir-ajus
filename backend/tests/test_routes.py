@@ -182,4 +182,25 @@ r = client_as("owner").post("/upload", data={"file": (io.BytesIO(b"abc"), "rapat
 body = r.get_json()
 assert r.status_code == 200 and body["status"] == "processing" and body["meeting_id"].startswith("Upload_")
 assert queued == [(body["meeting_id"], body["meeting_id"] + "/recording.mp3", 3)]
+
+# halaman Bot Perekam: antrean dan transkriber (Redis dipalsukan), hanya super admin
+join_queue.queue_lengths = lambda: {"google_meet": 1, "zoom": 0}
+job_queue.queue_stats = lambda: {"transcription": 2, "dead": 1}
+job_queue.transcribers = lambda: [
+    {"id": "transcriber-2", "busy": False, "meeting_id": None},
+    {"id": "transcriber-1", "busy": True, "meeting_id": "m9"},
+]
+assert client_as("owner").get("/admin/queue").status_code == 403
+q = client_as("boss", "super_admin").get("/admin/queue").get_json()
+assert q["join"] == {"google_meet": 1, "zoom": 0} and q["transcription"] == 2 and q["dead"] == 1
+assert [t["id"] for t in q["transcribers"]] == ["transcriber-1", "transcriber-2"]  # urut menurut id
+
+# hanya satu akun super admin: tidak bisa ditambah atau dinaikkan dari aplikasi
+created = []
+auth_store.create_user = lambda email, password, name, role="user": created.append((email, role)) or {"id": "x"}
+boss = client_as("boss", "super_admin")
+new = {"email": "a@b.c", "password": "12345678", "name": "A"}
+assert boss.post("/admin/users", json={**new, "role": "super_admin"}).status_code == 400 and not created
+assert boss.post("/admin/users", json=new).status_code == 200 and created == [("a@b.c", "user")]
+assert boss.patch("/admin/users/u2", json={"role": "super_admin"}).status_code == 400
 print("ok")

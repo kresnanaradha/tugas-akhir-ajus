@@ -6,6 +6,7 @@ membuat tes langsung kena OOM-kill. Tanpa Flask, hanya loop: python transcriber_
 import os
 import socket
 import tempfile
+import threading
 import time
 
 from dotenv import load_dotenv
@@ -19,6 +20,20 @@ from pipeline.process import process_recording  # noqa: E402
 # harus tetap sama saat container ini restart (compose mengisinya per service): itu menamai list Redis
 # berisi job worker ini yang belum selesai. Hostname hanya cocok untuk satu kali jalan tanpa Docker.
 CONSUMER_ID = os.getenv("TRANSCRIBER_ID", socket.gethostname())
+
+
+# rapat yang sedang dikerjakan, dibaca utas detak. Satu rapat bisa berpuluh menit, loop utama tidak berdetak selama itu
+_current = {"meeting_id": None}
+_HEARTBEAT_S = 5
+
+
+def _heartbeat_loop() -> None:
+    while True:
+        try:
+            job_queue.transcriber_heartbeat(CONSUMER_ID, _current["meeting_id"])
+        except Exception as e:
+            print(f"[transcriber] heartbeat failed: {e}")
+        time.sleep(_HEARTBEAT_S)
 
 
 def _process_job(job: dict) -> None:
@@ -57,6 +72,7 @@ def main():
         update_meeting(job["meeting_id"], status="failed")
         print(f"[transcriber] giving up on {job['meeting_id']} after {job['attempts']} crashed attempts")
 
+    threading.Thread(target=_heartbeat_loop, daemon=True).start()
     print(f"[transcriber] {CONSUMER_ID} waiting for jobs...")
     while True:
         try:
@@ -69,6 +85,7 @@ def main():
         if claimed is None:
             continue
         job, raw = claimed
+        _current["meeting_id"] = job.get("meeting_id")
         try:
             _process_job(job)
         except Exception as e:
@@ -80,6 +97,7 @@ def main():
             except Exception as inner:
                 print(f"[transcriber] could not mark {job.get('meeting_id')} failed: {inner}")
         finally:
+            _current["meeting_id"] = None
             try:
                 job_queue.ack(CONSUMER_ID, raw)
             except Exception as e:

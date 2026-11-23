@@ -103,10 +103,13 @@ export const cancelSubscription = () => changesPlan(api("/billing/cancel", "POST
 export const getAdminStats = () => api("/admin/stats");
 // worker perekam yang hidup: [{id, platforms, busy, google_expired}]
 export const getAdminWorkers = () => api("/admin/workers");
+// antrean rapat per platform, antrean transkripsi, job yang menyerah, dan transkriber yang hidup:
+// {join: {google_meet, zoom}, transcription, dead, transcribers: [{id, busy, meeting_id}]}
+export const getAdminQueue = () => api("/admin/queue");
 export const getAdminExportUrl = () => `${API_BASE_URL}/admin/export`;
 export const listUsers = () => api("/admin/users");
-export const createUser = ({ name, email, password, role }) => api("/admin/users", "POST", { name, email, password, role });
-// fields: name, role, atau active (menonaktifkan menggantikan menghapus)
+export const createUser = ({ name, email, password }) => api("/admin/users", "POST", { name, email, password });
+// fields: name atau active (menonaktifkan menggantikan menghapus). Peran tidak bisa diubah, hanya ada satu super admin
 export const updateUser = (id, fields) => api(`/admin/users/${enc(id)}`, "PATCH", fields);
 export const resetUserPassword = (id, password) => api(`/admin/users/${enc(id)}/reset-password`, "POST", { password });
 

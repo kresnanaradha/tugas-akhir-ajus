@@ -19,7 +19,7 @@ export default function PenggunaScreen() {
         <View>
           <Text style={styles.eyebrow}>SUPER ADMIN</Text>
           <Text style={styles.title}>Manajemen Pengguna</Text>
-          <Text style={styles.description}>Tambah pengguna, ubah peran, atur ulang password, dan aktifkan atau nonaktifkan akun.</Text>
+          <Text style={styles.description}>Tambah pengguna, atur ulang password, dan aktifkan atau nonaktifkan akun.</Text>
         </View>
         <UserManagement currentUserId={user?.id} />
       </View>

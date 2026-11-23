@@ -123,5 +123,11 @@ def workers() -> list[dict]:
     return found
 
 
+def queue_lengths() -> dict:
+    """Rapat yang menunggu perekam, per platform."""
+    client = _get_client()
+    return {p: client.llen(_queue_key(p)) for p in ("google_meet", "zoom")}
+
+
 def has_worker(platform: str) -> bool:
     return any(platform in w["platforms"] for w in workers())

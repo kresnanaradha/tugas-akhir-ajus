@@ -51,6 +51,9 @@ class FakeRedis:
         prefix = pattern.rstrip("*")
         return [k for k in list(self.kv) + list(self.hashes) if k.startswith(prefix)]
 
+    def llen(self, key):
+        return len(self.lists.get(key, []))
+
 
 fake = FakeRedis()
 q._get_client = lambda: fake
@@ -179,4 +182,23 @@ assert c.post("/zoom/join", json=zoom_url).get_json() == {"job_id": "mine", "sha
 meetings_store.find_meeting_by_url = lambda url: {"id": "old", "user_id": "someone-else", "status": "recording"}
 common.check_meeting_quota = lambda uid: "Jatah rapat bulan ini habis"
 assert c.post("/zoom/join", json=zoom_url).status_code == 402 and created == []
+
+# angka di halaman Bot Perekam: antrean join per platform, antrean transkripsi, dead letter, dan detak transkriber
+from pipeline import job_queue as jq  # noqa: E402
+
+jq._get_client = lambda: fake
+fake.lists.clear()
+q.enqueue({**job, "job_id": "z1"})
+q.enqueue({**job, "job_id": "m1", "platform": "google_meet"})
+q.enqueue({**job, "job_id": "m2", "platform": "google_meet"})
+assert q.queue_lengths() == {"google_meet": 2, "zoom": 1}
+jq.enqueue_transcription("r1", "r1/recording.webm", 2)
+fake.rpush("notulis:transcription_dead", "{}")
+assert jq.queue_stats() == {"transcription": 1, "dead": 1}
+jq.transcriber_heartbeat("transcriber-1", "r1")
+jq.transcriber_heartbeat("transcriber-2")
+assert sorted(jq.transcribers(), key=lambda t: t["id"]) == [
+    {"id": "transcriber-1", "busy": True, "meeting_id": "r1"},
+    {"id": "transcriber-2", "busy": False, "meeting_id": None},
+]
 print("ok")

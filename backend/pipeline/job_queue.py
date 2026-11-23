@@ -71,3 +71,32 @@ def requeue_unfinished(consumer_id: str) -> tuple[list[dict], list[dict]]:
             client.lpush(_QUEUE_KEY, json.dumps(job))
             requeued.append(job)
     return requeued, exhausted
+
+
+_TRANSCRIBER_TTL_S = 15
+
+
+def _transcriber_key(consumer_id: str) -> str:
+    return f"notulis:transcriber:{consumer_id}"
+
+
+def transcriber_heartbeat(consumer_id: str, meeting_id: str | None = None) -> None:
+    """Detak transkriber ber-TTL, dipakai halaman Bot Perekam. meeting_id terisi berarti sedang memproses rapat itu."""
+    info = {"busy": meeting_id is not None, "meeting_id": meeting_id}
+    _get_client().set(_transcriber_key(consumer_id), json.dumps(info), ex=_TRANSCRIBER_TTL_S)
+
+
+def transcribers() -> list[dict]:
+    client = _get_client()
+    found = []
+    for key in client.scan_iter("notulis:transcriber:*"):
+        raw = client.get(key)
+        if raw:
+            found.append({"id": key.split(":", 2)[2], **json.loads(raw)})
+    return found
+
+
+def queue_stats() -> dict:
+    """Job transkripsi yang menunggu, dan yang menyerah setelah MAX_ATTEMPTS (dead letter)."""
+    client = _get_client()
+    return {"transcription": client.llen(_QUEUE_KEY), "dead": client.llen(_DEAD_KEY)}

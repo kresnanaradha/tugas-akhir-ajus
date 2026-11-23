@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, router, usePathname } from "expo-router";
+import { router, usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -18,8 +18,14 @@ export function TopBar() {
   const [openMenu, setOpenMenu] = useState(null); // null | "bell" | "user"
   const pathname = usePathname();
 
-  // Link asChild memakai onPress-nya sendiri (onPress anak tidak jalan), jadi menu ditutup saat halaman berpindah
+  // menu ditutup juga kalau halaman berpindah lewat jalan lain (tombol kembali, tautan di halaman)
   useEffect(() => setOpenMenu(null), [pathname]);
+
+  // pindah halaman dari dropdown: tutup menu lalu navigasi (tanpa Link asChild, lihat catatan di git log)
+  const go = (href) => {
+    setOpenMenu(null);
+    router.push(href);
+  };
 
   // satu pengambilan data untuk badge (ada rapat 24 jam terakhir?) dan dropdown lonceng. Bilah ini ada di setiap halaman, jadi berjalan sekali per navigasi
   // super admin hanya mengelola sistem: tanpa pencarian rapat dan lonceng rapat (dan tanpa pengambilan datanya)
@@ -80,25 +86,21 @@ export function TopBar() {
               <Text style={styles.dropdownTitle}>Rapat Terbaru</Text>
               {recent?.length === 0 && <Text style={styles.dropdownEmpty}>Belum ada rapat.</Text>}
               {recent?.map((m) => (
-                <Link key={m.id} href={`/rapat/${m.id}`} asChild>
-                  <Pressable style={({ hovered }) => [styles.recentRow, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.recentTitle} numberOfLines={1}>
-                        {m.title}
-                      </Text>
-                      <Text style={styles.recentMeta}>
-                        {PLATFORM_LABEL[m.platform] || m.platform} · {m.date}, {m.time}
-                      </Text>
-                    </View>
-                    <StatusPill status={m.status} />
-                  </Pressable>
-                </Link>
-              ))}
-              <Link href="/rapat" asChild>
-                <Pressable style={({ hovered }) => [styles.dropdownFooter, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
-                  <Text style={styles.dropdownFooterLabel}>Lihat semua rapat</Text>
+                <Pressable key={m.id} style={({ hovered }) => [styles.recentRow, hovered && styles.hover]} onPress={() => go(`/rapat/${m.id}`)}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.recentTitle} numberOfLines={1}>
+                      {m.title}
+                    </Text>
+                    <Text style={styles.recentMeta}>
+                      {PLATFORM_LABEL[m.platform] || m.platform} · {m.date}, {m.time}
+                    </Text>
+                  </View>
+                  <StatusPill status={m.status} />
                 </Pressable>
-              </Link>
+              ))}
+              <Pressable style={({ hovered }) => [styles.dropdownFooter, hovered && styles.hover]} onPress={() => go("/rapat")}>
+                <Text style={styles.dropdownFooterLabel}>Lihat semua rapat</Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -117,18 +119,16 @@ export function TopBar() {
           </Pressable>
           {openMenu === "user" && (
             <View style={[styles.dropdown, styles.userDropdown]}>
-              <Link href="/pengaturan" asChild>
-                <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
-                  <Feather name="settings" size={14} color={colors.inkSoft} />
-                  <Text style={styles.menuItemLabel}>Pengaturan</Text>
-                </Pressable>
-              </Link>
-              <Link href="/billing" asChild>
-                <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
+              <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => go("/pengaturan")}>
+                <Feather name="settings" size={14} color={colors.inkSoft} />
+                <Text style={styles.menuItemLabel}>Pengaturan</Text>
+              </Pressable>
+              {user?.role !== "super_admin" && (
+                <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => go("/billing")}>
                   <Feather name="credit-card" size={14} color={colors.inkSoft} />
                   <Text style={styles.menuItemLabel}>Billing</Text>
                 </Pressable>
-              </Link>
+              )}
               <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={handleLogout}>
                 <Feather name="log-out" size={14} color={colors.danger} />
                 <Text style={[styles.menuItemLabel, { color: colors.danger }]}>Keluar</Text>

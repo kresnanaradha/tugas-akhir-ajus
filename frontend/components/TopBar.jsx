@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { Link, router } from "expo-router";
+import { Link, router, usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -16,6 +16,10 @@ export function TopBar() {
   const [search, setSearch] = useState("");
   const [recent, setRecent] = useState(null); // null = belum dimuat
   const [openMenu, setOpenMenu] = useState(null); // null | "bell" | "user"
+  const pathname = usePathname();
+
+  // Link asChild memakai onPress-nya sendiri (onPress anak tidak jalan), jadi menu ditutup saat halaman berpindah
+  useEffect(() => setOpenMenu(null), [pathname]);
 
   // satu pengambilan data untuk badge (ada rapat 24 jam terakhir?) dan dropdown lonceng. Bilah ini ada di setiap halaman, jadi berjalan sekali per navigasi
   // super admin hanya mengelola sistem: tanpa pencarian rapat dan lonceng rapat (dan tanpa pengambilan datanya)
@@ -67,7 +71,7 @@ export function TopBar() {
 
         {!isAdmin && (
         <View>
-          <Pressable style={styles.bellWrap} onPress={() => setOpenMenu((m) => (m === "bell" ? null : "bell"))}>
+          <Pressable style={({ hovered }) => [styles.bellWrap, hovered && styles.hover]} onPress={() => setOpenMenu((m) => (m === "bell" ? null : "bell"))}>
             <Feather name="bell" size={18} color={colors.inkSoft} />
             {hasRecentActivity && <View style={styles.badge} />}
           </Pressable>
@@ -77,7 +81,7 @@ export function TopBar() {
               {recent?.length === 0 && <Text style={styles.dropdownEmpty}>Belum ada rapat.</Text>}
               {recent?.map((m) => (
                 <Link key={m.id} href={`/rapat/${m.id}`} asChild>
-                  <Pressable style={styles.recentRow} onPress={() => setOpenMenu(null)}>
+                  <Pressable style={({ hovered }) => [styles.recentRow, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.recentTitle} numberOfLines={1}>
                         {m.title}
@@ -91,7 +95,7 @@ export function TopBar() {
                 </Link>
               ))}
               <Link href="/rapat" asChild>
-                <Pressable style={styles.dropdownFooter} onPress={() => setOpenMenu(null)}>
+                <Pressable style={({ hovered }) => [styles.dropdownFooter, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
                   <Text style={styles.dropdownFooterLabel}>Lihat semua rapat</Text>
                 </Pressable>
               </Link>
@@ -101,7 +105,7 @@ export function TopBar() {
         )}
 
         <View>
-          <Pressable style={styles.userChip} onPress={() => setOpenMenu((m) => (m === "user" ? null : "user"))}>
+          <Pressable style={({ hovered }) => [styles.userChip, hovered && styles.hover]} onPress={() => setOpenMenu((m) => (m === "user" ? null : "user"))}>
             <View style={styles.avatar}>
               <Text style={styles.avatarLabel}>{initialsOf(user?.name)}</Text>
             </View>
@@ -114,18 +118,18 @@ export function TopBar() {
           {openMenu === "user" && (
             <View style={[styles.dropdown, styles.userDropdown]}>
               <Link href="/pengaturan" asChild>
-                <Pressable style={styles.menuItem} onPress={() => setOpenMenu(null)}>
+                <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
                   <Feather name="settings" size={14} color={colors.inkSoft} />
                   <Text style={styles.menuItemLabel}>Pengaturan</Text>
                 </Pressable>
               </Link>
               <Link href="/billing" asChild>
-                <Pressable style={styles.menuItem} onPress={() => setOpenMenu(null)}>
+                <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => setOpenMenu(null)}>
                   <Feather name="credit-card" size={14} color={colors.inkSoft} />
                   <Text style={styles.menuItemLabel}>Billing</Text>
                 </Pressable>
               </Link>
-              <Pressable style={styles.menuItem} onPress={handleLogout}>
+              <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={handleLogout}>
                 <Feather name="log-out" size={14} color={colors.danger} />
                 <Text style={[styles.menuItemLabel, { color: colors.danger }]}>Keluar</Text>
               </Pressable>
@@ -167,7 +171,8 @@ const styles = StyleSheet.create({
   // menutupi layar di belakang dropdown yang terbuka supaya klik di mana saja menutupnya (tanpa dependensi tambahan)
   overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
 
-  bellWrap: { position: "relative", padding: 4 },
+  hover: { backgroundColor: colors.surfaceSunken },
+  bellWrap: { position: "relative", padding: 6, borderRadius: radius.sm },
   badge: {
     position: "absolute",
     top: 2,
@@ -179,7 +184,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.surface,
   },
-  userChip: { flexDirection: "row", alignItems: "center", gap: 8 },
+  userChip: { flexDirection: "row", alignItems: "center", gap: 8, padding: 4, paddingRight: 8, borderRadius: radius.sm },
   avatar: {
     width: 32,
     height: 32,

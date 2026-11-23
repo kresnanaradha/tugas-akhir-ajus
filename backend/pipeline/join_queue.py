@@ -109,7 +109,9 @@ def stop_requested(job_id: str) -> bool:
 
 
 def heartbeat(busy: bool) -> None:
-    info = {"platforms": active_platforms(), "busy": busy, "google_expired": google_expired}
+    # vnc_port: port noVNC worker ini di komputer yang menjalankan compose (6080 untuk worker-1, dst), dipakai tombol VNC di halaman Bot Perekam
+    vnc_port = os.getenv("VNC_PORT", "").strip()
+    info = {"platforms": active_platforms(), "busy": busy, "google_expired": google_expired, "vnc_port": int(vnc_port) if vnc_port.isdigit() else None}
     _get_client().set(_worker_key(WORKER_ID), json.dumps(info), ex=_WORKER_TTL_S)
 
 

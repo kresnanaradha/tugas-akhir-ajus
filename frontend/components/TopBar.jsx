@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, shadow, spacing, type } from "@/constants/theme";
-import { listMeetings, logout as apiLogout } from "@/lib/api";
+import { listMeetings } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatMeetingDate, initialsOf, PLATFORM_LABEL } from "@/lib/format";
 import { StatusPill } from "./StatusPill";
@@ -12,16 +12,16 @@ import { StatusPill } from "./StatusPill";
 const DAY_MS = 86400000;
 
 export function TopBar() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [recent, setRecent] = useState(null); // null = belum dimuat
-  const [openMenu, setOpenMenu] = useState(null); // null | "bell" | "user"
+  const [openMenu, setOpenMenu] = useState(null); // null | "bell"
   const pathname = usePathname();
 
   // menu ditutup juga kalau halaman berpindah lewat jalan lain (tombol kembali, tautan di halaman)
   useEffect(() => setOpenMenu(null), [pathname]);
 
-  // pindah halaman dari dropdown: tutup menu lalu navigasi (tanpa Link asChild, lihat catatan di git log)
+  // pindah halaman dari dropdown: tutup menu lalu navigasi
   const go = (href) => {
     setOpenMenu(null);
     router.push(href);
@@ -47,12 +47,6 @@ export function TopBar() {
     setSearch("");
   }
 
-  function handleLogout() {
-    apiLogout().catch(() => {});
-    signOut();
-    router.replace("/login");
-  }
-
   return (
     <View style={styles.bar}>
       {isAdmin ? (
@@ -76,7 +70,7 @@ export function TopBar() {
         {openMenu && <Pressable style={styles.overlay} onPress={() => setOpenMenu(null)} />}
 
         {!isAdmin && (
-        <View>
+        <View style={openMenu === "bell" ? styles.raised : null}>
           <Pressable style={({ hovered }) => [styles.bellWrap, hovered && styles.hover]} onPress={() => setOpenMenu((m) => (m === "bell" ? null : "bell"))}>
             <Feather name="bell" size={18} color={colors.inkSoft} />
             {hasRecentActivity && <View style={styles.badge} />}
@@ -106,35 +100,15 @@ export function TopBar() {
         </View>
         )}
 
-        <View>
-          <Pressable style={({ hovered }) => [styles.userChip, hovered && styles.hover]} onPress={() => setOpenMenu((m) => (m === "user" ? null : "user"))}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarLabel}>{initialsOf(user?.name)}</Text>
-            </View>
-            <View>
-              <Text style={styles.userName}>{user?.name}</Text>
-              <Text style={styles.userRole}>{user?.role === "super_admin" ? "Super Admin" : "User"}</Text>
-            </View>
-            <Feather name="chevron-down" size={14} color={colors.inkFaint} />
-          </Pressable>
-          {openMenu === "user" && (
-            <View style={[styles.dropdown, styles.userDropdown]}>
-              <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => go("/pengaturan")}>
-                <Feather name="settings" size={14} color={colors.inkSoft} />
-                <Text style={styles.menuItemLabel}>Pengaturan</Text>
-              </Pressable>
-              {user?.role !== "super_admin" && (
-                <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={() => go("/billing")}>
-                  <Feather name="credit-card" size={14} color={colors.inkSoft} />
-                  <Text style={styles.menuItemLabel}>Billing</Text>
-                </Pressable>
-              )}
-              <Pressable style={({ hovered }) => [styles.menuItem, hovered && styles.hover]} onPress={handleLogout}>
-                <Feather name="log-out" size={14} color={colors.danger} />
-                <Text style={[styles.menuItemLabel, { color: colors.danger }]}>Keluar</Text>
-              </Pressable>
-            </View>
-          )}
+        {/* dropdown pengguna dibuang: Pengaturan, Billing, dan Keluar ada di sidebar */}
+        <View style={styles.userChip}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarLabel}>{initialsOf(user?.name)}</Text>
+          </View>
+          <View>
+            <Text style={styles.userName}>{user?.name}</Text>
+            <Text style={styles.userRole}>{user?.role === "super_admin" ? "Super Admin" : "User"}</Text>
+          </View>
         </View>
       </View>
     </View>
@@ -172,6 +146,8 @@ const styles = StyleSheet.create({
   overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
 
   hover: { backgroundColor: colors.surfaceSunken },
+  // react-native-web memberi tiap View konteks tumpukan sendiri (z-index 0), jadi zIndex dropdown saja tidak cukup mengalahkan lapisan penutup
+  raised: { zIndex: 50 },
   bellWrap: { position: "relative", padding: 6, borderRadius: radius.sm },
   badge: {
     position: "absolute",
@@ -184,7 +160,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.surface,
   },
-  userChip: { flexDirection: "row", alignItems: "center", gap: 8, padding: 4, paddingRight: 8, borderRadius: radius.sm },
+  userChip: { flexDirection: "row", alignItems: "center", gap: 8 },
   avatar: {
     width: 32,
     height: 32,
@@ -210,7 +186,6 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   bellDropdown: { width: 300, padding: spacing.sm },
-  userDropdown: { width: 180, padding: 6 },
 
   dropdownTitle: { ...type.eyebrow, color: colors.inkFaint, padding: spacing.sm, paddingBottom: 4 },
   dropdownEmpty: { ...type.small, color: colors.inkFaint, padding: spacing.sm },
@@ -227,6 +202,4 @@ const styles = StyleSheet.create({
   dropdownFooter: { padding: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 4 },
   dropdownFooterLabel: { ...type.small, fontWeight: "600", color: colors.info, textAlign: "center" },
 
-  menuItem: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 9, paddingHorizontal: spacing.sm, borderRadius: radius.sm },
-  menuItemLabel: { ...type.small, fontWeight: "600", color: colors.ink },
 });

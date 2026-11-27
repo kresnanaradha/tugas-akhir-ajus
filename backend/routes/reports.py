@@ -84,7 +84,7 @@ def perbandingan_analisis():
         return jsonify(_comparison_analysis(*pair))
     except Exception as e:
         print(f"[perbandingan] AI comparison failed: {e}")
-        return jsonify({"error": "Perbandingan AI gagal dibuat"}), 502
+        return jsonify({"error": "Perbandingan AI gagal dibuat"}), 424  # bukan 502, lihat catatan di routes/billing.py
 
 
 @bp.get("/perbandingan/export")

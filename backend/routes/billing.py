@@ -60,7 +60,9 @@ def billing_checkout():
             cancel_url=f"{return_base}/billing/return?status=cancel",
         )
     except requests.HTTPError as e:
-        return jsonify({"error": f"Xendit error: {e.response.text}"}), 502
+        print(f"[billing] checkout Xendit {e.response.status_code}: {e.response.text}")
+        # bukan 502: Cloudflare mengganti jawaban 502 dari server dengan halaman errornya sendiri, jadi pesan ini tidak sampai ke browser
+        return jsonify({"error": f"Xendit error: {e.response.text}"}), 424
 
     billing_store.start_checkout(plan, checkout_session["payment_session_id"], account_id=user_id)
     return jsonify({"checkout_url": checkout_session["payment_link_url"]})

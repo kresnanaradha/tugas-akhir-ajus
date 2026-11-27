@@ -16,11 +16,15 @@ def _auth():
 def create_subscription_session(reference_id: str, plan_amount: int, email: str, success_url: str, cancel_url: str) -> dict:
     """Buat checkout yang dihosting. Mengembalikan respons Xendit: `payment_link_url` untuk tujuan redirect dan
     `payment_session_id`, yang dikirim balik oleh webhook payment_session.completed."""
-    # anchor_date harus setelah sesi kedaluwarsa, jadi tagihan pertama sehari lagi (dan paling tinggi tanggal 28,
-    # Xendit tidak menerima tanggal lebih tinggi untuk anchor bulanan)
-    anchor = datetime.now(timezone.utc) + timedelta(days=1)
+    # anchor_date harus sama atau setelah expires_at, dan sesi langganan memakai masa berlaku bawaan yang lebih panjang
+    # dari sehari (Xendit menolak dengan "anchor_date must be greater than or equal to expires_at"). Jadi masa berlaku
+    # sesi diatur sendiri (1 jam, paling cepat 10 menit menurut Xendit) dan tagihan pertama dua hari lagi. Hari anchor
+    # paling tinggi 28: kalau lewat, dipindah ke tanggal 1 bulan berikutnya (bukan hari 28 bulan ini, itu sudah lewat)
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    anchor = now + timedelta(days=2)
     if anchor.day > 28:
-        anchor = anchor.replace(day=28)
+        anchor = (anchor.replace(day=1) + timedelta(days=32)).replace(day=1)
     anchor_date = anchor.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     body = {
@@ -30,6 +34,7 @@ def create_subscription_session(reference_id: str, plan_amount: int, email: str,
         "currency": "IDR",
         "amount": plan_amount,
         "country": "ID",
+        "expires_at": expires_at,
         "subscription": {
             "schedule": {
                 "interval": "MONTH",
